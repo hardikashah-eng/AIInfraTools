@@ -112,6 +112,12 @@ The scheduling view checks constraints and runs the job through the Cluster tab'
 
 ![Training, scheduling](docs/img/training-sched.png)
 
+### Inference view: replicas, start-up and contention
+
+The **Inference** tab shows serving deployments as pods on the cluster: target replicas against replicas ready to serve, what a new replica's start-up time goes on, and who holds the GPUs. If pre-training outranks serving, its gang preempts 49 chat replicas at 0:30 and serving runs 64% short. Each replacement takes 4 minutes to serve, mostly loading weights from the object store. See [docs/INFERENCE.md](docs/INFERENCE.md).
+
+![Inference view](docs/img/inference-contention.png)
+
 ### What if… a partial outage
 
 Half of the on-prem pool fails for two and a half minutes. Down instances show red, streams cut mid-answer are counted as lost, the KPIs compare against the same graph unstressed, and the banner names where it breaks first. See [docs/STRESS.md](docs/STRESS.md).
@@ -161,6 +167,7 @@ npm run build     # inline src/ into dist/index.html
 | `docs/CLUSTER.md` | The cluster model, policy knobs, and importing a real cluster |
 | `src/training.js`, `src/training-ui.js` | Training job model (phases, data loading, stragglers, checkpoints, faults) and the Training view |
 | `docs/TRAINING.md` | The training model, the four sub-views, and fault-log import |
+| `src/inference-ui.js`, `docs/INFERENCE.md` | The Inference view and its start-up model |
 
 ## Nodes
 

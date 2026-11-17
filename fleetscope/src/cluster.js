@@ -59,6 +59,8 @@
       wlState.push(new Uint8Array(T));
     });
     const events = [];
+    const podRuns = spec.workloads.map(() => []);          // per workload: { s: started, e: ended, wait: pending time before it }
+    const wlTarget = spec.workloads.map(() => new Int16Array(T));
     const ev = (t, kind, wl, detail) => events.push({ t, kind, wl, detail });
 
     function newPod(w, t, extra) {
@@ -68,6 +70,7 @@
     }
     function release(p) {
       if (p.state !== 'running') return;
+      if (p.run) { p.run.e = curT; p.run = null; }
       const n = nodes[p.node];
       for (const g of p.gpuIdx) { owner[g] = -1; if (downUntil[g] <= curT) n.free++; }
       queues[W[p.wl].q].used -= p.gpus;
@@ -79,6 +82,8 @@
       for (const g of idx) owner[g] = p.id;
       n.free -= p.gpus;
       p.node = ni; p.gpuIdx = idx; p.state = 'running'; p.started = t;
+      p.run = { s: t, e: Infinity, wait: t - p.since, pod: p.id };
+      podRuns[p.wl].push(p.run);
       const Q = queues[W[p.wl].q];
       p.borrowed = Q.used + p.gpus > Q.quota;
       Q.used += p.gpus;
@@ -215,6 +220,7 @@
           if (t < s.startH * 3600) continue;
           if (isNaN(w.submitted)) w.submitted = t;
           const want = inferenceTarget(s, t), live = w.pods.map(id => pods[id]);
+          wlTarget[w.i][k] = want;
           if (live.length < want) { for (let i = live.length; i < want; i++) newPod(w, t); if (k && want > live.length) ev(t, 'scale', w.i, 'scaled to ' + want + ' replicas'); }
           else if (live.length > want) {
             const order = live.slice().sort((a, b) => (a.state === 'pending' ? 0 : 1) - (b.state === 'pending' ? 0 : 1) || b.id - a.id);
@@ -369,8 +375,32 @@
       spec, step: STEP, T, G,
       nodes: nodes.map(n => ({ name: n.name, pool: n.pool, domain: n.domain, base: n.base, gpus: n.gpus, faults: n.faults })),
       domains: domains.map(d => ({ pool: d.pool, nodes: d.nodes })),
-      workloads: wsum, wlState, frames, series: ser, events, nodeFaults, gpuFaults: gpuF, summary, REASON
+      workloads: wsum, wlState, frames, series: ser, events, nodeFaults, gpuFaults: gpuF, summary, REASON, podRuns, wlTarget,
+      gpusByKind: (() => { const o = { inference: new Float32Array(T), training: new Float32Array(T), batch: new Float32Array(T) }; for (let k = 0; k < T; k++) { const own = frames[k].own; for (let g = 0; g < G; g++) if (own[g] >= 0) o[spec.workloads[own[g]].kind][k]++; } return o; })()
     };
+  }
+
+  // Inference readiness: a replica serves only after it is scheduled and has started (image pull, weight load,
+  // warm-up). Given that start-up time, counts ready replicas per tick against the target.
+  function inferenceReadiness(R, wi, startupS) {
+    const T = R.T, step = R.step, target = R.wlTarget[wi], ready = new Int16Array(T), running = new Int16Array(T);
+    for (const r of R.podRuns[wi]) {
+      // replicas running when the simulation starts were already warm
+      const k0 = Math.ceil(r.s / step), k1 = Math.min(T, isFinite(r.e) ? Math.ceil(r.e / step) : T), kr = r.s === 0 ? 0 : Math.ceil((r.s + startupS) / step);
+      for (let k = k0; k < k1; k++) { running[k]++; if (k >= kr) ready[k]++; }
+    }
+    let deficit = 0, full = 0, n = 0, worst = 0, worstK = 0;
+    for (let k = 0; k < T; k++) {
+      if (!target[k]) continue;
+      n++;
+      const d = Math.max(0, target[k] - ready[k]);
+      deficit += d * step / 3600; if (!d) full++;
+      if (d / target[k] > worst) { worst = d / target[k]; worstK = k; }
+    }
+    const waits = R.podRuns[wi].map(r => r.wait).sort((a, b) => a - b);
+    const q = f => (waits.length ? waits[Math.min(waits.length - 1, Math.floor(f * waits.length))] : NaN);
+    return { target, ready, running, deficitReplicaH: deficit, fullShare: n ? full / n : NaN, worstShare: worst, worstT: worstK * step,
+      schedWaitP50: q(0.5), schedWaitP90: q(0.9), readyP50: q(0.5) + startupS, readyP90: q(0.9) + startupS, starts: waits.length };
   }
 
   // Run the same cluster under several scheduler policies.
@@ -498,7 +528,7 @@
     };
   }
 
-  const api = { STEP, POLICY_DEFAULTS, POLICY_VARIANTS, REASON, simulateCluster, comparePoliciesIter, comparePolicies, fromKube, sampleCluster, normalizeCluster: normalize };
+  const api = { STEP, POLICY_DEFAULTS, POLICY_VARIANTS, REASON, simulateCluster, inferenceReadiness, comparePoliciesIter, comparePolicies, fromKube, sampleCluster, normalizeCluster: normalize };
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
   else root.FleetCluster = api;
 })(typeof window !== 'undefined' ? window : this);

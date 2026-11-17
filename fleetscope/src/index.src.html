@@ -74,12 +74,12 @@ button, select, input { font: inherit; color: inherit; }
 .glegend i.hatch { background: repeating-linear-gradient(135deg, var(--muted) 0 2px, transparent 2px 4px); }
 .glegend i.dash { border-top: 1.5px dashed var(--ink); height: 0; width: 14px; border-radius: 0; vertical-align: 3px; }
 .glegend .sep { font-weight: 600; }
-#clusterApp .timeline, #trainingApp .timeline { margin: 6px 10px 0; padding: 6px 8px; background: var(--panel); border: 1px solid var(--line); border-radius: 10px; }
-#trainingApp .timeline input, #clusterApp .timeline input { width: 100%; }
+#clusterApp .timeline, #trainingApp .timeline, #inferenceApp .timeline { margin: 6px 10px 0; padding: 6px 8px; background: var(--panel); border: 1px solid var(--line); border-radius: 10px; }
+#inferenceApp .timeline input, #trainingApp .timeline input, #clusterApp .timeline input { width: 100%; }
 #cGantt { display: block; margin: 0 18px 20px; }
 .cpad { margin: 12px 18px 4px !important; font: 600 12px var(--font-display); text-transform: uppercase; letter-spacing: .7px; color: var(--muted); }
 .cpad .sub { text-transform: none; letter-spacing: 0; }
-#cKpis .v, #tKpis .v { font-size: 15px; white-space: nowrap; }
+#cKpis .v, #tKpis .v, #iKpis .v { font-size: 15px; white-space: nowrap; }
 .tname { font-size: 13px; }
 .tname b { font-weight: 600; }
 .sec2 { font: 600 12px var(--font-display); text-transform: uppercase; letter-spacing: .7px; color: var(--muted); margin: 0 0 6px; }
@@ -294,6 +294,7 @@ button, select, input { font: inherit; color: inherit; }
   <button type="button" role="tab" data-view="fleet" aria-selected="true" title="Serving and training graph: traffic, routers, pools, links">Fleet graph</button>
   <button type="button" role="tab" data-view="cluster" aria-selected="false" title="Kubernetes layer: nodes, GPUs, queues, scheduler policy">Cluster</button>
   <button type="button" role="tab" data-view="training" aria-selected="false" title="One training job seen by GPU, by phase, by scheduling, or all at once">Training</button>
+  <button type="button" role="tab" data-view="inference" aria-selected="false" title="Serving deployments as pods: replicas wanted vs ready, start-up time, contention for GPUs">Inference</button>
   <span class="hint" id="viewhint">Traffic, routing and pools across sites</span></nav>
 <div class="shell" id="fleetApp">
   <header class="toolbar">
@@ -354,6 +355,7 @@ button, select, input { font: inherit; color: inherit; }
 </div>
 <div class="shell" id="clusterApp" hidden></div>
 <div class="shell" id="trainingApp" hidden></div>
+<div class="shell" id="inferenceApp" hidden></div>
 <script>
 /*ENGINE*/
 </script>
@@ -2117,8 +2119,11 @@ window.addEventListener('resize', () => {});
 /*TRAININGUI*/
 </script>
 <script>
+/*INFERENCEUI*/
+</script>
+<script>
 (function () {
-  const hints = { fleet: 'Traffic, routing and pools across sites', cluster: 'Nodes, GPUs, queues and the scheduler: who gets which GPU, and who waits', training: 'One training job: GPUs, step phases, scheduling, and the bottleneck' };
+  const hints = { fleet: 'Traffic, routing and pools across sites', cluster: 'Nodes, GPUs, queues and the scheduler: who gets which GPU, and who waits', training: 'One training job: GPUs, step phases, scheduling, and the bottleneck', inference: 'Serving on the cluster: replicas wanted vs ready, start-up time, and who takes the GPUs' };
   document.getElementById('viewbar').addEventListener('click', e => {
     const b = e.target.closest('[data-view]'); if (!b) return;
     const v = b.dataset.view;
@@ -2127,6 +2132,7 @@ window.addEventListener('resize', () => {});
     document.getElementById('fleetApp').hidden = v !== 'fleet';
     if (v === 'cluster') window.FleetClusterView.show(); else window.FleetClusterView.hide();
     if (v === 'training') window.FleetTrainingView.show(); else window.FleetTrainingView.hide();
+    if (v === 'inference') window.FleetInferenceView.show(); else window.FleetInferenceView.hide();
   });
 })();
 </script>

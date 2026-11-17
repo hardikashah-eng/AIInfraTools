@@ -164,7 +164,7 @@ A tab bar above the canvas switches what node colours, badges and wires mean. Ea
 
 A second view simulates scheduling at pod and GPU granularity, separately from the request-level fleet engine. It covers node pools with IB domains, queues with quotas and priorities, and inference (daily replica cycle), training (gangs with checkpoints) and batch workloads. The scheduler has placement, gang, topology, preemption, borrowing and queue-order knobs, and GPUs fail and get repaired. It reports allocation, stranded and allocated-but-idle GPU-hours, why each workload waited, preemptions, faults and lost work. It can compare policies side by side and import a cluster from `kubectl` JSON. Details: [CLUSTER.md](CLUSTER.md).
 
-A **Training** view follows one job step by step: data loading (storage vs decode, two data mixes with a switch), compute, slow GPUs, gradient sync, checkpoints, faults with spares and repair, and admission through the cluster scheduler. It has four sub-views (GPUs, phases, scheduling, full). Details: [TRAINING.md](TRAINING.md).
+A **Training** view follows one job step by step: data loading (storage vs decode, two data mixes with a switch), compute, slow GPUs, gradient sync, checkpoints, faults with spares and repair, and admission through the cluster scheduler. It has four sub-views (GPUs, phases, scheduling, full). Details: [TRAINING.md](TRAINING.md). An **Inference** view shows serving deployments on the same cluster: replicas wanted vs ready, start-up time (scheduling, image, weights, warm-up), and preemption by training. Details: [INFERENCE.md](INFERENCE.md). The view switcher above the app holds Fleet graph, Cluster, Training and Inference.
 
 ## Metrics and outputs
 
