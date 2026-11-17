@@ -14,7 +14,7 @@ These screenshots are of `dist/index.html` running its built-in templates. Synth
 
 ### Editor and live fleet
 
-A hybrid fleet replaying a chat trace that spikes. The on-prem pool's KV cache is full (99.7%) and its queue is turning red. The neocloud's seven burst instances are still cold-starting (hatched). The right panel lists the slowest requests of the last 20 seconds, each bar split into queue and prefill time.
+A hybrid fleet replaying a chat trace that spikes. The on-prem pool's KV cache is full (99.7%) and its queue is turning red. The neocloud's seven burst instances are still cold-starting (hatched). The right panel ranks this run's bottlenecks and lists the slowest requests of the last 20 seconds. The *First bottleneck* tile jumps to the moment it starts.
 
 ![FleetScope editor](docs/img/editor.png)
 
@@ -42,6 +42,30 @@ Upload a log to the Trace replay node: vLLM OpenTelemetry spans, gateway JSON lo
 
 ![Trace import](docs/img/trace-import.png)
 
+### What if… a partial outage
+
+Half of the on-prem pool fails for two and a half minutes. Down instances show red, streams cut mid-answer are counted as lost, the KPIs compare against the same graph unstressed, and the banner names where it breaks first. See [docs/STRESS.md](docs/STRESS.md).
+
+![Partial outage](docs/img/stress-outage.png)
+
+### Every scenario side by side
+
+The scenario suite runs peak load, partial outage, neocloud down, link down, large contexts, and peak load plus an outage on the same graph. On this one, losing the neocloud barely matters (its cold start was too slow to help anyway); doubling context length is the real threat.
+
+![Scenario suite](docs/img/scenario-suite.png)
+
+### Breaking point
+
+With 10 on-prem instances, the graph holds 95% SLO attainment up to 1.33× today's traffic. At 1.44× it breaks on decode batch size (TPOT).
+
+![Breaking point](docs/img/headroom.png)
+
+### Model advisor
+
+Coding-agent traffic. Each candidate model and reasoning level is right-sized to the SLO and ranked by cost per 1,000 requests, with a quality floor taken from your own eval scores.
+
+![Model advisor](docs/img/model-advisor.png)
+
 ## Develop
 
 ```bash
@@ -54,6 +78,7 @@ npm run build     # inline src/ into dist/index.html
 | --- | --- |
 | `src/engine.js` | Simulation engine: GPU and model profiles, trace generators and the CSV parser, graph compiler, time-stepped simulator. Pure functions; runs in Node and the browser. |
 | `src/templates.js` | Node catalogue (types, default knobs, palette) and the seven starter graphs |
+| `docs/STRESS.md` | Stress overlays, bottleneck attribution, breaking-point search, model advisor, and how reasoning models change capacity and cost |
 | `src/ingest.js` | Trace import: vLLM OpenTelemetry spans (OTLP / Jaeger JSON), gateway JSON logs (OpenAI, Anthropic, LiteLLM), CSV; format detection; canonical CSV writer |
 | `tools/convert-trace.mjs` | CLI that cuts a window from a large log, samples it, and writes canonical CSV |
 | `src/index.src.html` | Editor UI: palette, pan/zoom canvas, wiring, details panel, live node rendering, charts, timeline |
@@ -73,8 +98,16 @@ npm run build     # inline src/ into dist/index.html
 | GPU pool | Role (aggregated, prefill, decode), site and site type, GPU type, fixed or autoscaled instances, cold start, scale thresholds, max batch, fabric bandwidth |
 | Cross-site link | Bandwidth, round trip, egress price; shared by everything wired through it |
 | Training job | Model, GPU type and count, global batch, MFU, sync overlap; wire it to a link to split it across sites |
-| Model | Preset or custom parameters, active parameters, layers, KV heads × head dim (or MLA latent), weight and KV precision |
-| SLO targets | TTFT and TPOT |
+| Model | Preset or custom parameters, active parameters, layers, KV heads × head dim (or MLA latent), weight and KV precision, reasoning (hidden thinking tokens per request), keep thinking in context |
+| SLO targets | TTFT and TPOT; whether streamed thinking counts as the first token |
+
+## What if… and the model advisor
+
+- **What if…** applies stress to the drawn graph without editing it: traffic or session surges in a time window, larger contexts, and outages of part of a pool, a whole site or a link. It includes a scenario suite and a breaking-point search ("holds 95% SLO up to 1.33× traffic, then breaks on…").
+- **Model advisor** right-sizes the fleet for each candidate model and reasoning level and ranks them by cost per 1,000 requests at your SLO, with an optional quality floor from your evals.
+- Every run names its **first bottleneck** (KV cache full, compute saturated, link saturated, cold starts, outage, or oversized decode batches).
+
+Details, and how reasoning models change TTFT, capacity and cost: [docs/STRESS.md](docs/STRESS.md).
 
 Wiring rules: traffic → router → pool or link; link → pool; prefill pool → decode pool or link; training job → link. The Problems panel explains anything that doesn't compile.
 

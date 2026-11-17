@@ -103,6 +103,37 @@ button, select, input { font: inherit; color: inherit; }
 .hud button { border: 1px solid var(--line); background: var(--panel); border-radius: 6px; padding: 2px 8px; cursor: pointer; font-family: var(--font-mono); }
 .toast { position: absolute; left: 50%; bottom: 12px; transform: translateX(-50%); background: var(--ink); color: var(--panel); padding: 6px 12px; border-radius: 8px; font-size: 12px; opacity: 0; pointer-events: none; transition: opacity .2s; }
 .toast.on { opacity: .92; }
+.stressBanner { position: absolute; left: 8px; top: 8px; max-width: calc(100% - 140px); display: flex; gap: 8px; align-items: center; flex-wrap: wrap; background: var(--panel); border: 1px solid var(--warn); border-left: 4px solid var(--warn); border-radius: 8px; padding: 5px 10px; font-size: 12px; }
+.stressBanner b { font-weight: 600; }
+.stressBanner[hidden], .analysis[hidden] { display: none; }
+.analysis { margin: 8px 10px 0; background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 10px 12px; }
+.analysis h3 { font: 600 14px var(--font-display); margin: 0 0 4px; display: flex; justify-content: space-between; align-items: center; gap: 8px; }
+.analysis .lead { font-size: 13px; margin: 2px 0 8px; max-width: 90ch; }
+.analysis .lead b { font-weight: 600; }
+.atable { width: 100%; border-collapse: collapse; font-size: 12px; font-variant-numeric: tabular-nums; }
+.atable th { text-align: left; font-weight: 600; color: var(--muted); font-size: 11px; border-bottom: 1px solid var(--line); padding: 4px 6px; white-space: nowrap; }
+.atable td { border-bottom: 1px solid var(--line); padding: 4px 6px; }
+.atable td.num { font-family: var(--font-mono); text-align: right; white-space: nowrap; }
+.atable tr.click { cursor: pointer; }
+.atable tr.click:hover td { background: var(--panel-2); }
+.atable tr.pick td { background: color-mix(in srgb, var(--good) 10%, transparent); }
+.atable tr.dim td { color: var(--muted); }
+.ascroll { overflow-x: auto; }
+.progress { height: 6px; background: var(--panel-2); border-radius: 3px; overflow: hidden; margin: 6px 0; }
+.progress i { display: block; height: 100%; background: var(--accent); width: 0; transition: width .15s; }
+.sgrid { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; margin-top: 6px; }
+.sgrid button { text-align: left; border: 1px solid var(--line); background: var(--panel-2); border-radius: 8px; padding: 5px 8px; cursor: pointer; font-size: 12px; line-height: 1.25; }
+.sgrid button:hover { border-color: var(--accent); }
+.sgrid button:disabled { opacity: .45; cursor: not-allowed; }
+.sgrid button span { display: block; color: var(--muted); font-size: 10.5px; }
+.orow { border: 1px solid var(--line); border-radius: 8px; padding: 6px 8px; margin-top: 6px; background: var(--panel-2); }
+.btn.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+.mtx { width: 100%; border-collapse: collapse; font-size: 11.5px; margin-top: 4px; }
+.mtx th, .mtx td { padding: 3px 2px; border-bottom: 1px solid var(--line); text-align: center; }
+.mtx th:first-child, .mtx td:first-child { text-align: left; }
+.mtx input[type=number] { width: 52px; padding: 2px 4px; border: 1px solid var(--line); border-radius: 5px; background: var(--panel); }
+.kpi.wide { grid-column: span 2; cursor: pointer; }
+.kpi.wide .v { font-size: 13.5px; font-family: var(--font-ui); font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .legendHud { position: absolute; left: 10px; bottom: 8px; display: flex; gap: 10px; font-size: 11px; color: var(--muted); background: color-mix(in srgb, var(--panel) 80%, transparent); padding: 3px 8px; border-radius: 6px; }
 .legendHud i { display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-right: 4px; vertical-align: 0; }
 .timeline { margin: 6px 10px 0; display: grid; gap: 3px; }
@@ -202,6 +233,10 @@ button, select, input { font: inherit; color: inherit; }
       <button type="button" id="clearBtn" hidden>Clear baseline</button>
       <button type="button" id="copyBtn" title="Copy this graph as JSON">Copy graph JSON</button>
     </div>
+    <div class="tb">
+      <button type="button" id="whatifBtn" title="Stress this topology: peak load, peak sessions, outages, large contexts, headroom">What if…</button>
+      <button type="button" id="advisorBtn" title="Which model and reasoning level serves this traffic at the SLO for the least">Model advisor</button>
+    </div>
     <div class="status" id="status">Simulating…</div>
   </header>
   <aside class="palette" id="palette"></aside>
@@ -218,11 +253,13 @@ button, select, input { font: inherit; color: inherit; }
       <div class="hud"><button type="button" id="zIn" aria-label="Zoom in">+</button><button type="button" id="zOut" aria-label="Zoom out">&minus;</button><button type="button" id="zFit">Fit</button></div>
       <div class="legendHud"><span><i style="background:var(--onprem)"></i>request to on-prem</span><span><i style="background:var(--neo)"></i>request to neocloud</span><span><i style="background:var(--c-xfer)"></i>KV cache transfer</span><span><i style="background:var(--train)"></i>gradient sync</span></div>
       <div class="toast" id="toast" role="status"></div>
+      <div class="stressBanner" id="stressBanner" hidden></div>
     </div>
     <div class="timeline">
       <svg id="vstrip" viewBox="0 0 1000 12" preserveAspectRatio="none" aria-label="Seconds with TTFT breaches; click to jump"></svg>
       <input type="range" id="scrub" min="0" max="600" step="0.1" value="0" aria-label="Playhead">
     </div>
+    <section class="analysis" id="analysis" hidden aria-live="polite"></section>
     <details class="dock" open><summary>Charts</summary><div class="charts" id="charts"></div></details>
   </section>
   <aside class="details" id="details" aria-live="polite"></aside>
@@ -369,7 +406,7 @@ function cfgLine(n) {
     case 'pool': { const m = prof(); const tp = m ? E.profile(c.gpu, m.cfg).tp : 1; return roleName[c.role] + ' · ' + c.gpu + (tp > 1 ? ' ×' + tp : '') + ' · ' + (c.autoscale ? c.min + '–' + c.max + ' inst, ' + c.coldStart + ' s cold' : c.instances + ' inst'); }
     case 'link': return c.gbps + ' Gbps · ' + c.rttMs + ' ms RTT · $' + c.egressPerGB + '/GB';
     case 'train': return E.MODELS[c.model].label.replace(/ \(.*\)/, '') + ' · ' + fInt(c.gpus) + ' × ' + c.gpu;
-    case 'model': return c.params + 'B params' + (c.active !== c.params ? ' (' + c.active + 'B active)' : '') + ' · ' + c.wPrec.toUpperCase();
+    case 'model': return c.params + 'B params' + (c.active !== c.params ? ' (' + c.active + 'B active)' : '') + ' · ' + c.wPrec.toUpperCase() + (c.thinkTokens ? ' · thinks ~' + fK(c.thinkTokens) : '');
     case 'slo': return 'TTFT ≤ ' + c.ttft + ' s · TPOT ≤ ' + c.tpotMs + ' ms';
   }
   return '';
@@ -632,11 +669,14 @@ const FIELDS = {
     ] },
     { p: 'wPrec', k: 'seg', label: 'Weights', opts: [['fp8', 'FP8'], ['bf16', 'BF16']] },
     { p: 'kvPrec', k: 'seg', label: 'KV cache', opts: [['fp8', 'FP8'], ['bf16', 'BF16']] },
+    { p: 'thinkTokens', k: 'range', label: 'Reasoning: hidden thinking per request', min: 0, max: 16000, step: 250, f: v => (+v ? fK(+v) + ' tok (median)' : 'off'), hint: 'Decoded before the first answer token; holds KV cache and is billed.' },
+    { p: 'thinkKeep', k: 'check', label: 'Keep thinking in later turns\u2019 context', show: c => c.thinkTokens > 0 },
     { k: 'modelReadout' }
   ],
   slo: [
     { p: 'ttft', k: 'range', label: 'TTFT (time to first token)', min: 0.2, max: 20, step: 0.1, f: v => v.toFixed(1) + ' s' },
-    { p: 'tpotMs', k: 'range', label: 'TPOT (time per output token)', min: 5, max: 300, step: 5, f: v => v + ' ms' }
+    { p: 'tpotMs', k: 'range', label: 'TPOT (time per output token)', min: 5, max: 300, step: 5, f: v => v + ' ms' },
+    { p: 'thinkingStreamed', k: 'check', label: 'Streamed thinking counts as the first token', hint: 'Turn on if your product streams reasoning to the user. Off: TTFT waits for the visible answer.' }
   ]
 };
 FIELDS.chat = FIELDS.agent.filter(f => f.p !== 'contextTokens').map(f => f.p === 'turnTokens' ? Object.assign({}, f, { label: 'User message per turn' }) : f.p === 'thinkS' ? Object.assign({}, f, { label: 'User think time between turns' }) : f);
@@ -644,6 +684,8 @@ let formNode = null, formBound = [];
 function renderDetails() {
   const box = $('#details');
   formNode = null; formBound = [];
+  if (S.sel && S.sel.type === 'stress') return renderStressPanel();
+  if (S.sel && S.sel.type === 'advisor') return renderAdvisorPanel();
   if (S.sel && S.sel.type === 'node') {
     const n = nodeById(S.sel.id);
     if (!n) { S.sel = null; return renderDetails(); }
@@ -824,6 +866,7 @@ $('#details').addEventListener('click', e => {
   const li = e.target.closest('[data-req]');
   if (pr) { const i = S.graph.edges.findIndex(x => x.id === pr.dataset.primary); const [ed] = S.graph.edges.splice(i, 1); S.graph.edges.unshift(ed); refreshForm(); scheduleRun(); return; }
   if (li) { select({ type: 'req', id: +li.dataset.req }); return; }
+  const sk = e.target.closest('[data-seekto]'); if (sk) { seek(+sk.dataset.seekto); return; }
   if (!b) return;
   const a = b.dataset.act;
   if (a === 'del') deleteSelection();
@@ -933,14 +976,15 @@ function renderOverview() {
     if (q.net) add('Network', q.t, q.t + q.net, 'var(--c-xfer)');
     add('Queue wait', q.tEnq, q.tAdmit, 'var(--c-queue)');
     add('Prefill', q.tAdmit, q.tPrefEnd, 'var(--c-prefill)');
-    if (disagg) { add('KV transfer', q.tPrefEnd, q.tXferEnd, 'var(--c-xfer)'); add('Decode wait', q.tXferEnd, q.tFirst, 'var(--c-dwait)'); }
-    add('Decode', q.tFirst, q.tFinish, 'color-mix(in srgb, var(--ink) 35%, transparent)');
+    if (disagg) { add('KV transfer', q.tPrefEnd, q.tXferEnd, 'var(--c-xfer)'); add('Decode wait', q.tXferEnd, q.tTok1, 'var(--c-dwait)'); }
+    if (q.think) add('Thinking', q.tTok1, isFinite(q.tFirst) && q.tFirst > q.tTok1 ? q.tFirst : q.tFinish, 'var(--n-src)');
+    add('Answer', q.think && q.tFirst > q.tTok1 ? q.tFirst : q.tTok1, q.tFinish, 'color-mix(in srgb, var(--ink) 35%, transparent)');
     box.innerHTML = '<button class="linkbtn" data-act="back" type="button">&larr; Overview</button>' +
       '<h2>Request #' + q.id + ' ' + (q.fail ? '<span class="pill bad">rejected</span>' : q.ok ? '<span class="pill ok">met SLO</span>' : '<span class="pill bad">missed SLO</span>') + '</h2>' +
       '<div class="sub">Arrived ' + mmss(q.t) + (q.user >= 0 ? ' · user ' + q.user : '') + ' · ' + esc(poolName(q.pPool)) + (disagg ? ' → ' + esc(poolName(q.dPool)) : '') + (q.inLink ? ' via ' + esc(poolName(q.inLink)) : '') + '</div>' +
       (q.fail ? '<div class="blind">' + esc(q.fail) + '.</div>' : '') +
       '<div class="wf">' + segs.map(g => '<div class="wrow"><span>' + g.nm + '</span><div class="track"><i style="left:' + (100 * g.a / total).toFixed(2) + '%;width:' + Math.max(0.8, 100 * (g.b - g.a) / total).toFixed(2) + '%;background:' + g.c + '"></i></div><span>' + fS(g.b - g.a) + '</span></div>').join('') + '</div>' +
-      rowH('Input tokens (cached)', fInt(q.isl) + ' (' + fInt(q.cached || 0) + ')') + rowH('Output tokens', fInt(q.osl)) + rowH('TTFT', fS(q.ttft)) + rowH('TPOT', fMs(q.tpot)) +
+      rowH('Input tokens (cached)', fInt(q.isl) + ' (' + fInt(q.cached || 0) + ')') + rowH('Output tokens', fInt(q.osl)) + (q.think ? rowH('Hidden thinking tokens', fInt(q.think)) : '') + rowH('TTFT', fS(q.ttft)) + rowH('TPOT', fMs(q.tpot)) + (q.surge ? rowH('Origin', 'extra traffic from the surge') : '') +
       (isFinite(q.recTtft) ? rowH('Recorded TTFT (log)', fS(q.recTtft)) : '') + (isFinite(q.recQueue) ? rowH('Recorded queue time (log)', fS(q.recQueue)) : '') + (isFinite(q.recE2e) ? rowH('Recorded end-to-end (log)', fS(q.recE2e)) : '') +
       '<div class="btnrow"><button class="btn" data-act="jump" type="button">Jump to its arrival</button></div>';
     return;
@@ -952,7 +996,9 @@ function renderOverview() {
   for (let i = 0; i < R.reqs.length; i++) { const q = R.reqs[i]; if (q.t > t) break; if (q.t >= lo && (isFinite(q.ttft) || q.fail)) list.push(q); }
   list.sort((a, b) => (b.fail ? 1e9 : b.ttft) - (a.fail ? 1e9 : a.ttft));
   const top = list.slice(0, 8);
-  box.innerHTML = '<h2>At ' + mmss(t) + '</h2><div class="sub">' + fInt(Sr.arrivals[s]) + ' arrivals this second · TTFT p99 ' + fS(Sr.p99[s]) + ' · ' + (Sr.firsts[s] ? fPct(Sr.viol[s] / Sr.firsts[s]) : '0%') + ' over target</div>' +
+  const bt = R.summary.bottleneck;
+  const bnHtml = bt && bt.top.length ? '<h3 class="sec" style="margin-top:0">Bottlenecks this run</h3>' + bt.top.slice(0, 3).map(b => '<div class="row"><span><button class="linkbtn" type="button" data-seekto="' + b.first + '">' + esc(b.name) + '</button>: ' + b.label + '</span><span>' + b.seconds + ' s</span></div>').join('') : '';
+  box.innerHTML = bnHtml + '<h2 style="margin-top:8px">At ' + mmss(t) + '</h2><div class="sub">' + fInt(Sr.arrivals[s]) + ' arrivals this second · TTFT p99 ' + fS(Sr.p99[s]) + ' · ' + (Sr.firsts[s] ? fPct(Sr.viol[s] / Sr.firsts[s]) : '0%') + ' over target</div>' +
     '<h3 class="sec">Slowest requests, last 20 s</h3>' +
     (top.length ? '<ul class="reqlist">' + top.map(q => {
       const tot = Math.max(1e-6, (q.bQueue || 0) + (q.bPrefill || 0) + (q.bXfer || 0) + (q.bDwait || 0));
@@ -972,7 +1018,10 @@ function doRun() {
   renderProblems(); markProblems();
   if (c.errors.length) { $('#status').innerHTML = '<span class="bad">' + c.errors.length + ' problem' + (c.errors.length > 1 ? 's' : '') + ' to fix before it can run</span> (see the left panel)'; return; }
   let R;
-  try { R = E.simulate(c.spec); } catch (err) { $('#status').textContent = 'Simulation failed: ' + err.message; return; }
+  try {
+    R = E.simulate(c.spec, S.stress);
+    if (S.stress && !S.baseline) { const b = E.simulate(c.spec); S.autoBase = baselineOf(b, 'Unstressed'); } else S.autoBase = null;
+  } catch (err) { $('#status').textContent = 'Simulation failed: ' + err.message; return; }
   prep(R);
   S.run = R;
   if (firstRun) {
@@ -985,10 +1034,10 @@ function doRun() {
   S.T = clamp(S.T, 0, Math.max(0, R.D - 1));
   if (S.sel && S.sel.type === 'req') S.sel = null;
   const sm = R.summary;
-  $('#status').innerHTML = '<b>' + fInt(sm.requests) + '</b> requests' + (sm.users ? ' from <b>' + fInt(sm.users) + '</b> users' : '') + ' · <b>' + mmss(R.D) + '</b> simulated in ' + sm.simMs + ' ms' + (S.baseline ? ' · vs baseline <b>' + esc(S.baseline.label) + '</b>' : '');
+  $('#status').innerHTML = '<b>' + fInt(sm.requests) + '</b> requests' + (sm.users ? ' from <b>' + fInt(sm.users) + '</b> users' : '') + ' · <b>' + mmss(R.D) + '</b> simulated in ' + sm.simMs + ' ms' + (BL() ? ' · vs <b>' + esc(BL().label) + '</b>' : '');
   $('#scrub').max = Math.max(1, R.D - 1);
-  renderKpis(); buildCharts(); buildStrip();
-  renderDetails();
+  renderKpis(); buildCharts(); buildStrip(); renderBanner();
+  if (S.sel && (S.sel.type === 'stress' || S.sel.type === 'advisor')) { /* keep panel */ } else renderDetails();
   render(true);
   if (S.needFit) { S.needFit = false; requestAnimationFrame(fit); }
 }
@@ -1025,7 +1074,7 @@ function prep(R) {
   R.xf = R.reqs.filter(q => q.xLink && isFinite(q.tPrefEnd) && isFinite(q.tXferEnd)).sort((a, b) => a.tPrefEnd - b.tPrefEnd);
   R.maxXf = R.xf.reduce((m, q) => Math.max(m, q.tXferEnd - q.tPrefEnd), 0);
   const tp = TP.TEMPLATES.find(x => x.id === S.tpl);
-  R.label = tp ? tp.name + (S.dirty ? ' (edited)' : '') : 'custom graph';
+  R.label = (tp ? tp.name + (S.dirty ? ' (edited)' : '') : 'custom graph') + (S.stress ? ' under ' + (S.stress.name || 'stress') : '');
 }
 
 // ---------- live canvas ----------
@@ -1052,13 +1101,14 @@ function updateLive(t) {
     if (n.type === 'pool') {
       const f = fr.pools[id];
       if (!f) continue;
-      X.stats.textContent = (f.serving + f.draining) + '/' + (f.serving + f.starting + f.draining) + ' up · load ' + fPct(f.util) + ' · KV ' + fPct(f.kv) + ' · ' + fK(f.tok) + ' tok/s';
+      X.stats.textContent = (f.down ? f.down + ' DOWN · ' : '') + (f.serving + f.draining) + '/' + (f.serving + f.starting + f.draining) + ' up · load ' + fPct(f.util) + ' · KV ' + fPct(f.kv) + ' · ' + fK(f.tok) + ' tok/s';
       const col = n.cfg.siteKind === 'neo' ? 'var(--neo)' : 'var(--onprem)';
       for (let i = 0; i < X.cells.length; i++) {
         const C = X.cells[i], ins = f.inst[i];
         if (!ins) { C.c.setAttribute('fill', 'none'); C.c.setAttribute('stroke', 'var(--line)'); C.c.setAttribute('stroke-dasharray', '3 3'); C.c.removeAttribute('fill-opacity'); C.kv.setAttribute('width', 0); C.tt.textContent = 'Not provisioned'; continue; }
         C.c.removeAttribute('stroke-dasharray');
-        if (ins.st === 1) { C.c.setAttribute('fill', 'url(#hatch)'); C.c.removeAttribute('fill-opacity'); C.c.setAttribute('stroke', col); C.c.setAttribute('stroke-dasharray', '4 2'); C.kv.setAttribute('width', 0); C.tt.textContent = 'Cold start: ready in ' + Math.ceil(ins.cold) + ' s (billed)'; }
+        if (ins.st === 3) { C.c.setAttribute('fill', 'var(--crit)'); C.c.setAttribute('fill-opacity', '0.22'); C.c.setAttribute('stroke', 'var(--crit)'); C.c.setAttribute('stroke-dasharray', '2 2'); C.kv.setAttribute('width', 0); C.tt.textContent = 'Down: failed in the outage'; }
+        else if (ins.st === 1) { C.c.setAttribute('fill', 'url(#hatch)'); C.c.removeAttribute('fill-opacity'); C.c.setAttribute('stroke', col); C.c.setAttribute('stroke-dasharray', '4 2'); C.kv.setAttribute('width', 0); C.tt.textContent = 'Cold start: ready in ' + Math.ceil(ins.cold) + ' s (billed)'; }
         else {
           C.c.setAttribute('fill', col); C.c.setAttribute('fill-opacity', (0.12 + 0.83 * ins.u).toFixed(2));
           C.c.setAttribute('stroke', ins.st === 2 ? 'var(--muted)' : 'none'); if (ins.st === 2) C.c.setAttribute('stroke-dasharray', '2 2');
@@ -1072,9 +1122,9 @@ function updateLive(t) {
     } else if (n.type === 'link') {
       const f = fr.links[id];
       if (!f) continue;
-      X.t1.textContent = fPct(f.util) + ' used · ' + f.gbps.toFixed(0) + ' Gbps · ' + f.xfers + ' KV';
-      X.bar.setAttribute('width', X.bw * f.util);
-      X.bar.setAttribute('fill', f.util > 0.85 ? 'var(--crit)' : f.util > 0.6 ? 'var(--warn)' : 'var(--good)');
+      X.t1.textContent = (f.factor <= 0 ? 'DOWN · ' : f.factor < 1 ? 'degraded to ' + fPct(f.factor) + ' · ' : '') + fPct(f.util) + ' used · ' + f.gbps.toFixed(0) + ' Gbps · ' + f.xfers + ' KV';
+      X.bar.setAttribute('width', X.bw * (f.factor <= 0 ? 1 : f.util));
+      X.bar.setAttribute('fill', f.factor < 1 || f.util > 0.85 ? 'var(--crit)' : f.util > 0.6 ? 'var(--warn)' : 'var(--good)');
       X.tbar.setAttribute('width', X.bw * Math.min(1, f.trainGbps / Math.max(1e-9, n.cfg.gbps)));
     } else if (n.type === 'train') {
       const f = fr.train;
@@ -1104,6 +1154,9 @@ function updateLive(t) {
     const ev = edgeViews[id], fl = R.flow[id];
     const v = fl ? fl[s] / R.flowMax[id] : 0;
     ev.wire.setAttribute('stroke-width', (1.6 + 4 * v).toFixed(2));
+    const lk = [ev.e.from, ev.e.to].map(id => fr.links[id]).find(x => x && x.factor < 1);
+    ev.wire.setAttribute('stroke', lk ? 'var(--crit)' : edgeColor(ev.e));
+    if (lk) ev.wire.setAttribute('stroke-dasharray', '6 4'); else ev.wire.removeAttribute('stroke-dasharray');
     ev.flow.setAttribute('opacity', v > 0.01 ? 0.9 : 0);
     ev.flow.style.strokeDashoffset = String(-(t * 30) % 120);
   }
@@ -1142,13 +1195,13 @@ function updateLive(t) {
 // ---------- KPIs ----------
 function kpiTile(k, v, cls, d, dcls, extra) { return '<div class="kpi ' + (cls || '') + (extra || '') + '"><div class="k" title="' + k + '">' + k + '</div><div class="v">' + v + '</div><div class="d ' + (dcls || '') + '">' + (d || '') + '</div></div>'; }
 function delta(cur, base, lowerBetter, fmt) {
-  if (!S.baseline || !isFinite(cur) || !isFinite(base)) return ['', ''];
+  if (!BL() || !isFinite(cur) || !isFinite(base)) return ['', ''];
   const diff = cur - base;
   if (Math.abs(diff) < 1e-9) return ['= baseline', ''];
   return [(diff > 0 ? '▲ ' : '▼ ') + fmt(Math.abs(diff)), (lowerBetter ? diff < 0 : diff > 0) ? 'better' : 'worse'];
 }
 function renderKpis() {
-  const R = S.run, s = R.summary, b = S.baseline ? S.baseline.summary : {}, slo = R.spec.slo;
+  const R = S.run, s = R.summary, b = BL() ? BL().summary : {}, slo = R.spec.slo;
   const tiles = [];
   const t1 = (k, v, cls, cur, base, lower, fmt, extra) => { const [d, dc] = delta(cur, base, lower, fmt); tiles.push(kpiTile(k, v, cls, d, dc, extra)); };
   if (s.requests) {
@@ -1161,7 +1214,12 @@ function renderKpis() {
     t1('$ / M output tok', fUsd(s.costPerMTok), '', s.costPerMTok, b.costPerMTok, true, fUsd);
     t1('Cross-site traffic', s.crossGB >= 1 ? fK(s.crossGB) + ' GB' : (s.crossGB * 1000).toFixed(0) + ' MB', '', s.crossGB, b.crossGB, true, v => fK(v) + ' GB');
     if (s.recorded && isFinite(s.recorded.errP99)) { const e = s.recorded.errP99; tiles.push(kpiTile('Recorded TTFT p99 (log)', fS(s.recorded.ttftP99), Math.abs(e) <= 0.2 ? 'good' : 'warn', 'sim ' + (e >= 0 ? '+' : '') + Math.round(e * 100) + '% vs log', '')); }
-    if (s.dropped) tiles.push(kpiTile('Rejected (context > KV)', fInt(s.dropped), 'crit', '', ''));
+    t1('$ / 1k requests', fUsd(s.costPerKReq), '', s.costPerKReq, b.costPerKReq, true, fUsd);
+    if (s.thinkShare > 0) tiles.push(kpiTile('Thinking share of tokens', fPct(s.thinkShare), '', 'hidden reasoning, billed', ''));
+    if (s.rejected) tiles.push(kpiTile('Rejected (context > KV)', fInt(s.rejected), 'crit', '', ''));
+    if (s.lost) tiles.push(kpiTile('Lost in outage', fInt(s.lost), 'crit', 'streams cut mid-answer', ''));
+    const bf = s.bottleneck && s.bottleneck.first;
+    tiles.push('<div class="kpi wide ' + (bf ? 'crit' : 'good') + '"' + (bf ? ' data-seek="' + bf.t + '" title="Jump to ' + mmss(bf.t) + '"' : '') + '><div class="k">First bottleneck' + (bf ? ' · ' + mmss(bf.t) : '') + '</div><div class="v">' + (bf ? esc(bf.name) : 'None found') + '</div><div class="d">' + (bf ? bf.label + (s.bottleneck.top.length > 1 ? ' · then ' + esc(s.bottleneck.top[1].name) + ': ' + s.bottleneck.top[1].label : '') : 'no second over target') + '</div></div>');
   }
   if (s.train) {
     const t = s.train, bt = b.train || {};
@@ -1172,6 +1230,7 @@ function renderKpis() {
   }
   $('#kpis').innerHTML = tiles.join('');
 }
+$('#kpis').addEventListener('click', e => { const k = e.target.closest('[data-seek]'); if (k) seek(+k.dataset.seek); });
 
 // ---------- charts ----------
 const CH = { w: 420, h: 150, l: 38, r: 8, t: 8, b: 18 };
@@ -1212,35 +1271,36 @@ function buildCharts() {
   $('#charts').innerHTML = ''; charts = [];
   const R = S.run, Sr = R.series, slo = R.spec.slo;
   { const leg = [{ n: 'p99', c: 'var(--accent)' }, { n: 'p50', c: 'color-mix(in srgb, var(--accent) 45%, transparent)' }, { n: 'target', c: 'var(--crit)', dash: true }];
-    if (S.baseline) leg.push({ n: 'baseline p99', c: 'var(--muted)', dash: true });
+    if (BL()) leg.push({ n: 'baseline p99', c: 'var(--muted)', dash: true });
     const hasRec = Sr.recP99 && Array.prototype.some.call(Sr.recP99, isFinite);
     if (hasRec) leg.push({ n: 'recorded p99 (log)', c: 'var(--good)', dash: true });
     const ch = makeChart('TTFT <small>rolling 30 s, s</small>', leg);
     let m = slo.ttft * 1.5; for (let i = 0; i < R.D; i++) { if (isFinite(Sr.p99[i])) m = Math.max(m, Sr.p99[i]); if (hasRec && isFinite(Sr.recP99[i])) m = Math.max(m, Sr.recP99[i]); }
-    if (S.baseline) for (const v of S.baseline.p99) if (isFinite(v)) m = Math.max(m, v);
+    if (BL()) for (const v of BL().p99) if (isFinite(v)) m = Math.max(m, v);
     m = Math.min(niceMax(m), Math.max(niceMax(slo.ttft * 10), 10));
     const Y = axes(ch, m, v => v < 10 ? v.toFixed(1) : Math.round(v));
-    if (S.baseline) el('path', { d: linePath(S.baseline.p99.slice(0, R.D), ch.X, Y, m), stroke: 'var(--muted)', fill: 'none', 'stroke-width': 1.2, 'stroke-dasharray': '5 3' }, ch.svg);
+    if (BL()) el('path', { d: linePath(BL().p99.slice(0, R.D), ch.X, Y, m), stroke: 'var(--muted)', fill: 'none', 'stroke-width': 1.2, 'stroke-dasharray': '5 3' }, ch.svg);
     el('path', { d: linePath(Sr.p50, ch.X, Y, m), stroke: 'var(--accent)', 'stroke-opacity': 0.45, fill: 'none', 'stroke-width': 1.2 }, ch.svg);
     el('path', { d: linePath(Sr.p99, ch.X, Y, m), stroke: 'var(--accent)', fill: 'none', 'stroke-width': 1.7 }, ch.svg);
     if (hasRec) el('path', { d: linePath(Sr.recP99, ch.X, Y, m), stroke: 'var(--good)', fill: 'none', 'stroke-width': 1.5, 'stroke-dasharray': '2 3' }, ch.svg);
     el('line', { x1: ch.L, x2: ch.W - CH.r, y1: Y(slo.ttft), y2: Y(slo.ttft), stroke: 'var(--crit)', 'stroke-dasharray': '6 4', 'stroke-width': 1.1 }, ch.svg);
     ph(ch); charts.push(ch); }
-  { const ch = makeChart('Where TTFT goes <small>mean, rolling 10 s</small>', [{ n: 'queue', c: 'var(--c-queue)' }, { n: 'prefill', c: 'var(--c-prefill)' }, { n: 'network/KV', c: 'var(--c-xfer)' }, { n: 'decode wait', c: 'var(--c-dwait)' }]);
-    let m = 0.1; for (let i = 0; i < R.D; i++) m = Math.max(m, Sr.bq[i] + Sr.bp[i] + Sr.bx[i] + Sr.bd[i]);
+  { const hasThink = Sr.bt && Array.prototype.some.call(Sr.bt, v => v > 0);
+    const ch = makeChart('Where TTFT goes <small>mean, rolling 10 s</small>', [{ n: 'queue', c: 'var(--c-queue)' }, { n: 'prefill', c: 'var(--c-prefill)' }, { n: 'network/KV', c: 'var(--c-xfer)' }, { n: 'decode wait', c: 'var(--c-dwait)' }].concat(hasThink ? [{ n: 'thinking', c: 'var(--n-src)' }] : []));
+    let m = 0.1; for (let i = 0; i < R.D; i++) m = Math.max(m, Sr.bq[i] + Sr.bp[i] + Sr.bx[i] + Sr.bd[i] + (Sr.bt ? Sr.bt[i] : 0));
     const Y = axes(ch, niceMax(m), v => v < 10 ? v.toFixed(1) : Math.round(v));
-    stacked(ch, [{ data: Sr.bq, c: 'var(--c-queue)' }, { data: Sr.bp, c: 'var(--c-prefill)' }, { data: Sr.bx, c: 'var(--c-xfer)' }, { data: Sr.bd, c: 'var(--c-dwait)' }], Y);
+    stacked(ch, [{ data: Sr.bq, c: 'var(--c-queue)' }, { data: Sr.bp, c: 'var(--c-prefill)' }, { data: Sr.bx, c: 'var(--c-xfer)' }, { data: Sr.bd, c: 'var(--c-dwait)' }].concat(hasThink ? [{ data: Sr.bt, c: 'var(--n-src)' }] : []), Y);
     ph(ch); charts.push(ch); }
   if (R.pools.length) { const ps = R.pools.slice().sort((a, b) => (a.siteKind === 'neo') - (b.siteKind === 'neo'));
     const shade = (p, i) => p.siteKind === 'neo' ? 'color-mix(in srgb, var(--neo) ' + (90 - (i % 3) * 25) + '%, transparent)' : 'color-mix(in srgb, var(--onprem) ' + (90 - (i % 3) * 25) + '%, transparent)';
     const leg = ps.map((p, i) => ({ n: p.name, c: shade(p, i) }));
-    if (S.baseline) leg.push({ n: 'baseline', c: 'var(--muted)', dash: true });
+    if (BL()) leg.push({ n: 'baseline', c: 'var(--muted)', dash: true });
     const ch = makeChart('Serving GPUs <small>incl. cold starts</small>', leg);
     let m = 1; for (let i = 0; i < R.D; i++) { let s = 0; for (const p of ps) s += Sr.gpus[p.id][i]; m = Math.max(m, s); }
-    if (S.baseline) for (const v of S.baseline.gpus) m = Math.max(m, v);
+    if (BL()) for (const v of BL().gpus) m = Math.max(m, v);
     const Y = axes(ch, niceMax(m), fK);
     stacked(ch, ps.map((p, i) => ({ data: Sr.gpus[p.id], c: shade(p, i) })), Y);
-    if (S.baseline) el('path', { d: linePath(S.baseline.gpus.slice(0, R.D), ch.X, Y), stroke: 'var(--muted)', fill: 'none', 'stroke-width': 1.2, 'stroke-dasharray': '5 3' }, ch.svg);
+    if (BL()) el('path', { d: linePath(BL().gpus.slice(0, R.D), ch.X, Y), stroke: 'var(--muted)', fill: 'none', 'stroke-width': 1.2, 'stroke-dasharray': '5 3' }, ch.svg);
     ph(ch); charts.push(ch); }
   { const ch = makeChart('Traffic <small>req/s</small>', [{ n: 'arrivals', c: 'var(--accent)' }, { n: 'completions', c: 'var(--muted)' }]);
     let m = 1; for (let i = 0; i < R.D; i++) m = Math.max(m, Sr.arrivals[i], Sr.completions[i]);
@@ -1269,6 +1329,9 @@ function buildStrip() {
   const R = S.run, Sr = R.series, D = Math.max(1, R.D);
   el('rect', { x: 0, y: 0, width: 1000, height: 12, fill: 'var(--panel)' }, v);
   for (let s = 0; s < R.D; s++) { if (!Sr.firsts[s]) continue; const f = Sr.viol[s] / Sr.firsts[s]; if (f <= 0.02) continue; el('rect', { x: 1000 * s / D, y: 0, width: Math.max(1, 1000 / D), height: 12, fill: 'var(--crit)', 'fill-opacity': (0.2 + 0.8 * f).toFixed(2) }, v); }
+  const stv = R.stress;
+  if (stv && stv.surge) { const sg = stv.surge, x0 = 1000 * sg.start / D, w = 1000 * (sg.dur || (D - sg.start)) / D; el('rect', { x: x0, y: 0, width: w, height: 3, fill: 'var(--warn)' }, v); }
+  if (stv) for (const o of stv.outages) { const x0 = 1000 * o.start / D, w = 1000 * (o.dur || (D - o.start)) / D; el('rect', { x: x0, y: 9, width: w, height: 3, fill: 'var(--ink)', 'fill-opacity': 0.7 }, v); }
   if (R.summary.train) for (const st of R.train.steps) if (st.comm > 0.5) el('rect', { x: 1000 * (st.end - st.comm) / D, y: 9, width: Math.max(1, 1000 * st.comm / D), height: 3, fill: 'var(--train)' }, v);
 }
 $('#vstrip').addEventListener('click', e => { if (!S.run) return; const b = e.currentTarget.getBoundingClientRect(); seek((e.clientX - b.left) / b.width * (S.run.D - 1)); });
@@ -1287,7 +1350,7 @@ function render(force) {
   if (force || sec !== lastSec) {
     lastSec = sec;
     if (S.sel && (S.sel.type === 'node' || S.sel.type === 'edge')) renderLive();
-    else if (!S.sel || S.sel.type !== 'req') renderOverview();
+    else if (!S.sel) renderOverview();
   }
 }
 let lastTs = 0;
@@ -1327,9 +1390,7 @@ document.addEventListener('keydown', e => {
 });
 $('#pinBtn').onclick = () => {
   const R = S.run; if (!R) return;
-  const tot = new Float64Array(R.D);
-  for (const p of R.pools) for (let i = 0; i < R.D; i++) tot[i] += R.series.gpus[p.id][i];
-  S.baseline = { label: R.label, summary: R.summary, p99: Array.from(R.series.p99), gpus: Array.from(tot) };
+  S.baseline = baselineOf(R, R.label);
   $('#clearBtn').hidden = false; $('#pinBtn').textContent = 'Re-pin baseline';
   toast('Pinned. Change anything and the KPIs and charts compare against it.');
   doRun();
@@ -1340,6 +1401,310 @@ $('#copyBtn').onclick = () => {
   if (navigator.clipboard && navigator.clipboard.writeText) navigator.clipboard.writeText(txt).then(() => toast('Graph JSON copied.'), () => toast('Copy was blocked by the browser.'));
   else toast('Copy is not available here.');
 };
+function baselineOf(R, label) {
+  const tot = new Float64Array(R.D);
+  for (const p of R.pools) for (let i = 0; i < R.D; i++) tot[i] += R.series.gpus[p.id][i];
+  return { label, summary: R.summary, p99: Array.from(R.series.p99), gpus: Array.from(tot) };
+}
+// ---------- what if: stress overlays ----------
+const BL = () => S.baseline || S.autoBase || null;
+function graphFacts() {
+  const g = S.graph, D = S.run ? S.run.D : 600;
+  const pools = g.nodes.filter(n => n.type === 'pool');
+  const onprem = pools.filter(n => n.cfg.siteKind !== 'neo');
+  const neoSites = [...new Set(pools.filter(n => n.cfg.siteKind === 'neo').map(n => n.cfg.site))];
+  const sites = [...new Set(pools.map(n => n.cfg.site))];
+  const links = g.nodes.filter(n => n.type === 'link');
+  const sessions = g.nodes.some(n => n.type === 'agent' || n.type === 'chat');
+  return { D, pools, onprem, neoSites, sites, links, sessions, start: Math.round(D * 0.35 / 5) * 5, dur: Math.round(D * 0.3 / 5) * 5 };
+}
+const STRESS_PRESETS = [
+  { id: 'peakSessions', name: 'Peak sessions', desc: '2× concurrent users for a window', ok: f => f.sessions, make: f => ({ surge: { mult: 2, start: f.start, dur: f.dur, target: 'sessions' } }) },
+  { id: 'peakLoad', name: 'Peak load', desc: '3× traffic for 2 minutes', ok: () => true, make: f => ({ surge: { mult: 3, start: f.start, dur: Math.min(120, f.dur), target: 'all' } }) },
+  { id: 'outage', name: 'Partial outage', desc: 'Half of the first on-prem pool fails', ok: f => f.onprem.length > 0, make: f => ({ outages: [{ target: f.onprem[0].id, fraction: 0.5, start: f.start, dur: Math.round(f.D * 0.25 / 5) * 5, recovery: 60 }] }) },
+  { id: 'neoDown', name: 'Neocloud down', desc: 'Every neocloud site unavailable', ok: f => f.neoSites.length > 0, make: f => ({ outages: f.neoSites.map(sn => ({ target: 'site:' + sn, fraction: 1, start: 0, dur: 0, recovery: 60 })) }) },
+  { id: 'linkDown', name: 'Link down', desc: 'First cross-site link cut for 60 s', ok: f => f.links.length > 0, make: f => ({ outages: [{ target: f.links[0].id, fraction: 1, start: f.start, dur: 60, recovery: 0 }] }) },
+  { id: 'bigCtx', name: 'Large contexts', desc: 'Every prompt 2× longer', ok: () => true, make: () => ({ ctx: { mult: 2, add: 0 } }) },
+  { id: 'combo', name: 'Peak + outage', desc: '3× traffic while half of on-prem is down', ok: f => f.onprem.length > 0, make: f => ({ surge: { mult: 3, start: f.start, dur: Math.min(120, f.dur), target: 'all' }, outages: [{ target: f.onprem[0].id, fraction: 0.5, start: f.start, dur: Math.min(120, f.dur), recovery: 60 }] }) }
+];
+function presetStress(p) { const f = graphFacts(); return Object.assign({ name: p.name, surge: null, ctx: null, outages: [] }, p.make(f)); }
+function blankStress() { return { name: 'Custom stress', surge: null, ctx: null, outages: [] }; }
+S.stress = null; S.stressDraft = blankStress(); S.autoBase = null; S.analysis = null; S.job = null;
+S.adv = { target: 95, minQuality: '', quality: {}, cands: { 'llama-8b|0': true, 'coder-32b|0': true, 'llama-70b|0': true, 'llama-70b|2000': true }, underStress: false };
+S.hr = { kind: 'load', target: 95 };
+const targetName = id => {
+  if (!id) return '';
+  if (id.startsWith('site:')) return 'site ' + id.slice(5);
+  const n = nodeById(id); return n ? n.cfg.name : id;
+};
+function describeStress(st) {
+  if (!st) return '';
+  const parts = [];
+  const win = (a, d) => d ? mmss(a) + '–' + mmss(a + d) : 'whole run';
+  if (st.surge && st.surge.mult !== 1) parts.push(st.surge.mult + '× ' + (st.surge.target === 'sessions' ? 'users' : st.surge.target === 'traces' ? 'trace traffic' : 'traffic') + ' (' + win(st.surge.start, st.surge.dur) + ')');
+  if (st.ctx && (st.ctx.mult !== 1 || st.ctx.add)) parts.push('contexts ' + (st.ctx.mult !== 1 ? st.ctx.mult + '×' : '') + (st.ctx.add ? ' +' + fK(st.ctx.add) + ' tok' : ''));
+  for (const o of st.outages || []) parts.push(targetName(o.target) + (o.fraction >= 1 ? ' down' : ' −' + Math.round(o.fraction * 100) + '%') + ' (' + win(o.start, o.dur) + ')');
+  return parts.join(' · ');
+}
+const stressActive = st => !!(st && E.normStress(st).active);
+function applyStress(st) {
+  S.stress = stressActive(st) ? JSON.parse(JSON.stringify(st)) : null;
+  scheduleRun(0);
+}
+function renderBanner() {
+  const b = $('#stressBanner');
+  if (!S.stress) { b.hidden = true; return; }
+  b.hidden = false;
+  const R = S.run, bo = R && R.summary.bottleneck && R.summary.bottleneck.first;
+  b.innerHTML = '<span>&#9888; <b>' + esc(S.stress.name || 'Stress test') + ':</b> ' + esc(describeStress(S.stress)) + '</span>' +
+    (S.baseline ? '' : '<span style="color:var(--muted)">compared with the same graph unstressed</span>') +
+    (bo ? '<button class="linkbtn" type="button" data-seek="' + bo.t + '">first breaks at ' + mmss(bo.t) + ': ' + esc(bo.name) + ', ' + bo.label + '</button>' : '') +
+    '<button class="btn" type="button" data-act="clearStress">Clear</button>';
+}
+$('#stressBanner').addEventListener('click', e => {
+  const sk = e.target.closest('[data-seek]'); if (sk) { seek(+sk.dataset.seek); return; }
+  if (e.target.closest('[data-act="clearStress"]')) { S.stress = null; scheduleRun(0); if (S.sel && S.sel.type === 'stress') renderDetails(); }
+});
+function stressOptionsHtml(sel) {
+  const f = graphFacts();
+  const opts = f.pools.map(n => ['' + n.id, 'Pool: ' + n.cfg.name]).concat(f.links.map(n => [n.id, 'Link: ' + n.cfg.name])).concat(f.sites.map(sn => ['site:' + sn, 'Whole site: ' + sn]));
+  return opts.map(o => '<option value="' + esc(o[0]) + '"' + (o[0] === sel ? ' selected' : '') + '>' + esc(o[1]) + '</option>').join('');
+}
+function rng(path, label, min, max, step, val, fmt) {
+  return '<div class="ctl"><label><span>' + label + '</span><output data-out="' + path + '">' + fmt(val) + '</output></label><input type="range" data-k="' + path + '" min="' + min + '" max="' + max + '" step="' + step + '" value="' + val + '" aria-label="' + esc(label) + '"></div>';
+}
+const STRESS_FMT = {
+  mult: v => (+v === 1 ? 'off' : (+v).toFixed(2).replace(/\.?0+$/, '') + '×'), time: v => mmss(+v), dur: v => (+v ? mmss(+v) : 'whole run'),
+  pct: v => Math.round(+v) + '%', tok: v => (+v ? '+' + fK(+v) + ' tok' : 'none'), rec: v => (+v ? +v + ' s' : 'instant')
+};
+function renderStressPanel() {
+  const box = $('#details'), d = S.stressDraft, f = graphFacts(), D = f.D;
+  const sg = d.surge || { mult: 1, start: f.start, dur: f.dur, target: 'all' };
+  const cx = d.ctx || { mult: 1, add: 0 };
+  box.innerHTML = '<span class="typetag" style="background:var(--warn)">What if…</span><h2>Stress this topology</h2>' +
+    '<div class="sub">Runs the canvas graph under a heavier or broken day without editing it. Results compare against the same graph unstressed.</div>' +
+    '<h3 class="sec">Start from a scenario</h3><div class="sgrid">' + STRESS_PRESETS.map(p => '<button type="button" data-preset="' + p.id + '"' + (p.ok(f) ? '' : ' disabled title="Not applicable to this graph"') + '><b>' + p.name + '</b><span>' + p.desc + '</span></button>').join('') + '</div>' +
+    '<h3 class="sec">Traffic surge</h3>' +
+    rng('surge.mult', 'Multiplier', 1, 10, 0.1, sg.mult, STRESS_FMT.mult) +
+    '<div class="ctl"><label for="sgT">Applies to</label><select id="sgT" data-k="surge.target"><option value="all"' + (sg.target === 'all' ? ' selected' : '') + '>All traffic</option><option value="sessions"' + (sg.target === 'sessions' ? ' selected' : '') + '>Concurrent users (sessions)</option><option value="traces"' + (sg.target === 'traces' ? ' selected' : '') + '>Trace replay only</option></select></div>' +
+    '<div class="grid2">' + rng('surge.start', 'Starts at', 0, D, 5, sg.start, STRESS_FMT.time) + rng('surge.dur', 'Lasts', 0, D, 5, sg.dur, STRESS_FMT.dur) + '</div>' +
+    '<h3 class="sec">Larger contexts</h3><div class="grid2">' + rng('ctx.mult', 'Prompt size', 1, 8, 0.25, cx.mult, STRESS_FMT.mult) + rng('ctx.add', 'Extra tokens', 0, 100000, 1000, cx.add, STRESS_FMT.tok) + '</div>' +
+    '<h3 class="sec">Outages</h3>' + (d.outages.length ? '' : '<div class="sub">No outage. Add one to fail part of a pool, a link or a whole site.</div>') +
+    d.outages.map((o, i) => '<div class="orow"><div class="ctl" style="margin-top:0"><label for="ot' + i + '">What fails</label><select id="ot' + i + '" data-k="outages.' + i + '.target">' + stressOptionsHtml(o.target) + '</select></div>' +
+      '<div class="grid2">' + rng('outages.' + i + '.fraction', 'Capacity lost', 5, 100, 5, Math.round(o.fraction * 100), STRESS_FMT.pct) + rng('outages.' + i + '.recovery', 'Recovery after', 0, 600, 5, o.recovery, STRESS_FMT.rec) +
+      rng('outages.' + i + '.start', 'Starts at', 0, D, 5, o.start, STRESS_FMT.time) + rng('outages.' + i + '.dur', 'Lasts', 0, D, 5, o.dur, STRESS_FMT.dur) + '</div>' +
+      '<button class="linkbtn" type="button" data-rmout="' + i + '">Remove</button></div>').join('') +
+    '<div class="btnrow"><button class="btn" type="button" data-act="addOutage"' + (f.pools.length || f.links.length ? '' : ' disabled') + '>Add outage</button></div>' +
+    '<div class="btnrow"><button class="btn primary" type="button" data-act="applyStress">Apply to canvas</button>' + (S.stress ? '<button class="btn" type="button" data-act="clearStress">Clear stress</button>' : '') + '</div>' +
+    '<h3 class="sec">Compare every scenario</h3><div class="sub">Runs each scenario above on this graph and tabulates SLO, latency, losses, cost and the first bottleneck.</div><div class="btnrow"><button class="btn" type="button" data-act="suite">Run scenario suite</button></div>' +
+    '<h3 class="sec">Find the breaking point</h3><div class="sub">Raises one dimension until SLO attainment drops below the target, and names what breaks first.</div>' +
+    '<div class="ctl"><label for="hrK">Raise</label><select id="hrK" data-hr="kind"><option value="load"' + (S.hr.kind === 'load' ? ' selected' : '') + '>All traffic</option><option value="users"' + (S.hr.kind === 'users' ? ' selected' : '') + (f.sessions ? '' : ' disabled') + '>Concurrent users</option><option value="ctx"' + (S.hr.kind === 'ctx' ? ' selected' : '') + '>Context size</option></select></div>' +
+    '<div class="ctl"><label><span>Attainment target</span><output data-hrout>' + S.hr.target + '%</output></label><input type="range" data-hr="target" min="80" max="99.9" step="0.1" value="' + S.hr.target + '" aria-label="Attainment target"></div>' +
+    '<div class="btnrow"><button class="btn" type="button" data-act="headroom">Find headroom</button></div>';
+}
+function setDraft(path, val) {
+  const d = S.stressDraft, ks = path.split('.');
+  if (ks[0] === 'surge' && !d.surge) { const f = graphFacts(); d.surge = { mult: 1, start: f.start, dur: f.dur, target: 'all' }; }
+  if (ks[0] === 'ctx' && !d.ctx) d.ctx = { mult: 1, add: 0 };
+  let o = d; for (let i = 0; i < ks.length - 1; i++) o = o[ks[i]];
+  const k = ks[ks.length - 1];
+  o[k] = k === 'target' ? val : k === 'fraction' ? +val / 100 : +val;
+  d.name = d.name && d.name !== 'Custom stress' && !d._preset ? d.name : 'Custom stress';
+  d._preset = false;
+}
+function stressPanelEvents(e) {
+  if (!(S.sel && S.sel.type === 'stress')) return false;
+  const t = e.target;
+  if (e.type === 'input' || e.type === 'change') {
+    if (t.dataset.k) {
+      setDraft(t.dataset.k, t.value);
+      const out = $('[data-out="' + t.dataset.k + '"]');
+      if (out) { const k = t.dataset.k.split('.').pop(); out.textContent = (k === 'mult' ? STRESS_FMT.mult : k === 'start' ? STRESS_FMT.time : k === 'dur' ? STRESS_FMT.dur : k === 'fraction' ? STRESS_FMT.pct : k === 'add' ? STRESS_FMT.tok : k === 'recovery' ? STRESS_FMT.rec : String)(t.value); }
+      return true;
+    }
+    if (t.dataset.hr) { S.hr[t.dataset.hr] = t.dataset.hr === 'target' ? +t.value : t.value; const o = $('[data-hrout]'); if (o) o.textContent = S.hr.target + '%'; return true; }
+    return false;
+  }
+  const pb = t.closest('[data-preset]');
+  if (pb) { const p = STRESS_PRESETS.find(x => x.id === pb.dataset.preset); S.stressDraft = presetStress(p); S.stressDraft._preset = true; renderStressPanel(); applyStress(S.stressDraft); toast(p.name + ' applied to the canvas.'); return true; }
+  const rm = t.closest('[data-rmout]');
+  if (rm) { S.stressDraft.outages.splice(+rm.dataset.rmout, 1); renderStressPanel(); return true; }
+  const b = t.closest('[data-act]');
+  if (!b) return false;
+  const a = b.dataset.act, f = graphFacts();
+  if (a === 'addOutage') { const tg = f.onprem[0] || f.pools[0] || f.links[0]; S.stressDraft.outages.push({ target: tg.id, fraction: 0.5, start: f.start, dur: Math.round(f.D * 0.25 / 5) * 5, recovery: 60 }); renderStressPanel(); return true; }
+  if (a === 'applyStress') { if (!stressActive(S.stressDraft)) { toast('Nothing to apply: set a surge, larger contexts or an outage.'); return true; } applyStress(S.stressDraft); renderStressPanel(); return true; }
+  if (a === 'clearStress') { S.stress = null; scheduleRun(0); renderStressPanel(); return true; }
+  if (a === 'suite') { runSuite(); return true; }
+  if (a === 'headroom') { runHeadroom(); return true; }
+  return false;
+}
+
+// ---------- background jobs (one simulation per tick keeps the page responsive) ----------
+function startJob(title, iter, onDone) {
+  if (S.job) S.job.cancel = true;
+  const job = { cancel: false };
+  S.job = job;
+  S.analysis = { kind: 'progress', title, done: 0, total: 1, text: 'Starting…' };
+  renderAnalysis();
+  const step = () => {
+    if (job.cancel) return;
+    let x;
+    try { x = iter.next(); } catch (err) { S.analysis = { kind: 'error', title, text: err.message }; renderAnalysis(); S.job = null; return; }
+    if (x.done) { S.job = null; onDone(x.value); renderAnalysis(); return; }
+    const pr = x.value || {};
+    S.analysis.done = pr.done || S.analysis.done + 1; S.analysis.total = pr.total || S.analysis.total; S.analysis.text = pr.text || '';
+    renderAnalysis();
+    setTimeout(step, 0);
+  };
+  setTimeout(step, 30);
+}
+function compiledSpec() {
+  const c = E.compileGraph(S.graph, traceLookup);
+  if (c.errors.length) { toast('Fix the problems in the left panel first.'); return null; }
+  return c.spec;
+}
+function runSuite() {
+  const spec = compiledSpec(); if (!spec) return;
+  const f = graphFacts();
+  const list = [{ id: 'none', name: 'Today (no stress)', st: null }].concat(STRESS_PRESETS.filter(p => p.ok(f)).map(p => ({ id: p.id, name: p.name, st: presetStress(p) })));
+  function* it() {
+    const rows = [];
+    for (let i = 0; i < list.length; i++) {
+      yield { done: i, total: list.length, text: 'Running ' + list[i].name + '…' };
+      const r = E.simulate(spec, list[i].st);
+      rows.push({ id: list[i].id, name: list[i].name, st: list[i].st, s: r.summary, D: r.D });
+    }
+    return rows;
+  }
+  startJob('Scenario suite', it(), rows => { S.analysis = { kind: 'suite', rows }; });
+}
+function runHeadroom() {
+  const spec = compiledSpec(); if (!spec) return;
+  const kind = S.hr.kind, target = S.hr.target / 100;
+  const it = E.headroomIter(spec, { kind, target, lo: 1, hi: kind === 'ctx' ? 6 : 8, iters: 6, base: null });
+  function* wrap() { let x; while (!(x = it.next()).done) yield { done: x.value.done, total: x.value.total, text: 'Tried ' + x.value.last.mult + '×: SLO ' + fPct(x.value.last.slo) }; return x.value; }
+  startJob('Breaking point', wrap(), res => { S.analysis = { kind: 'headroom', res }; });
+}
+const KIND_WORD = { load: 'traffic', users: 'concurrent users', ctx: 'context size' };
+function renderAnalysis() {
+  const box = $('#analysis'), A = S.analysis;
+  if (!A) { box.hidden = true; return; }
+  box.hidden = false;
+  const close = '<button class="btn" type="button" data-act="closeAnalysis">Close</button>';
+  if (A.kind === 'progress') {
+    box.innerHTML = '<h3>' + esc(A.title) + '<button class="btn" type="button" data-act="cancelJob">Cancel</button></h3><div class="progress"><i style="width:' + Math.round(100 * A.done / Math.max(1, A.total)) + '%"></i></div><div class="sub">' + esc(A.text) + ' (' + A.done + ' of ' + A.total + ' runs)</div>';
+    return;
+  }
+  if (A.kind === 'error') { box.innerHTML = '<h3>' + esc(A.title) + close + '</h3><div class="warnline">' + esc(A.text) + '</div>'; return; }
+  const bn = b => b ? mmss(b.t) + ' · ' + esc(b.name) + ': ' + b.label : '<span style="color:var(--muted)">none</span>';
+  if (A.kind === 'suite') {
+    const base = A.rows[0].s;
+    const worst = A.rows.slice(1).sort((a, b) => a.s.slo - b.s.slo)[0];
+    box.innerHTML = '<h3>Scenario suite on this topology' + close + '</h3>' +
+      '<p class="lead">Today it meets SLO for <b>' + fPct(base.slo) + '</b> of requests.' + (worst ? ' The hardest scenario is <b>' + esc(worst.name) + '</b> at <b>' + fPct(worst.s.slo) + '</b>' + (worst.s.bottleneck.first ? ', breaking first on <b>' + esc(worst.s.bottleneck.first.name) + '</b> (' + worst.s.bottleneck.first.label + ')' : '') + '.' : '') + ' Click a row to play it on the canvas.</p>' +
+      '<div class="ascroll"><table class="atable"><thead><tr><th>Scenario</th><th>What changes</th><th>SLO met</th><th>TTFT p99</th><th>TPOT p99</th><th>Lost / rejected</th><th>Peak GPUs</th><th>$ / hour</th><th>First bottleneck</th></tr></thead><tbody>' +
+      A.rows.map((r, i) => '<tr class="click" data-suite="' + i + '"><td><b>' + esc(r.name) + '</b></td><td>' + esc(r.st ? describeStress(r.st) : 'as drawn') + '</td><td class="num" style="color:' + (r.s.slo >= 0.99 ? 'var(--good)' : r.s.slo >= 0.9 ? 'var(--warn)' : 'var(--crit)') + '">' + fPct(r.s.slo) + '</td><td class="num">' + fS(r.s.ttftP99) + '</td><td class="num">' + fMs(r.s.tpotP99) + '</td><td class="num">' + fInt(r.s.lost) + ' / ' + fInt(r.s.rejected) + '</td><td class="num">' + fInt(r.s.peakGpus) + '</td><td class="num">' + fUsd(r.s.costPerHr) + '</td><td>' + bn(r.s.bottleneck.first) + '</td></tr>').join('') +
+      '</tbody></table></div>';
+    return;
+  }
+  if (A.kind === 'headroom') {
+    const h = A.res, w = KIND_WORD[h.kind];
+    let lead;
+    if (h.belowAtStart) lead = 'This topology already misses the ' + fPct(h.target) + ' target at today’s ' + w + ' (' + fPct(h.runs[0].slo) + ' met)' + (h.breaksOn ? '. It breaks first on <b>' + esc(h.breaksOn.name) + '</b>: ' + h.breaksOn.label : '') + '. Use the <b>Model advisor</b> or add capacity to find a fleet that meets it.';
+    else if (h.beyondRange) lead = 'Holds the ' + fPct(h.target) + ' target even at <b>' + h.limit + '×</b> ' + w + ', the top of the search range. You have more headroom than this test can show.';
+    else lead = 'Holds the ' + fPct(h.target) + ' target up to <b>' + h.limit + '×</b> today’s ' + w + '. At <b>' + h.failsAt + '×</b> it breaks' + (h.breaksOn ? ' first on <b>' + esc(h.breaksOn.name) + '</b>: ' + h.breaksOn.label + ' (at ' + mmss(h.breaksOn.t) + ')' : '') + '.';
+    const W = 420, H = 130, L = 34, xs = h.runs.map(r => r.mult), x0 = Math.log(Math.min(...xs)), x1 = Math.max(Math.log(Math.max(...xs)), x0 + 0.01);
+    const X = v => L + (W - L - 30) * (Math.log(v) - x0) / (x1 - x0), Y = v => H - 18 - (H - 26) * clamp(v, 0, 1);
+    const keyX = new Set([xs[0], xs[xs.length - 1], h.limit, h.failsAt].filter(v => v != null));
+    const pts = h.runs.map(r => X(r.mult).toFixed(1) + ',' + Y(r.slo).toFixed(1)).join(' ');
+    const svgC = '<svg viewBox="0 0 ' + W + ' ' + H + '" style="width:100%;max-width:520px;display:block" role="img" aria-label="SLO attainment against multiplier"><line x1="' + L + '" x2="' + (W - 8) + '" y1="' + Y(h.target) + '" y2="' + Y(h.target) + '" stroke="var(--crit)" stroke-dasharray="5 4"/><text x="' + (L - 4) + '" y="' + (Y(1) + 4) + '" text-anchor="end" font-size="10" fill="var(--muted)">100%</text><text x="' + (W - 2) + '" y="' + (Y(h.target) - 4) + '" text-anchor="end" font-size="10" fill="var(--crit)">target ' + fPct(h.target) + '</text><text x="' + (L - 4) + '" y="' + (Y(0) + 4) + '" text-anchor="end" font-size="10" fill="var(--muted)">0%</text><polyline points="' + pts + '" fill="none" stroke="var(--accent)" stroke-width="2"/>' + h.runs.map(r => '<circle cx="' + X(r.mult) + '" cy="' + Y(r.slo) + '" r="3.5" fill="' + (r.slo >= h.target ? 'var(--good)' : 'var(--crit)') + '"/>' + (keyX.has(r.mult) ? '<text x="' + X(r.mult) + '" y="' + (H - 4) + '" text-anchor="middle" font-size="10" fill="' + (r.mult === h.limit ? 'var(--good)' : r.mult === h.failsAt ? 'var(--crit)' : 'var(--muted)') + '">' + r.mult + '×</text>' : '')).join('') + '</svg>';
+    box.innerHTML = '<h3>Breaking point: ' + w + close + '</h3><p class="lead">' + lead + '</p><div style="display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1.3fr);gap:14px;align-items:start">' + svgC +
+      '<div class="ascroll"><table class="atable"><thead><tr><th>' + w + '</th><th>SLO met</th><th>TTFT p99</th><th>Peak GPUs</th><th>First bottleneck</th></tr></thead><tbody>' +
+      h.runs.map(r => '<tr class="click" data-hrrun="' + r.mult + '"><td class="num">' + r.mult + '×</td><td class="num" style="color:' + (r.slo >= h.target ? 'var(--good)' : 'var(--crit)') + '">' + fPct(r.slo) + '</td><td class="num">' + fS(r.ttftP99) + '</td><td class="num">' + fInt(r.peakGpus) + '</td><td>' + bn(r.bottleneck) + '</td></tr>').join('') + '</tbody></table></div></div>';
+    return;
+  }
+  if (A.kind === 'advisor') {
+    const res = A.res, p = res.pick;
+    const think = t => t ? fK(t) + ' thinking' : 'off';
+    const lead = p ? 'Cheapest option that meets the ' + fPct(res.target) + ' target' + (A.minQuality !== '' && A.minQuality != null ? ' and your quality floor' : '') + ': <b>' + esc(p.label) + '</b> with reasoning <b>' + think(p.thinkTokens) + '</b>, on <b>' + fInt(p.peakGpus) + ' GPUs</b> at peak (' + (+p.factor).toFixed(2) + '× the drawn fleet), <b>' + fUsd(p.costPerKReq) + ' per 1,000 requests</b>.' + (A.minQuality === '' || A.minQuality == null ? ' This ranks by cost and latency only. Enter quality scores from your own evals to set a floor.' : '')
+      : res.rows.some(r => r.meets) ? 'Only candidates below your quality floor meet the ' + fPct(res.target) + ' target. Lower the floor, relax the SLO, or give the stronger models faster GPUs or more GPUs per instance.'
+      : 'No candidate meets the ' + fPct(res.target) + ' target even at 8× the drawn fleet. Relax the SLO, allow streamed thinking, or add faster GPUs.';
+    box.innerHTML = '<h3>Model advisor' + close + '</h3><p class="lead">' + lead + '</p>' +
+      '<div class="ascroll"><table class="atable"><thead><tr><th>#</th><th>Model</th><th>Reasoning</th><th>Meets SLO</th><th>Fleet needed</th><th>$ / hour</th><th>$ / 1k requests</th><th>$ / M answer tokens</th><th>TTFT p99</th><th>Thinking share</th><th>Quality</th><th>Next limit</th><th></th></tr></thead><tbody>' +
+      res.rows.map((r, i) => '<tr class="' + (r.pick ? 'pick' : r.meets && !r.belowQuality ? '' : 'dim') + '"><td class="num">' + (i + 1) + '</td><td><b>' + esc(r.label) + '</b><br><span style="color:var(--muted);font-size:11px">' + r.tp + ' GPU' + (r.tp > 1 ? 's' : '') + '/instance · KV ' + fK(r.kvCap) + ' tok</span></td><td>' + think(r.thinkTokens) + '</td><td>' + (r.meets ? (r.belowQuality ? 'yes, below quality floor' : '<span style="color:var(--good)">yes</span>') : '<span style="color:var(--crit)">no (' + fPct(r.slo) + ' at 8×)</span>') + '</td><td class="num">' + fInt(r.peakGpus) + ' GPUs · ' + (+r.factor).toFixed(2) + '×</td><td class="num">' + fUsd(r.costPerHr) + '</td><td class="num">' + fUsd(r.costPerKReq) + '</td><td class="num">' + fUsd(r.costPerMTok) + '</td><td class="num">' + fS(r.ttftP99) + '</td><td class="num">' + fPct(r.thinkShare) + '</td><td class="num">' + (r.quality == null ? '–' : r.quality) + '</td><td>' + (r.bottleneck ? esc(r.bottleneck.name) + ': ' + r.bottleneck.label : !r.meets ? 'Per-request latency: even with spare capacity, the longest prompts take too long on one instance. More GPUs per instance, faster GPUs or a looser TTFT target help; more instances do not.' : '–') + '</td><td><button class="btn" type="button" data-advapply="' + i + '">Apply</button></td></tr>').join('') +
+      '</tbody></table></div><div class="sub" style="margin-top:6px">Fleet needed scales every pool in the drawn graph together (fixed sizes, autoscaling min and max) to the smallest size that meets the target. <b>Apply</b> switches the Model node and resizes the pools to match.</div>';
+  }
+}
+$('#analysis').addEventListener('click', e => {
+  const t = e.target;
+  const a = t.closest('[data-act]');
+  if (a && a.dataset.act === 'closeAnalysis') { S.analysis = null; renderAnalysis(); return; }
+  if (a && a.dataset.act === 'cancelJob') { if (S.job) S.job.cancel = true; S.job = null; S.analysis = null; renderAnalysis(); return; }
+  const su = t.closest('[data-suite]');
+  if (su) { const r = S.analysis.rows[+su.dataset.suite]; if (r.st) { S.stressDraft = JSON.parse(JSON.stringify(r.st)); applyStress(r.st); } else { S.stress = null; scheduleRun(0); } return; }
+  const hr = t.closest('[data-hrrun]');
+  if (hr) { const m = +hr.dataset.hrrun, k = S.analysis.res.kind; const st = k === 'ctx' ? { name: 'Context ' + m + '×', ctx: { mult: m, add: 0 }, outages: [] } : { name: (k === 'users' ? 'Users ' : 'Traffic ') + m + '×', surge: { mult: m, start: 0, dur: 0, target: k === 'users' ? 'sessions' : 'all' }, outages: [] }; S.stressDraft = st; applyStress(st); return; }
+  const ap = t.closest('[data-advapply]');
+  if (ap) {
+    const r = S.analysis.res.rows[+ap.dataset.advapply];
+    const mn = S.graph.nodes.find(n => n.type === 'model');
+    Object.assign(mn.cfg, E.MODELS[r.key], { key: r.key, thinkTokens: r.thinkTokens });
+    for (const n of S.graph.nodes) if (n.type === 'pool') {
+      const c = n.cfg, f = r.factor;
+      if (c.autoscale) { c.min = Math.round(c.min * f); c.max = Math.max(1, c.min, Math.round(c.max * f)); } else c.instances = Math.max(1, Math.round(c.instances * f));
+    }
+    renderGraph(); renderDetails(); scheduleRun(0); toast('Applied ' + r.label + ' with reasoning ' + (r.thinkTokens ? fK(r.thinkTokens) : 'off') + ' and resized the pools.');
+  }
+});
+
+// ---------- model advisor panel ----------
+const THINK_LEVELS = [[0, 'Off'], [500, 'Low'], [2000, 'Med'], [8000, 'High']];
+function renderAdvisorPanel() {
+  const box = $('#details'), A = S.adv;
+  const nC = Object.values(A.cands).filter(Boolean).length;
+  box.innerHTML = '<span class="typetag" style="background:var(--accent)">Model advisor</span><h2>Which model should serve this?</h2>' +
+    '<div class="sub">For each model and reasoning level you tick, FleetScope resizes the drawn fleet to the smallest size that serves this traffic at the SLO, then ranks by cost.</div>' +
+    '<h3 class="sec">Candidates</h3><table class="mtx"><thead><tr><th>Model</th>' + THINK_LEVELS.map(l => '<th title="' + (l[0] ? l[0] + ' hidden thinking tokens per request (median)' : 'No reasoning') + '">' + l[1] + '</th>').join('') + '<th title="Your eval score, 0 to 100">Quality</th></tr></thead><tbody>' +
+    Object.keys(E.MODELS).map(k => '<tr><td>' + esc(E.MODELS[k].label) + '</td>' + THINK_LEVELS.map(l => '<td><input type="checkbox" data-cand="' + k + '|' + l[0] + '" aria-label="' + esc(E.MODELS[k].label + ' reasoning ' + l[1]) + '"' + (A.cands[k + '|' + l[0]] ? ' checked' : '') + '></td>').join('') + '<td><input type="number" min="0" max="100" step="1" data-q="' + k + '" value="' + (A.quality[k] != null ? A.quality[k] : '') + '" aria-label="' + esc(E.MODELS[k].label) + ' quality score"></td></tr>').join('') + '</tbody></table>' +
+    '<div class="sub">Reasoning levels are median hidden thinking tokens per request: Low 500, Med 2,000, High 8,000.</div>' +
+    '<div class="ctl"><label for="advMQ">Minimum quality (from your evals, optional)</label><input type="number" id="advMQ" min="0" max="100" step="1" data-adv="minQuality" value="' + esc(A.minQuality) + '"></div>' +
+    '<div class="ctl"><label><span>Attainment target</span><output data-advout>' + A.target + '%</output></label><input type="range" data-adv="target" min="80" max="99.9" step="0.1" value="' + A.target + '" aria-label="Attainment target"></div>' +
+    '<div class="ctl check"><label for="advSt"><input type="checkbox" id="advSt" data-adv="underStress"' + (A.underStress ? ' checked' : '') + (S.stress ? '' : ' disabled') + '>Size for the active stress test' + (S.stress ? ' (' + esc(S.stress.name) + ')' : ' (none active)') + '</label></div>' +
+    '<div class="btnrow"><button class="btn primary" type="button" data-act="advise"' + (nC ? '' : ' disabled') + '>Recommend (' + nC + ' candidate' + (nC === 1 ? '' : 's') + ')</button></div>' +
+    '<h3 class="sec">How reasoning changes the picture</h3><div class="sub" style="line-height:1.5">' +
+    'Thinking tokens are decoded before the first answer token. They hold KV cache, take decode time, and are billed like output. They usually aren’t carried into the next turn (the Model node can keep them).<br>' +
+    '&bull; <b>TTFT:</b> if thinking is hidden, the user waits for all of it, so TTFT grows by thinking tokens × time per token. A 2-second TTFT target is usually out of reach. Tick <i>Streamed thinking counts as the first token</i> on the SLO node if your product streams it.<br>' +
+    '&bull; <b>Capacity:</b> decode work per request multiplies, so fleets become decode-bound and KV-bound, and agents’ turns slow down, lowering throughput.<br>' +
+    '&bull; <b>Cost:</b> compare <i>$ per 1,000 requests</i>, not $ per million tokens. A reasoning model can be cheaper per token yet costlier per answer.</div>';
+}
+function advisorPanelEvents(e) {
+  if (!(S.sel && S.sel.type === 'advisor')) return false;
+  const t = e.target, A = S.adv;
+  if (e.type === 'input' || e.type === 'change') {
+    if (t.dataset.cand) { A.cands[t.dataset.cand] = t.checked; const n = Object.values(A.cands).filter(Boolean).length; const b = $('[data-act="advise"]'); if (b) { b.disabled = !n; b.textContent = 'Recommend (' + n + ' candidate' + (n === 1 ? '' : 's') + ')'; } return true; }
+    if (t.dataset.q) { A.quality[t.dataset.q] = t.value === '' ? null : clamp(+t.value, 0, 100); return true; }
+    if (t.dataset.adv) { const k = t.dataset.adv; A[k] = k === 'underStress' ? t.checked : k === 'target' ? +t.value : t.value; const o = $('[data-advout]'); if (o) o.textContent = A.target + '%'; return true; }
+    return false;
+  }
+  const b = t.closest('[data-act="advise"]');
+  if (b) { runAdvisor(); return true; }
+  return false;
+}
+function runAdvisor() {
+  const spec = compiledSpec(); if (!spec) return;
+  const A = S.adv;
+  const candidates = Object.keys(A.cands).filter(k => A.cands[k]).map(k => { const [key, th] = k.split('|'); return { key, thinkTokens: +th }; });
+  const quality = {}; for (const k in A.quality) if (A.quality[k] != null) quality[k] = A.quality[k];
+  const minQ = A.minQuality === '' || A.minQuality == null ? null : +A.minQuality;
+  const it = E.adviseIter(spec, { target: A.target / 100, candidates, quality, minQuality: minQ, iters: 5, stress: A.underStress && S.stress ? S.stress : null });
+  function* wrap() { let x; while (!(x = it.next()).done) yield { done: x.value.done, total: x.value.total, text: 'Sizing ' + x.value.model + (x.value.thinkTokens ? ' with ' + fK(x.value.thinkTokens) + ' thinking' : '') + '…' }; return x.value; }
+  startJob('Model advisor', wrap(), res => { S.analysis = { kind: 'advisor', res, minQuality: minQ == null ? '' : minQ }; });
+}
+['click', 'input', 'change'].forEach(ev => $('#details').addEventListener(ev, e => { if (stressPanelEvents(e)) e.stopImmediatePropagation(); else if (advisorPanelEvents(e)) e.stopImmediatePropagation(); }, true));
+$('#whatifBtn').onclick = () => { if (S.stress) S.stressDraft = JSON.parse(JSON.stringify(S.stress)); select({ type: 'stress' }); };
+$('#advisorBtn').onclick = () => select({ type: 'advisor' });
+
 // templates
 const tplSel = $('#tpl');
 tplSel.innerHTML = TP.TEMPLATES.map(t => '<option value="' + t.id + '">Template: ' + t.name + ' — ' + t.desc + '</option>').join('');
@@ -1347,6 +1712,7 @@ tplSel.onchange = () => loadTemplate(tplSel.value);
 function loadTemplate(id) {
   const t = TP.TEMPLATES.find(x => x.id === id);
   S.tpl = id; S.graph = t.build(); S.sel = null; S.dirty = false; firstRun = true; setPlaying(false);
+  S.stress = null; S.autoBase = null; S.stressDraft = blankStress(); S.analysis = null; if (S.job) S.job.cancel = true; renderAnalysis();
   S.nid = 100; S.needFit = true;
   renderPalette(); renderGraph(); requestAnimationFrame(fit); renderDetails(); scheduleRun(0);
 }

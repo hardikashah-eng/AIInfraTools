@@ -2,7 +2,7 @@
 (function (root) {
   'use strict';
   const E = (typeof module !== 'undefined' && module.exports) ? require('./engine.js') : root.FleetEngine;
-  const M = key => Object.assign({ name: 'Model', key, wPrec: 'fp8', kvPrec: 'fp8' }, E.MODELS[key]);
+  const M = key => Object.assign({ name: 'Model', key, wPrec: 'fp8', kvPrec: 'fp8', thinkTokens: 0, thinkKeep: false }, E.MODELS[key]);
   const NODE_TYPES = {
     agent: { title: 'Coding agents', group: 'Traffic', color: 'src', inputs: false, outputs: true, w: 230,
       defaults: () => ({ name: 'Coding agents', users: 60, turns: 12, systemTokens: 6000, contextTokens: 30000, turnTokens: 2500, outTokens: 350, thinkS: 4, gapS: 30, prefixHit: 85, durationMin: 10 }) },
@@ -21,7 +21,7 @@
     model: { title: 'Model', group: 'Settings', color: 'set', inputs: false, outputs: false, w: 240, singleton: true, fixed: true,
       defaults: () => M('llama-70b') },
     slo: { title: 'SLO targets', group: 'Settings', color: 'set', inputs: false, outputs: false, w: 200, singleton: true, fixed: true,
-      defaults: () => ({ name: 'SLO targets', ttft: 2, tpotMs: 60 }) }
+      defaults: () => ({ name: 'SLO targets', ttft: 2, tpotMs: 60, thinkingStreamed: false }) }
   };
   const PALETTE = [
     { type: 'agent', label: 'Coding agents', hint: 'Concurrent agent sessions with growing context' },

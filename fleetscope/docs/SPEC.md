@@ -132,6 +132,12 @@ Changing the graph re-runs the whole trace from t = 0 and keeps the playhead on 
 
 **Comparing scenarios:** pin a run as baseline, change anything, and read the deltas on the KPI tiles and the dashed baseline lines in the charts.
 
+## Stress tests and the model advisor
+
+Planners ask "what happens if…" more often than "what happens". Stress overlays answer it on the drawn graph without editing it: traffic or session surges in a window, larger contexts, and outages of part of a pool, a whole site or a link (with stream loss, re-queueing and recovery). A scenario suite runs them all side by side. A breaking-point search raises traffic, users or context until SLO attainment drops below target, and names the first bottleneck.
+
+The model advisor right-sizes the fleet for each candidate model and reasoning level and ranks the ones that meet the SLO by cost per 1,000 requests. Quality scores come from the team's own evals and act as a floor. Reasoning is modelled as hidden thinking tokens: they delay the first visible token (unless streamed), hold KV cache, and are billed. So reasoning models are compared per answer, not per token. See [STRESS.md](STRESS.md).
+
 ## Metrics and outputs
 
 SLO attainment and cost per million tokens are the two headline numbers for every run. Everything else explains them.
@@ -163,6 +169,7 @@ Sites with VM-only telemetry can be calibrated only on request-level latency and
 ## Build phases
 
 1. **Prototype (done):** a browser-only node editor and player on the tier-1 engine, with agent, chat, trace and training nodes, seven templates and baseline compare. Profiles come from spec sheets, not measurements.
+1b. **Stress and advisor (done):** what-if overlays, scenario suite, breaking-point search, bottleneck attribution, model advisor with reasoning levels.
 2. **Pilot:** load one real week of production traces (vLLM tracing spans and gateway logs: importer and recorded-vs-simulated TTFT done, see [TRACES.md](TRACES.md)); closed-loop replay of recorded sessions; YAML scenarios; profiles seeded from AIConfigurator, then calibrated against one recorded hour; engine moved into a web worker; run store and shareable run links.
 3. **Training and placement:** training jobs from Slurm/K8s history; SimAI hooks for collective traffic; placement policies.
 4. **Planning at scale:** tier-0 sweeps over hundreds of fleet options; cost-vs-SLO tradeoff curves; export to the procurement review.
