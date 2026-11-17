@@ -212,6 +212,9 @@ button, select, input { font: inherit; color: inherit; }
 .lrows .row { cursor: pointer; }
 .lrows .row:hover span:first-child { text-decoration: underline; }
 .lbar { display: block; height: 4px; border-radius: 2px; margin-top: 2px; }
+.askf { flex: 1; min-width: 320px; }
+.askf input { flex: 1; border: 1px solid var(--line); border-radius: 7px; padding: 5px 10px; background: var(--panel-2); }
+.askf input:focus { outline: 2px solid var(--accent); outline-offset: -1px; background: var(--panel); }
 .migbar { display: flex; gap: 2px; width: 70%; }
 .migbar i { display: block; font: 10px var(--font-mono); font-style: normal; background: color-mix(in srgb, var(--accent) 25%, var(--panel)); border: 1px solid var(--accent); border-radius: 3px; padding: 1px 3px; overflow: hidden; white-space: nowrap; }
 .migbar i.free { background: none; border-style: dashed; border-color: var(--line); }
@@ -343,6 +346,7 @@ button, select, input { font: inherit; color: inherit; }
       <button type="button" id="liveBtn" title="Forecast the next hours from metrics history and predict SLO breaches">Live</button>
       <button type="button" id="calibBtn" title="Fit a pool's performance to a recorded trace, a vLLM /metrics snapshot or a benchmark_serving result">Calibrate</button>
     </div>
+    <form class="tb askf" id="askForm" autocomplete="off"><input type="text" id="askBox" list="askList" aria-label="Ask a what-if question" placeholder="Ask: what if coding agents move to H200 and the cloud link drops to 25 Gbps?"><datalist id="askList"></datalist><button type="submit">Ask</button></form>
     <div class="status" id="status">Simulating…</div>
   </header>
   <aside class="palette" id="palette"></aside>
@@ -2076,6 +2080,7 @@ function renderAnalysis() {
   if (A.kind === 'error') { box.innerHTML = '<h3>' + esc(A.title) + close + '</h3><div class="warnline">' + esc(A.text) + '</div>'; return; }
   if (A.kind === 'calib') { box.innerHTML = '<h3>Calibration' + close + '</h3>' + calibCard(A); return; }
   if (A.kind === 'live') { box.innerHTML = '<h3>Live twin' + close + '</h3>' + liveCard(A); return; }
+  if (A.kind === 'ask') { box.innerHTML = '<h3>Ask' + close + '</h3>' + askCard(A); return; }
   if (A.kind === 'opt') { box.innerHTML = '<h3>Optimiser' + close + '</h3>' + optCard(A); return; }
   if (A.kind === 'cap') { box.innerHTML = '<h3>Buy vs rent' + close + '</h3>' + capCard(A); return; }
   if (A.kind === 'mig') { box.innerHTML = '<h3>MIG packing' + close + '</h3>' + migCard(A); return; }
@@ -2123,6 +2128,7 @@ $('#analysis').addEventListener('click', e => {
   const t = e.target;
   const a = t.closest('[data-act]');
   if (a && a.dataset.act === 'closeAnalysis') { S.analysis = null; renderAnalysis(); return; }
+  if (a && a.dataset.act === 'askApply') { const r = S.analysis.res; S.graph = JSON.parse(JSON.stringify(r.graph)); renderGraph(); renderPalette(); if (r.stress) { S.stressDraft = JSON.parse(JSON.stringify(r.stress)); applyStress(r.stress); } else scheduleRun(0); toast('Applied'); return; }
   if (a && a.dataset.act === 'optApply') { S.graph = JSON.parse(JSON.stringify(S.analysis.res.graph)); renderGraph(); renderPalette(); toast('Applied the optimised setup'); scheduleRun(0); return; }
   if (a && a.dataset.act === 'repCopy') { navigator.clipboard.writeText(S.analysis.md).then(() => toast('Plan copied'), () => toast('Copy failed')); return; }
   if (a && a.dataset.act === 'repSave') { const u = URL.createObjectURL(new Blob([S.analysis.md], { type: 'text/markdown' })); const x = document.createElement('a'); x.href = u; x.download = 'fleetscope-plan.md'; x.click(); setTimeout(() => URL.revokeObjectURL(u), 1000); return; }
@@ -2199,6 +2205,28 @@ $('#advisorBtn').onclick = () => select({ type: 'advisor' });
 $('#calibBtn').onclick = () => select({ type: 'calib' });
 $('#liveBtn').onclick = () => select({ type: 'live' });
 $('#planBtn').onclick = () => select({ type: 'plan' });
+
+// ---------- ask in plain English ----------
+setTimeout(() => { if (window.FleetAsk) $('#askList').innerHTML = FleetAsk.EXAMPLES.map(x => '<option value="' + esc(x) + '">').join(''); }, 0);
+$('#askForm').addEventListener('submit', e => {
+  e.preventDefault();
+  const q = $('#askBox').value.trim(); if (!q || !window.FleetAsk) return;
+  S.analysis = { kind: 'progress', title: 'Ask', done: 0, total: 1, text: 'Reading the question and running it…' }; renderAnalysis();
+  setTimeout(() => {
+    try { S.analysis = { kind: 'ask', q, res: FleetAsk.answer(q, S.graph, { traceLookup, stress: S.stress }) }; }
+    catch (err) { S.analysis = { kind: 'error', title: 'Ask', text: err.message }; }
+    renderAnalysis();
+    $('#analysis').scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+  }, 20);
+});
+function askCard(A) {
+  const r = A.res, items = r.edits.map(e => e.text).concat(r.stress ? ['stress test: ' + r.stress.name] : []);
+  return '<p class="lead"><b>\u201c' + esc(A.q) + '\u201d</b></p>' +
+    (r.understood ? '<h3 class="sec">Read as</h3><ul class="plain">' + items.map(x => '<li>' + esc(x) + '</li>').join('') + '</ul>' : '') +
+    '<p class="lead">' + esc(r.text) + '</p>' +
+    (r.ignored ? '<div class="sub">Not used: \u201c' + esc(r.ignored) + '\u201d. Phrasings it understands include: ' + FleetAsk.EXAMPLES.slice(0, 5).map(esc).join(' · ') + '.</div>' : '') +
+    (r.understood && r.after ? '<div class="btnrow"><button class="btn primary" type="button" data-act="askApply">Apply to the canvas</button></div>' : '');
+}
 
 // ---------- planning ----------
 const PL = { tab: 'opt', target: 95, n1: 0, gpuSwap: true, evals: 60, cap: null, migText: 'embeddings, 4, 6\nreranker, 9, 4\nllama-8b-guard, 16, 3', migGpu: 'H100' };
@@ -2486,6 +2514,9 @@ window.addEventListener('resize', () => {});
 </script>
 <script>
 /*OPTIMIZE*/
+</script>
+<script>
+/*ASK*/
 </script>
 <script>
 /*TRAININGUI*/
