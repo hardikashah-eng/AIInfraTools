@@ -14,6 +14,8 @@ const inlined = {
   '/*INGEST*/': read('src/ingest.js'),
   '/*CLUSTER*/': read('src/cluster.js'),
   '/*CLUSTERUI*/': read('src/cluster-ui.js'),
+  '/*TRAINING*/': read('src/training.js'),
+  '/*TRAININGUI*/': read('src/training-ui.js'),
 };
 
 let out = page;
