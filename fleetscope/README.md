@@ -70,6 +70,20 @@ The tabs above the canvas switch what the colours mean. **Performance** is the h
 
 ![Reliability lens](docs/img/lens-reliability.png)
 
+### Security and ownership lenses
+
+**Security** tracks where each data class runs and travels. Each traffic source has a data class (public, internal, confidential). Each pool has a trust zone (private, dedicated cloud, shared cloud) and each link an encryption setting. The SLO node holds the policy; by default confidential data stays on private sites and non-public data crosses only encrypted links. In the coding-agent template the agents send confidential code: 34% of requests burst to the shared neocloud and break the rule. The lint flags the router before you press Play.
+
+![Security lens](docs/img/lens-security.png)
+
+Turn on **Enforce data residency** on the router and nothing leaves on-prem, but SLO attainment falls from 46% to 15%. The neocloud also still autoscales on on-prem queue pressure with no traffic it may take, so the Cost lens shows its GPUs fully idle.
+
+![Residency enforced](docs/img/lens-security-enforced.png)
+
+**Ownership** colours each node by its owner team and shows the on-call. It ranks teams by spend and by how many breach seconds their nodes carried, and flags nodes with no owner. In the training template, Foundation Models owns 53% of the spend, while Network Engineering owns the link that is the first bottleneck.
+
+![Ownership lens](docs/img/lens-ownership.png)
+
 ### What if… a partial outage
 
 Half of the on-prem pool fails for two and a half minutes. Down instances show red, streams cut mid-answer are counted as lost, the KPIs compare against the same graph unstressed, and the banner names where it breaks first. See [docs/STRESS.md](docs/STRESS.md).
@@ -118,16 +132,18 @@ npm run build     # inline src/ into dist/index.html
 
 ## Nodes
 
+Every traffic, router, pool, link and training node also has an owner team and an on-call handle.
+
 | Node | Knobs |
 | --- | --- |
-| Coding agents / Chat users | Concurrent users, session length, starting context, tokens added per turn, output per turn, think or tool time, prefix-cache hit, duration (closed loop: a user's next turn waits for the previous answer) |
-| Trace replay | Sample trace or an uploaded log: vLLM OpenTelemetry spans, gateway JSON logs (OpenAI / Anthropic / LiteLLM usage) or CSV ([docs/TRACES.md](docs/TRACES.md)); load multiplier; recorded or assumed prefix-cache hits; replay by timestamps (open loop) or by session (closed loop), and whether a session retries or gives up after a failed turn. Logs with recorded TTFT are compared with the simulation. |
-| Router | Primary first with a burst threshold, least estimated wait, or round robin; target priority |
-| GPU pool | Role (aggregated, prefill, decode), site and site type, GPU type, fixed or autoscaled instances, cold start, scale thresholds, max batch, fabric bandwidth |
-| Cross-site link | Bandwidth, round trip, egress price; shared by everything wired through it |
+| Coding agents / Chat users | Data class; concurrent users, session length, starting context, tokens added per turn, output per turn, think or tool time, prefix-cache hit, duration (closed loop: a user's next turn waits for the previous answer) |
+| Trace replay | Data class; sample trace or an uploaded log: vLLM OpenTelemetry spans, gateway JSON logs (OpenAI / Anthropic / LiteLLM usage) or CSV ([docs/TRACES.md](docs/TRACES.md)); load multiplier; recorded or assumed prefix-cache hits; replay by timestamps (open loop) or by session (closed loop), and whether a session retries or gives up after a failed turn. Logs with recorded TTFT are compared with the simulation. |
+| Router | Primary first with a burst threshold, least estimated wait, or round robin; target priority; enforce data residency |
+| GPU pool | Role (aggregated, prefill, decode), site and site type, trust zone, GPU type, fixed or autoscaled instances, cold start, scale thresholds, max batch, fabric bandwidth |
+| Cross-site link | Bandwidth, round trip, egress price, encryption; shared by everything wired through it |
 | Training job | Model, GPU type and count, global batch, MFU, sync overlap; wire it to a link to split it across sites |
 | Model | Preset or custom parameters, active parameters, layers, KV heads × head dim (or MLA latent), weight and KV precision, reasoning (hidden thinking tokens per request), keep thinking in context |
-| SLO targets | TTFT and TPOT; whether streamed thinking counts as the first token |
+| SLO targets | TTFT and TPOT; whether streamed thinking counts as the first token; data residency policy (where confidential and internal data may run, encrypted links only) |
 
 ## What if… and the model advisor
 

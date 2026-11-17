@@ -5,23 +5,23 @@
   const M = key => Object.assign({ name: 'Model', key, wPrec: 'fp8', kvPrec: 'fp8', thinkTokens: 0, thinkKeep: false }, E.MODELS[key]);
   const NODE_TYPES = {
     agent: { title: 'Coding agents', group: 'Traffic', color: 'src', inputs: false, outputs: true, w: 230,
-      defaults: () => ({ name: 'Coding agents', users: 60, turns: 12, systemTokens: 6000, contextTokens: 30000, turnTokens: 2500, outTokens: 350, thinkS: 4, gapS: 30, prefixHit: 85, durationMin: 10 }) },
+      defaults: () => ({ name: 'Coding agents', users: 60, turns: 12, systemTokens: 6000, contextTokens: 30000, turnTokens: 2500, outTokens: 350, thinkS: 4, gapS: 30, prefixHit: 85, durationMin: 10, dataClass: 'internal', owner: '', oncall: '' }) },
     chat: { title: 'Chat users', group: 'Traffic', color: 'src', inputs: false, outputs: true, w: 230,
-      defaults: () => ({ name: 'Chat users', users: 400, turns: 6, systemTokens: 800, contextTokens: 0, turnTokens: 300, outTokens: 300, thinkS: 20, gapS: 60, prefixHit: 50, durationMin: 10 }) },
+      defaults: () => ({ name: 'Chat users', users: 400, turns: 6, systemTokens: 800, contextTokens: 0, turnTokens: 300, outTokens: 300, thinkS: 20, gapS: 60, prefixHit: 50, durationMin: 10, dataClass: 'internal', owner: '', oncall: '' }) },
     trace: { title: 'Trace replay', group: 'Traffic', color: 'src', inputs: false, outputs: true, w: 230,
-      defaults: () => ({ name: 'Trace replay', trace: 'chat', scale: 1, prefixHit: 0, useRecordedCache: true, replay: 'timestamps', onFail: 'retry' }) },
+      defaults: () => ({ name: 'Trace replay', trace: 'chat', scale: 1, prefixHit: 0, useRecordedCache: true, replay: 'timestamps', onFail: 'retry', dataClass: 'internal', owner: '', oncall: '' }) },
     router: { title: 'Router', group: 'Routing', color: 'route', inputs: true, outputs: true, w: 200,
-      defaults: () => ({ name: 'Router', policy: 'primary-first', burstWait: 1.5 }) },
+      defaults: () => ({ name: 'Router', policy: 'primary-first', burstWait: 1.5, enforceResidency: false, owner: '', oncall: '' }) },
     pool: { title: 'GPU pool', group: 'Compute', color: 'pool', inputs: true, outputs: true, w: 290,
-      defaults: () => ({ name: 'On-prem pool', site: 'On-prem DC', siteKind: 'onprem', role: 'agg', gpu: 'H100', instances: 4, autoscale: false, min: 0, max: 8, coldStart: 90, upWait: 1, downUtil: 30, maxBatch: 256, fabricGbps: 400 }) },
+      defaults: () => ({ name: 'On-prem pool', site: 'On-prem DC', siteKind: 'onprem', role: 'agg', gpu: 'H100', instances: 4, autoscale: false, min: 0, max: 8, coldStart: 90, upWait: 1, downUtil: 30, maxBatch: 256, fabricGbps: 400, zone: 'auto', owner: '', oncall: '' }) },
     link: { title: 'Cross-site link', group: 'Network', color: 'link', inputs: true, outputs: true, w: 210,
-      defaults: () => ({ name: 'Cloud link', gbps: 100, rttMs: 20, egressPerGB: 0.05 }) },
+      defaults: () => ({ name: 'Cloud link', gbps: 100, rttMs: 20, egressPerGB: 0.05, encrypted: true, owner: '', oncall: '' }) },
     train: { title: 'Training job', group: 'Compute', color: 'train', inputs: false, outputs: true, w: 250,
-      defaults: () => ({ name: 'Training job', model: 'llama-70b', gpus: 256, gpu: 'H100', site: 'On-prem DC', siteKind: 'onprem', tokensPerStepM: 4, mfu: 40, overlap: true, horizonMin: 10 }) },
+      defaults: () => ({ name: 'Training job', model: 'llama-70b', gpus: 256, gpu: 'H100', site: 'On-prem DC', siteKind: 'onprem', tokensPerStepM: 4, mfu: 40, overlap: true, horizonMin: 10, owner: '', oncall: '' }) },
     model: { title: 'Model', group: 'Settings', color: 'set', inputs: false, outputs: false, w: 240, singleton: true, fixed: true,
       defaults: () => M('llama-70b') },
     slo: { title: 'SLO targets', group: 'Settings', color: 'set', inputs: false, outputs: false, w: 200, singleton: true, fixed: true,
-      defaults: () => ({ name: 'SLO targets', ttft: 2, tpotMs: 60, thinkingStreamed: false }) }
+      defaults: () => ({ name: 'SLO targets', ttft: 2, tpotMs: 60, thinkingStreamed: false, confidentialIn: 'private', internalIn: 'any', requireEncryption: true }) }
   };
   const PALETTE = [
     { type: 'agent', label: 'Coding agents', hint: 'Concurrent agent sessions with growing context' },
@@ -49,7 +49,7 @@
       edges: [edge('src', 'rt'), edge('rt', 'on'), edge('rt', 'lk'), edge('lk', 'neo')] }) },
     { id: 'agent', name: 'Coding agent fleet', desc: '60 agents, 30k-token contexts, 85% cache hits', build: () => ({
       nodes: [Object.assign(node('model', 'model', 40, 20), { cfg: M('coder-32b') }), node('slo', 'slo', 310, 20),
-        node('src', 'agent', 40, 250), node('rt', 'router', 330, 260),
+        node('src', 'agent', 40, 250, { dataClass: 'confidential' }), node('rt', 'router', 330, 260),
         node('on', 'pool', 600, 150, { name: 'On-prem H100', instances: 6 }),
         node('lk', 'link', 600, 470), node('neo', 'pool', 880, 410, Object.assign({}, NEO, { name: 'Neocloud H200', coldStart: 60 }))],
       edges: [edge('src', 'rt'), edge('rt', 'on'), edge('rt', 'lk'), edge('lk', 'neo')] }) },
@@ -88,6 +88,23 @@
       edges: [edge('src', 'rt'), edge('rt', 'on'), edge('rt', 'lk'), edge('lk', 'neo')] }) },
     { id: 'blank', name: 'Blank canvas', desc: 'Model and SLO nodes only', build: () => ({ nodes: [node('model', 'model', 40, 20), node('slo', 'slo', 310, 20)], edges: [] }) }
   ];
+  // Example owners so the Ownership lens has something to show; edit them on each node.
+  const OWNERS = {
+    agent: ['Developer Productivity', '@devprod-oncall'], chat: ['Assistant Product', '@assistant-oncall'], trace: ['Assistant Product', '@assistant-oncall'],
+    router: ['ML Platform', '@mlplatform-oncall'], onprem: ['ML Platform', '@mlplatform-oncall'], neo: ['Cloud Infrastructure', '@cloudinfra-oncall'],
+    link: ['Network Engineering', '@netops'], train: ['Foundation Models', '@fm-training-oncall']
+  };
+  for (const T of TEMPLATES) {
+    const build = T.build;
+    T.build = () => {
+      const g = build();
+      for (const n of g.nodes) {
+        const o = OWNERS[n.type === 'pool' ? (n.cfg.siteKind === 'neo' ? 'neo' : 'onprem') : n.type];
+        if (o && !n.cfg.owner) { n.cfg.owner = o[0]; n.cfg.oncall = o[1]; }
+      }
+      return g;
+    };
+  }
   const api = { NODE_TYPES, PALETTE, TEMPLATES, node, edge };
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
   else root.FleetTemplates = api;

@@ -232,6 +232,38 @@
   }
   const blastRadius = (spec, st) => drain(blastIter(spec, st));
 
+  // Where each data class went, for requests that arrived in [t0, t1), and where the residency rule was broken:
+  // a pool outside the class's allowed zones, or non-public data over an unencrypted link (when required).
+  // A link that carries data into a disallowed zone is counted as part of the breach.
+  function securityBreakdown(R, t0, t1) {
+    const spec = R.spec, pol = spec.policy || DEFAULT_POLICY, P = {}, L = {};
+    for (const p of R.pools) P[p.id] = { zone: (spec.pools.find(x => x.id === p.id) || {}).zone || 'private', kvb: p.P.kvBytesPerToken };
+    for (const l of spec.links) L[l.id] = l;
+    const nodes = {}, cls0 = () => ({ public: 0, internal: 0, confidential: 0 });
+    const N = id => nodes[id] || (nodes[id] = { req: cls0(), viol: 0, gb: cls0(), violGB: 0, blocked: 0, n: 0 });
+    const tot = { req: cls0(), viol: 0, violGB: 0, blocked: 0, n: 0, restricted: 0 };
+    let lo = 0, hi = R.reqs.length;
+    while (lo < hi) { const m = (lo + hi) >> 1; if (R.reqs[m].t < t0) lo = m + 1; else hi = m; }
+    for (let i = lo; i < R.reqs.length && R.reqs[i].t < t1; i++) {
+      const q = R.reqs[i], c = q.cls || 'internal', S = N(q.src);
+      S.n++; S.req[c]++; tot.n++; tot.req[c]++;
+      if (c !== 'public') tot.restricted++;
+      if (q.failKind === 'policy') { S.blocked++; tot.blocked++; continue; }
+      let bad = false;
+      const visit = (pid) => { if (!pid || !P[pid]) return; const n = N(pid); n.req[c]++; if (!zoneAllowed(pol, c, P[pid].zone)) { n.viol++; bad = true; } };
+      const cross = (lid, gb, dest) => {
+        if (!lid || !L[lid]) return;
+        const n = N(lid); n.req[c]++; n.gb[c] += gb;
+        if (!linkAllowed(pol, c, L[lid]) || (dest && P[dest] && !zoneAllowed(pol, c, P[dest].zone))) { n.viol++; n.violGB += gb; tot.violGB += gb; bad = true; }
+      };
+      visit(q.pPool);
+      cross(q.inLink, Math.max(0, q.isl - (q.cached || 0)) * 4 / 1e9, q.pPool);
+      if (q.dPool && q.dPool !== q.pPool) { visit(q.dPool); cross(q.xLink, q.isl * (P[q.pPool] ? P[q.pPool].kvb : 0) / 1e9, q.dPool); }
+      if (bad) { S.viol++; tot.viol++; }
+    }
+    return { nodes, total: tot, policy: pol };
+  }
+
   // Turns a recorded trace into session chains for closed-loop replay.
   // Within a session, a turn that starts after the previous turn finished waits for the simulated finish plus the
   // recorded think time; a turn that overlaps it (a parallel tool call) is a branch timed from the previous turn's issue.
@@ -317,6 +349,19 @@
         const demand = e.peak * e.isl * pr.kvBytesPerToken * 8 / 1e9;
         if (L && demand > 0.7 * L.gbps) out.push({ node: L.id, level: 'warn', kind: 'link', msg: 'At peak, KV caches from ' + p.name + ' need about ' + Math.round(demand) + ' Gbps across ' + L.name + ' (' + L.gbps + ' Gbps).', fix: 'Raise link bandwidth, keep prefill and decode in one site, or cut prompt sizes.' });
       }
+    }
+    const pol = spec.policy || DEFAULT_POLICY;
+    for (const S of spec.sources) {
+      const R = spec.routers.find(r => r.id === S.router);
+      if (!R || S.cls === 'public') continue;
+      const poolOf = id => spec.pools.find(q => q.id === id);
+      const bad = R.targets.filter(x => { const p = poolOf(x.pool); return p && (!zoneAllowed(pol, S.cls, p.zone) || (p.role === 'prefill' && !p.decode.some(d => poolOf(d.pool) && zoneAllowed(pol, S.cls, poolOf(d.pool).zone)))); });
+      const ok = R.targets.length - bad.length;
+      if (bad.length && !R.enforce) out.push({ node: R.id, level: 'warn', kind: 'residency', msg: S.name + ' sends ' + S.cls + ' data, and ' + R.name + ' can route it to ' + bad.map(x => { const p = poolOf(x.pool); return zoneAllowed(pol, S.cls, p.zone) ? p.decode.map(d => poolOf(d.pool).name).join(', ') : p.name; }).join(', ') + ', outside its allowed zones.', fix: ok ? 'Turn on Enforce data residency on the router, or change the pool\u2019s trust zone.' : 'Add a pool in an allowed zone, or change the policy on the SLO node.' });
+      if (bad.length && R.enforce && !ok) out.push({ node: R.id, level: 'warn', kind: 'residency', msg: R.name + ' enforces residency but has no allowed pool for ' + S.cls + ' data from ' + S.name + ': every request will be blocked.', fix: 'Add a pool in an allowed zone.' });
+      const viaLinks = new Set();
+      for (const x of R.targets) { if (x.link) viaLinks.add(x.link); const p = poolOf(x.pool); if (p) for (const d of p.decode) if (d.link) viaLinks.add(d.link); }
+      for (const lid of viaLinks) { const L = spec.links.find(l => l.id === lid); if (L && L.encrypted === false && pol.encrypt && !out.some(o => o.kind === 'encryption' && o.node === L.id)) out.push({ node: L.id, level: 'warn', kind: 'encryption', msg: L.name + ' is not encrypted but carries ' + S.cls + ' data.', fix: 'Encrypt the link, or keep non-public traffic off it.' }); }
     }
     if (spec.train && spec.train.link && spec.pools.some(p => (p.decode || []).some(d => d.link === spec.train.link))) out.push({ node: spec.train.link, level: 'warn', kind: 'contention', msg: 'The training job\u2019s gradient sync shares a link with serving KV transfers.', fix: 'Give training its own link or keep the job in one site.' });
     return out;
@@ -570,6 +615,20 @@
   }
   const adviseModels = (spec, opts) => drain(adviseIter(spec, opts));
 
+  // ---------- data residency ----------
+  // Trust zones, most to least trusted. A data class may run only in zones up to its limit; non-public data
+  // may cross only encrypted links when the policy requires it.
+  const ZONES = { private: 0, dedicated: 1, shared: 2 };
+  const ZONE_LABEL = { private: 'private (own site)', dedicated: 'dedicated cloud', shared: 'shared cloud' };
+  const DEFAULT_POLICY = { confidential: 'private', internal: 'any', encrypt: true };
+  const zoneOf = c => (c.zone && c.zone !== 'auto' && ZONES[c.zone] != null ? c.zone : c.siteKind === 'neo' ? 'shared' : 'private');
+  function zoneAllowed(policy, cls, zone) {
+    if (cls === 'public') return true;
+    const lim = (policy || DEFAULT_POLICY)[cls === 'confidential' ? 'confidential' : 'internal'];
+    return lim === 'any' || ZONES[zone] <= ZONES[lim];
+  }
+  const linkAllowed = (policy, cls, L) => cls === 'public' || !(policy || DEFAULT_POLICY).encrypt || !L || L.encrypted !== false;
+
   // ---------- graph compile ----------
   // graph = { nodes: [{id, type, x, y, cfg}], edges: [{id, from, to}] }
   const NODE_RULES = {
@@ -586,8 +645,11 @@
     const sloN = g.nodes.find(n => n.type === 'slo');
     if (!modelN) errors.push({ msg: 'Add a Model node: every pool serves that model.' });
     const spec = { seed: 7, model: modelN ? Object.assign({}, modelN.cfg) : null, slo: sloN ? { ttft: sloN.cfg.ttft, tpot: sloN.cfg.tpotMs / 1000, thinkingStreamed: !!sloN.cfg.thinkingStreamed } : { ttft: 2, tpot: 0.06, thinkingStreamed: false },
-      sources: [], routers: [], pools: [], links: [], train: null, horizon: 0, paths: {} };
-    for (const n of g.nodes) if (n.type === 'link') spec.links.push({ id: n.id, name: n.cfg.name, gbps: n.cfg.gbps, rttMs: n.cfg.rttMs, egressPerGB: n.cfg.egressPerGB });
+      sources: [], routers: [], pools: [], links: [], train: null, horizon: 0, paths: {},
+      policy: sloN ? { confidential: sloN.cfg.confidentialIn || 'private', internal: sloN.cfg.internalIn || 'any', encrypt: sloN.cfg.requireEncryption !== false } : Object.assign({}, DEFAULT_POLICY),
+      owners: {} };
+    for (const n of g.nodes) if (n.cfg && (n.cfg.owner || n.cfg.oncall)) spec.owners[n.id] = { owner: (n.cfg.owner || '').trim(), oncall: (n.cfg.oncall || '').trim() };
+    for (const n of g.nodes) if (n.type === 'link') spec.links.push({ id: n.id, name: n.cfg.name, gbps: n.cfg.gbps, rttMs: n.cfg.rttMs, egressPerGB: n.cfg.egressPerGB, encrypted: n.cfg.encrypted !== false });
     // resolve a pool reached from an edge, possibly through one link node
     function reach(e) {
       const t = byId[e.to];
@@ -601,7 +663,8 @@
       const c = n.cfg;
       const p = { id: n.id, name: c.name, site: c.site, siteKind: c.siteKind, role: c.role, gpu: c.gpu,
         min: c.autoscale ? c.min : c.instances, max: c.autoscale ? Math.max(c.min, c.max, 1) : c.instances,
-        auto: !!c.autoscale, coldStart: c.coldStart, upWait: c.upWait, downUtil: c.downUtil / 100, maxBatch: c.maxBatch, fabricGbps: c.fabricGbps, decode: [] };
+        auto: !!c.autoscale, coldStart: c.coldStart, upWait: c.upWait, downUtil: c.downUtil / 100, maxBatch: c.maxBatch, fabricGbps: c.fabricGbps, decode: [],
+        zone: zoneOf(c) };
       if (c.role === 'prefill') {
         for (const e of outs(n.id)) for (const r of reach(e)) {
           const d = byId[r.pool];
@@ -624,7 +687,7 @@
         targets.push(r);
       }
       if (!targets.length) errors.push({ node: n.id, msg: n.cfg.name + ' has no pool to send requests to.' });
-      spec.routers.push({ id: n.id, name: n.cfg.name, policy: n.cfg.policy, burstWait: n.cfg.burstWait, targets });
+      spec.routers.push({ id: n.id, name: n.cfg.name, policy: n.cfg.policy, burstWait: n.cfg.burstWait, targets, enforce: !!n.cfg.enforceResidency });
     }
     let uidBase = 0;
     for (const n of g.nodes) {
@@ -633,7 +696,8 @@
       if (!e) { errors.push({ node: n.id, msg: n.cfg.name + ': wire it to a Router.' }); continue; }
       const c = n.cfg;
       const s = { id: n.id, name: c.name, kind: n.type === 'trace' ? 'open' : n.type, router: e.to, edge: e.id, prefixHit: c.prefixHit / 100, useRecordedCache: c.useRecordedCache !== false, userBase: uidBase,
-        replay: c.replay === 'sessions' ? 'sessions' : 'timestamps', onFail: c.onFail === 'giveup' ? 'giveup' : 'retry' };
+        replay: c.replay === 'sessions' ? 'sessions' : 'timestamps', onFail: c.onFail === 'giveup' ? 'giveup' : 'retry',
+        cls: ['public', 'internal', 'confidential'].includes(c.dataClass) ? c.dataClass : 'internal' };
       if (n.type === 'trace') { s.trace = traceLookup ? traceLookup(c.trace, c.scale) : []; }
       else { Object.assign(s, { users: c.users, turns: c.turns, systemTokens: c.systemTokens, contextTokens: n.type === 'agent' ? c.contextTokens : 0, turnTokens: c.turnTokens, outTokens: c.outTokens, thinkS: c.thinkS, gapS: c.gapS, duration: c.durationMin * 60 }); uidBase += c.users; }
       spec.sources.push(s);
@@ -692,7 +756,11 @@
     const sites = {};
     for (const p of pools) sites[p.site] = Math.max(sites[p.site] || 0, p.fabricGbps || 400);
     for (const s in sites) addLink('fab:' + s, s + ' fabric', sites[s], 0.00002, 0, true, s);
-    for (const L of spec.links) addLink(L.id, L.name, L.gbps, L.rttMs / 1000, L.egressPerGB, false, null);
+    for (const L of spec.links) { addLink(L.id, L.name, L.gbps, L.rttMs / 1000, L.egressPerGB, false, null); links[L.id].encrypted = L.encrypted !== false; }
+    const policy = spec.policy || DEFAULT_POLICY;
+    // Under an enforced residency rule, a target is allowed when its pool, the link to it and (for prefill) some decode pool all are.
+    const decodeOk = (p, cls) => p.role !== 'prefill' || p.decode.some(d => zoneAllowed(policy, cls, byId[d.pool].zone) && linkAllowed(policy, cls, d.link && links[d.link]));
+    const targetOk = (x, cls) => zoneAllowed(policy, cls, x.P.zone) && linkAllowed(policy, cls, x.link && links[x.link]) && decodeOk(x.P, cls);
     const linkList = Object.values(links);
 
     const routers = spec.routers.map(r => Object.assign({}, r, { rr: 0, targets: r.targets.map(x => Object.assign({}, x, { P: byId[x.pool] })) }));
@@ -707,8 +775,9 @@
     }
     // A target behind a link that is down, or with no serving instance, is skipped while any other target can serve.
     const targetWait = x => (x.link && links[x.link].factor <= 0 ? Infinity : estWait(x.P));
-    function route(R) {
-      const T = R.targets;
+    function route(R, r) {
+      const T = R.enforce ? R.targets.filter(x => targetOk(x, r.cls)) : R.targets;
+      if (!T.length) return null;
       if (T.length === 1) return T[0];
       if (R.policy === 'round-robin') { const o = T.filter(x => isFinite(targetWait(x))); const pick = o.length ? o : [T[0]]; return pick[(R.rr++) % pick.length]; }
       let best = T[0], bw = targetWait(T[0]);
@@ -728,7 +797,7 @@
     const trng = makeRng(((spec.seed || 7) * 7919 + 101) >>> 0);
     function mkReq(src, t, isl, osl, cached, user) {
       const think = thinkMed > 0 ? clamp(Math.round(trng.logn(thinkMed, 0.6)), 16, 64000) : 0;
-      const r = { id: reqs.length, src: src.id, router: src.router, t, isl, osl, think, dec: think + osl, tTok1: NaN, cached: Math.max(0, Math.min(cached, isl - 1)), user,
+      const r = { id: reqs.length, src: src.id, cls: src.cls || 'internal', router: src.router, t, isl, osl, think, dec: think + osl, tTok1: NaN, cached: Math.max(0, Math.min(cached, isl - 1)), user,
         site: '', pPool: '', dPool: '', inLink: '', net: 0, tEnq: NaN, tAdmit: NaN, tPrefEnd: NaN, tXferStart: NaN, tXferEnd: NaN, tFirst: NaN, tFinish: NaN,
         gen: 0, preRem: 0, kvRes: 0, xLink: '', fail: '', recTtft: NaN, recQueue: NaN, recE2e: NaN };
       reqs.push(r);
@@ -864,15 +933,16 @@
       if (dp && dp.siteKind === 'neo') { const L = links[r.inLink] || links[r.xLink]; if (L && !L.fabric) { L.egressBytes += r.osl * 4; L.egrSec += r.osl * 4; L.totalBytes += r.osl * 4; } }
       if (r.user >= 0) after(r.user, r.isl, r.osl, t);
     }
-    const failCounts = { kv: 0, outage: 0, route: 0 };
+    const failCounts = { kv: 0, outage: 0, route: 0, policy: 0 };
     function failReq(r, t, why, kind) {
       r.fail = why; r.failKind = kind || 'kv'; failCounts[r.failKind]++; dropped++; doneCount++;
       if (r.sess) sessionTurnDone(r, t, false);
       if (r.user >= 0) { users[r.user].turns = 1; after(r.user, 0, 0, t + 5); }
     }
-    function pickDecode(p) {
+    function pickDecode(p, r) {
       let best = null, bs = Infinity;
       for (const d of p.decode) {
+        if (r && r.enforce && !(zoneAllowed(policy, r.cls, byId[d.pool].zone) && linkAllowed(policy, r.cls, d.link && links[d.link]))) continue;
         const D = byId[d.pool];
         const s = servingCount(D) + D.inst.filter(x => x.state === 'starting').length * 0.3;
         const score = (d.link && links[d.link].factor <= 0 ? 1e6 : 0) + (D.q.length + 1) / Math.max(0.3, s) + (d.link ? 0.5 : 0);
@@ -886,7 +956,7 @@
         if (r.dec <= 1) { x.kvUsed -= r.kvRes; x.ctxTok -= r.isl + 1; finish(r, t); } else x.batch.push(r);
         return;
       }
-      const d = pickDecode(p);
+      const d = pickDecode(p, r);
       const L = d.link ? links[d.link] : links['fab:' + p.site];
       r.tXferStart = t; r.xLink = L.id;
       L.xfers.push({ r, rem: r.isl * p.P.kvBytesPerToken, d: byId[d.pool] });
@@ -1100,7 +1170,9 @@
         else if (r.replayTurn) r = replayReq(r.replayTurn, r.t);
         const R = routerById[r.router];
         if (!R || !R.targets.length) { failReq(r, t, 'No route', 'route'); continue; }
-        const x = route(R);
+        const x = route(R, r);
+        if (!x) { failReq(r, t, 'No pool is allowed for ' + r.cls + ' data', 'policy'); continue; }
+        r.enforce = !!R.enforce;
         const p = x.P;
         r.site = p.site; r.pPool = p.id;
         if (x.link) {
@@ -1234,7 +1306,7 @@
     const recorded = compareRecorded(reqs, D);
     const bottleneck = findBottleneck(frames, pools, linkList, viol, firsts, slo, tviol, fins);
     const summary = {
-      requests: reqs.length, completed, dropped, rejected: failCounts.kv, lost: failCounts.outage, retried,
+      requests: reqs.length, completed, dropped, rejected: failCounts.kv, lost: failCounts.outage, blocked: failCounts.policy, retried,
       surgeRequests: reqs.filter(r => r.surge).length, bottleneck,
       replay: replayStats.sources ? (() => { const d = replayStats.drift.map(Math.abs).sort((a, b) => a - b); return { sessions: replayStats.sessions, turns: replayStats.turns, branches: replayStats.branches, estimatedGaps: replayStats.estimated, abandoned: replayStats.abandoned, retried: replayStats.retried, issued: replayStats.drift.length, driftP50: pct(d, 0.5), driftP90: pct(d, 0.9), meanDrift: replayStats.drift.length ? replayStats.drift.reduce((a, b) => a + b, 0) / replayStats.drift.length : NaN }; })() : null,
       slo: reqs.length ? ok / reqs.length : NaN,
@@ -1248,7 +1320,7 @@
     };
     summary.recorded = recorded.summary;
     summary.simMs = Math.round((typeof performance !== 'undefined' ? performance.now() : Date.now()) - T0);
-    const slim = reqs.map(r => ({ id: r.id, src: r.src, router: r.router, t: r.t, isl: r.isl, osl: r.osl, cached: r.cached, user: r.user, site: r.site, pPool: r.pPool, dPool: r.dPool, inLink: r.inLink, xLink: r.xLink,
+    const slim = reqs.map(r => ({ id: r.id, src: r.src, cls: r.cls, router: r.router, t: r.t, isl: r.isl, osl: r.osl, cached: r.cached, user: r.user, site: r.site, pPool: r.pPool, dPool: r.dPool, inLink: r.inLink, xLink: r.xLink,
       tEnq: r.tEnq, tAdmit: r.tAdmit, tPrefEnd: r.tPrefEnd, tXferEnd: r.tXferEnd, tFirst: r.tFirst, tFinish: r.tFinish, net: r.net, fail: r.fail,
       ttft: r.ttft, tpot: r.tpot, ok: r.ok, bQueue: r.bQueue, bPrefill: r.bPrefill, bXfer: r.bXfer, bDwait: r.bDwait,
       think: r.think, tTok1: r.tTok1, bThink: r.bThink, session: r.sess ? r.sess.ses.id : null, turn: r.sess ? r.turn : null, retryOf: r.retryOf || 0,
@@ -1265,7 +1337,7 @@
   }
 
   const api = { GPUS, MODELS, TRACES, NODE_RULES, CAUSE, profile, genTrace, scaleTrace, compileGraph, simulate, normStress, findBottleneck,
-    headroomIter, findHeadroom, healthOf, HEALTH_LABEL, costBreakdown, latencyBreakdown, blastIter, blastRadius, scaleFleet, sizeFleetIter, sizeFleet, adviseIter, adviseModels, compareRecorded, planSessions, lintSpec, makeRng };
+    headroomIter, findHeadroom, healthOf, HEALTH_LABEL, costBreakdown, latencyBreakdown, blastIter, blastRadius, securityBreakdown, zoneAllowed, ZONE_LABEL, DEFAULT_POLICY, scaleFleet, sizeFleetIter, sizeFleet, adviseIter, adviseModels, compareRecorded, planSessions, lintSpec, makeRng };
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
   else root.FleetEngine = api;
 })(typeof window !== 'undefined' ? window : this);

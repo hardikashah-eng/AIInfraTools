@@ -732,6 +732,18 @@ const FIELDS = {
     { p: 'thinkingStreamed', k: 'check', label: 'Streamed thinking counts as the first token', hint: 'Turn on if your product streams reasoning to the user. Off: TTFT waits for the visible answer.' }
   ]
 };
+// data residency and ownership knobs
+const CLASS_FIELD = { p: 'dataClass', k: 'seg', label: 'Data class', opts: [['public', 'Public'], ['internal', 'Internal'], ['confidential', 'Confidential']], hint: 'What the prompts and their KV caches contain. The policy on the SLO node says where each class may run.' };
+const OWNER_FIELDS = [{ k: 'grid', ctl: [{ p: 'owner', k: 'text', label: 'Owner team', list: true }, { p: 'oncall', k: 'text', label: 'On-call', list: true }] }];
+FIELDS.agent.push(CLASS_FIELD); FIELDS.trace.push(CLASS_FIELD);
+FIELDS.router.push({ p: 'enforceResidency', k: 'check', label: 'Enforce data residency', hint: 'Only route each request to pools, links and decode pools its data class is allowed in. Requests with no allowed pool are blocked.' });
+FIELDS.pool.push({ p: 'zone', k: 'seg', label: 'Trust zone', opts: [['auto', 'By site'], ['private', 'Private'], ['dedicated', 'Dedicated'], ['shared', 'Shared']], hint: 'Private: your own site. Dedicated: single-tenant cloud capacity. Shared: multi-tenant cloud. "By site" is private on-prem, shared in a neocloud.' });
+FIELDS.link.push({ p: 'encrypted', k: 'check', label: 'Encrypted in transit' });
+FIELDS.slo.push(
+  { p: 'confidentialIn', k: 'seg', label: 'Confidential data may run in', opts: [['private', 'Private sites only'], ['dedicated', 'Private + dedicated cloud']] },
+  { p: 'internalIn', k: 'seg', label: 'Internal data may run in', opts: [['any', 'Anywhere'], ['dedicated', 'Private + dedicated'], ['private', 'Private only']] },
+  { p: 'requireEncryption', k: 'check', label: 'Non-public data must cross encrypted links only' });
+for (const t of ['agent', 'trace', 'router', 'pool', 'link', 'train']) FIELDS[t].push(...OWNER_FIELDS);
 FIELDS.chat = FIELDS.agent.filter(f => f.p !== 'contextTokens').map(f => f.p === 'turnTokens' ? Object.assign({}, f, { label: 'User message per turn' }) : f.p === 'thinkS' ? Object.assign({}, f, { label: 'User think time between turns' }) : f);
 let formNode = null, formBound = [];
 function renderDetails() {
@@ -796,8 +808,8 @@ function makeField(n, f) {
     const lid = id + 'l';
     w.innerHTML = '<label for="' + id + '">' + lab + '</label><input type="text" id="' + id + '"' + (f.list ? ' list="' + lid + '"' : '') + '>' + (f.list ? '<datalist id="' + lid + '"></datalist>' : '') + (f.hint ? '<div class="hint">' + f.hint + '</div>' : '');
     const inp = w.querySelector('input');
-    inp.addEventListener('change', () => { c[f.p] = inp.value.trim() || 'Site'; changed(n, true); });
-    if (f.list) { const sites = [...new Set(S.graph.nodes.filter(m => m.type === 'pool').map(m => m.cfg.site))]; w.querySelector('datalist').innerHTML = sites.map(s => '<option value="' + esc(s) + '">').join(''); }
+    inp.addEventListener('change', () => { c[f.p] = inp.value.trim() || (f.p === 'site' ? 'Site' : ''); changed(n, true); });
+    if (f.list) { const vals = f.p === 'site' ? S.graph.nodes.filter(m => m.type === 'pool').map(m => m.cfg.site) : S.graph.nodes.map(m => m.cfg[f.p]).filter(Boolean); w.querySelector('datalist').innerHTML = [...new Set(vals)].map(s => '<option value="' + esc(s) + '">').join(''); }
     formBound.push({ f, w, inp });
     return w;
   } else if (f.k === 'select') {
@@ -1063,7 +1075,7 @@ function renderOverview() {
   const nm = id => { const n = nodeById(id); return n ? n.cfg.name : id; };
   const LVo = S.lens !== 'perf' ? lensView(R, s) : null, Lz = lensOf(S.lens);
   const lensHtml = LVo ? '<h3 class="sec" style="margin-top:0">' + Lz.label + (Lz.scoped ? (S.scope === 'run' ? ', whole run' : ', last 10 s') : S.lens === 'rel' ? ': if each failed for the whole run' : '') + '</h3><div class="sub">' + LVo.headline + '</div><div class="lrows">' +
-    (() => { const mx = LVo.rows.reduce((m, r) => Math.max(m, r.v), 0) || 1; return LVo.rows.map(r => '<div class="row" data-selnode="' + r.id + '" title="' + esc(r.sub || '') + '"><span>' + esc(r.name) + '</span><span>' + esc(r.text) + '</span></div><i class="lbar" style="width:' + (100 * Math.max(0, r.v) / mx).toFixed(1) + '%;background:' + Lz.hue + '"></i>').join(''); })() + '</div>' : '';
+    (() => { const mx = LVo.rows.reduce((m, r) => Math.max(m, r.v), 0) || 1; return LVo.rows.map(r => '<div class="row" data-selnode="' + r.id + '" title="' + esc(r.sub || '') + '"><span>' + esc(r.name) + '</span><span>' + esc(r.text) + '</span></div><i class="lbar" style="width:' + (100 * Math.max(0, r.v) / mx).toFixed(1) + '%;background:' + (r.hue || Lz.hue) + '"></i>').join(''); })() + '</div>' : '';
   const healthHtml = LVo ? lensHtml : '<h3 class="sec" style="margin-top:0">Health at ' + mmss(t) + '</h3><div class="health">' + (hot.length ? hot.slice(0, 6).map(h => '<div class="row"><span><span class="hdot" style="background:' + (h.l === 2 ? 'var(--crit)' : 'var(--warn)') + '"></span><button class="linkbtn" type="button" data-selnode="' + h.id + '">' + esc(nm(h.id)) + '</button></span><span>' + esc(E.HEALTH_LABEL[h.c] || h.c) + '</span></div>').join('') : '<div class="sub">Every node is healthy this second.</div>') + '</div>';
   const rp = R.summary.replay;
   const rpHtml = rp ? '<h3 class="sec">Closed-loop replay</h3><div class="sub">' + fInt(rp.sessions) + ' recorded sessions, ' + fInt(rp.turns) + ' turns (' + fInt(rp.branches) + ' parallel calls). Turns ran a median ' + fS(rp.driftP50) + ' behind their recorded time (p90 ' + fS(rp.driftP90) + '): ' + (rp.driftP50 > 5 ? 'this fleet is slower than the one that recorded the log, so users would have sent less traffic than the timestamps say.' : 'close to the recorded pace.') + (rp.estimatedGaps ? ' ' + fInt(rp.estimatedGaps) + ' think times were estimated because the log has no latency for the turn before.' : '') + (rp.abandoned ? ' ' + fInt(rp.abandoned) + ' turns were never sent because their session gave up.' : '') + '</div>' : '';
@@ -1096,6 +1108,7 @@ function doRun() {
   prep(R);
   R.health = E.healthOf(R);
   S.run = R; S.runId++; S.lensKey = null;
+  if (S.lens === 'own') renderLensBar();
   if (S.lens === 'rel') ensureBlast();
   if (firstRun) {
     firstRun = false;
@@ -1155,8 +1168,11 @@ const LENSES = [
   { id: 'perf', label: 'Performance', hue: 'var(--crit)', scoped: false, hint: 'Health of each node, second by second: strained or failing, and why' },
   { id: 'lat', label: 'Latency', hue: 'var(--c-queue)', scoped: true, hint: 'Where time to first token is spent, node by node', metric: 'share of TTFT' },
   { id: 'cost', label: 'Cost', hue: 'var(--train)', scoped: true, hint: 'Where the money goes: GPU spend, idle GPUs, egress', metric: 'spend' },
-  { id: 'rel', label: 'Reliability', hue: 'var(--crit)', scoped: false, hint: 'What losing each pool, link or site for the whole run would do to the SLO', metric: 'SLO lost if it fails' }
+  { id: 'rel', label: 'Reliability', hue: 'var(--crit)', scoped: false, hint: 'What losing each pool, link or site for the whole run would do to the SLO', metric: 'SLO lost if it fails' },
+  { id: 'sec', label: 'Security', hue: 'var(--n-link)', scoped: true, hint: 'Where each data class runs and crosses, and where the residency rule is broken', metric: 'residency breaches' },
+  { id: 'own', label: 'Ownership', hue: 'var(--onprem)', scoped: false, hint: 'Which team owns each node, with its spend and the bottlenecks it carried' }
 ];
+const TEAM_HUES = ['var(--onprem)', 'var(--neo)', 'var(--train)', 'var(--n-link)', 'color-mix(in srgb, var(--crit) 55%, var(--n-link))', 'var(--n-src)', 'var(--n-route)'];
 const lensOf = id => LENSES.find(x => x.id === id) || LENSES[0];
 const nodeName = id => { const n = nodeById(id); return n ? n.cfg.name : id; };
 let perfLegend = null;
@@ -1167,7 +1183,7 @@ function renderLensBar() {
   const lg = $('#legendHud');
   if (perfLegend == null) perfLegend = lg.innerHTML;
   const L = lensOf(S.lens);
-  lg.innerHTML = L.id === 'perf' ? perfLegend : '<span><i style="background:var(--onprem)"></i>request to on-prem</span><span><i style="background:var(--neo)"></i>request to neocloud</span><span><i style="background:var(--c-xfer)"></i>KV cache transfer</span><span>' + L.label + ': low<span class="lgrad" style="background:linear-gradient(90deg, var(--line), ' + L.hue + ')"></span>high ' + L.metric + '</span>';
+  lg.innerHTML = L.id === 'perf' ? perfLegend : L.id === 'own' ? teamsOf().map(([tm, h]) => '<span><i style="background:' + h + '"></i>' + esc(tm) + '</span>').join('') + '<span><i style="background:var(--warn)"></i>no owner</span>' : '<span><i style="background:var(--onprem)"></i>request to on-prem</span><span><i style="background:var(--neo)"></i>request to neocloud</span><span><i style="background:var(--c-xfer)"></i>KV cache transfer</span><span>' + L.label + ': low<span class="lgrad" style="background:linear-gradient(90deg, var(--line), ' + L.hue + ')"></span>high ' + L.metric + '</span>';
 }
 function setLens(id) {
   S.lens = id; S.lensKey = null;
@@ -1194,6 +1210,73 @@ function lensView(R, s) {
   return v;
 }
 const LENS_EXTRA = {};
+function teamsOf() {
+  const teams = [...new Set(S.graph.nodes.map(n => (n.cfg.owner || '').trim()).filter(Boolean))].sort();
+  return teams.map((t, i) => [t, TEAM_HUES[i % TEAM_HUES.length]]);
+}
+const CLASS_LABEL = { public: 'public', internal: 'internal', confidential: 'confidential' };
+LENS_EXTRA.sec = (R, s) => {
+  const W = lensWindow(R, s), B = E.securityBreakdown(R, W.s0, W.s1), out = { nodes: {}, rows: [] }, T = B.total, pol = B.policy;
+  let mx = 0; for (const id in B.nodes) mx = Math.max(mx, B.nodes[id].viol);
+  const mix = r => ['confidential', 'internal', 'public'].filter(c => r[c]).map(c => fK(r[c]) + ' ' + c.slice(0, 4) + '.').join(' · ');
+  for (const id in B.nodes) {
+    const x = B.nodes[id], n = nodeById(id);
+    if (!n || !views[id]) continue;
+    let text, title, i, hue;
+    if (n.type === 'pool') {
+      const zone = R.spec.pools.find(p => p.id === id).zone;
+      text = zone + (x.viol ? ' · ' + fInt(x.viol) + ' breaches' : ' · ok');
+      title = E.ZONE_LABEL[zone] + ' · served ' + (mix(x.req) || 'nothing');
+    } else if (n.type === 'link') {
+      text = (n.cfg.encrypted === false ? 'unencrypted' : 'encrypted') + (x.viol ? ' · ' + (x.violGB >= 0.01 ? x.violGB.toFixed(2) + ' GB' : fInt(x.viol) + ' req') + ' out of zone' : ' · ok');
+      title = 'Carried ' + (mix(x.req) || 'nothing') + (x.gb.confidential ? ' · ' + x.gb.confidential.toFixed(2) + ' GB of confidential prompts and KV' : '');
+    } else {
+      const cls = (R.spec.sources.find(q => q.id === id) || {}).cls || 'internal';
+      text = cls + (x.viol ? ' · ' + fPct(x.viol / Math.max(1, x.n)) + ' exposed' : x.blocked ? ' · ' + fInt(x.blocked) + ' blocked' : ' · ok');
+      title = fInt(x.n) + ' requests' + (x.blocked ? ', ' + fInt(x.blocked) + ' blocked by the residency rule' : '');
+    }
+    i = x.viol ? Math.max(0.35, x.viol / mx) : x.blocked ? 0.5 : 0.25;
+    hue = x.viol ? 'var(--crit)' : x.blocked ? 'var(--warn)' : 'var(--good)';
+    out.nodes[id] = { i, text, title, hue };
+    out.rows.push({ id, name: n.cfg.name, v: x.viol + x.blocked * 0.5, text, sub: title });
+  }
+  for (const rt of R.spec.routers) if (views[rt.id]) out.nodes[rt.id] = { i: 0.4, text: rt.enforce ? 'enforcing residency' : 'not enforcing', title: 'Policy: confidential in ' + pol.confidential + (pol.confidential === 'private' ? ' sites' : ' or private') + ', internal ' + (pol.internal === 'any' ? 'anywhere' : 'in ' + pol.internal) + (pol.encrypt ? ', encrypted links only' : ''), hue: rt.enforce ? 'var(--good)' : 'var(--warn)' };
+  const worst = out.rows.filter(r => nodeById(r.id) && nodeById(r.id).type !== 'agent' && nodeById(r.id).type !== 'chat' && nodeById(r.id).type !== 'trace').sort((a, b) => b.v - a.v)[0];
+  out.headline = !T.n ? 'No requests arrived in this window.' : T.viol
+    ? '<b>' + fInt(T.viol) + '</b> of ' + fInt(T.restricted) + ' internal or confidential requests (' + fPct(T.viol / Math.max(1, T.restricted)) + ') ran outside their allowed zone' + (worst ? ', mostly at <b>' + esc(worst.name) + '</b>' : '') + (T.violGB >= 0.01 ? '; <b>' + T.violGB.toFixed(2) + ' GB</b> of their prompts and KV caches crossed into it' : '') + '. Turn on <i>Enforce data residency</i> on the router to keep them in.'
+    : T.blocked ? 'Residency held: <b>' + fInt(T.blocked) + '</b> requests had no allowed pool and were blocked.' : 'Residency held: no ' + (T.restricted ? 'internal or confidential ' : '') + 'request left its allowed zone' + (T.restricted ? '' : ' (all traffic here is public)') + '.';
+  return out;
+};
+LENS_EXTRA.own = (R) => {
+  const out = { nodes: {}, rows: [] }, hues = Object.fromEntries(teamsOf()), C = E.costBreakdown(R, 0, R.D), bt = R.summary.bottleneck, H = R.health;
+  const teams = {};
+  const unowned = [];
+  for (const id in views) {
+    const n = views[id].n;
+    if (n.type === 'model' || n.type === 'slo') continue;
+    const tm = (n.cfg.owner || '').trim();
+    if (!tm) { unowned.push(id); out.nodes[id] = { i: 0.5, text: 'no owner', title: 'Set an owner team and on-call on this node', hue: 'var(--warn)' }; continue; }
+    const T = teams[tm] || (teams[tm] = { nodes: [], spend: 0, breach: 0, failing: 0, oncall: new Set() });
+    T.nodes.push(id); if (n.cfg.oncall) T.oncall.add(n.cfg.oncall);
+    T.spend += C.nodes[id] ? C.nodes[id].spend : 0;
+    T.breach += bt ? bt.top.filter(b => b.id === id).reduce((a, b) => a + b.seconds, 0) : 0;
+    T.failing += H && H.sum[id] ? H.sum[id].crit : 0;
+    out.nodes[id] = { i: 1, text: tm + (n.cfg.oncall ? ' · ' + n.cfg.oncall : ''), title: tm + ' owns this node' + (n.cfg.oncall ? '; page ' + n.cfg.oncall : ''), hue: hues[tm] };
+  }
+  const total = Object.values(teams).reduce((a, t) => a + t.spend, 0) || 1, allBreach = bt ? bt.top.reduce((a, b) => a + b.seconds, 0) : 0;
+  for (const tm in teams) {
+    const T = teams[tm];
+    out.rows.push({ id: T.nodes[0], name: tm, hue: hues[tm], v: T.spend, text: fUsd(T.spend) + ' (' + fPct(T.spend / total) + ')' + (T.breach ? ' · ' + T.breach + ' s breaching' : ''), sub: T.nodes.map(nodeName).join(', ') + ([...T.oncall].length ? ' · on-call ' + [...T.oncall].join(', ') : '') });
+  }
+  for (const id of unowned) out.rows.push({ id, name: nodeName(id), v: -1, text: 'no owner', sub: 'Set an owner on this node' });
+  const first = bt && bt.first, firstTeam = first && nodeById(first.id) ? (nodeById(first.id).cfg.owner || '').trim() : '';
+  const top = out.rows.filter(r => r.v >= 0).sort((a, b) => b.v - a.v)[0];
+  out.headline = Object.keys(teams).length ? '<b>' + Object.keys(teams).length + '</b> teams own this fleet. ' + (top ? '<b>' + esc(top.name) + '</b> owns ' + fPct(top.v / total) + ' of the spend. ' : '') +
+    (first ? 'The first bottleneck (' + esc(first.name) + ') is ' + (firstTeam ? '<b>' + esc(firstTeam) + '</b>\u2019s' : 'unowned') + (allBreach ? '; ' : '. ') : '') + (allBreach ? Object.entries(teams).filter(([, t]) => t.breach).sort((a, b) => b[1].breach - a[1].breach).map(([tm, t]) => esc(tm) + ' carried ' + fPct(t.breach / allBreach)).join(', ') + ' of breach seconds. ' : '') +
+    (unowned.length ? '<b>' + unowned.length + '</b> node' + (unowned.length > 1 ? 's have' : ' has') + ' no owner.' : '')
+    : 'No node has an owner yet: set Owner team and On-call on each node.';
+  return out;
+};
 function lensWindow(R, s) { const run = S.scope === 'run'; return { run, s0: run ? 0 : Math.max(0, s - 9), s1: run ? R.D : s + 1 }; }
 function lensLatency(R, s) {
   const W = lensWindow(R, s), L = E.latencyBreakdown(R, W.s0, W.s1), out = { nodes: {}, rows: [] };
@@ -1278,6 +1361,7 @@ function perfHeadline(R, s) {
 }
 function applyLook(v, x, hue) {
   const X = v.refs, fr = v.g.querySelector('.frame');
+  if (x && x.hue) hue = x.hue;
   const key = x ? x.i.toFixed(2) + '|' + x.text + '|' + hue : '';
   if (v.lk === key) return;
   v.lk = key; v.hl = -1;
@@ -1392,7 +1476,7 @@ function updateLive(t) {
     const th = !LV && H && H.lvl[ev.e.to] ? H.lvl[ev.e.to][s] : 0;
     ev.wire.setAttribute('stroke', lk || th === 2 ? 'var(--crit)' : th === 1 ? 'var(--warn)' : edgeColor(ev.e));
     const lx = LV && (LV.nodes[ev.e.to] || LV.nodes[ev.e.from]);
-    if (lx && lx.i > 0.05) { ev.wire.style.stroke = 'color-mix(in srgb, ' + hue + ' ' + Math.round(25 + 75 * lx.i) + '%, ' + edgeColor(ev.e) + ')'; } else ev.wire.style.stroke = '';
+    if (lx && lx.i > 0.05 && S.lens !== 'own') { ev.wire.style.stroke = 'color-mix(in srgb, ' + (lx.hue || hue) + ' ' + Math.round(25 + 75 * lx.i) + '%, ' + edgeColor(ev.e) + ')'; } else ev.wire.style.stroke = '';
     if (lk) ev.wire.setAttribute('stroke-dasharray', '6 4'); else ev.wire.removeAttribute('stroke-dasharray');
     ev.flow.setAttribute('opacity', v > 0.01 ? 0.9 : 0);
     ev.flow.style.strokeDashoffset = String(-(t * 30) % 120);

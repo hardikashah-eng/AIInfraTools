@@ -155,7 +155,10 @@ A tab bar above the canvas switches what node colours, badges and wires mean. Ea
 | Cost | GPU spend (amortized on-prem, rented neocloud) with idle share, egress per link (responses and training sync), training GPU spend | `costBreakdown(run, s0, s1)` |
 | Reliability | SLO lost if this pool, link or site failed for the whole run, and the share of requests left unserved | `blastIter(spec, stress)`, run in the background after each change |
 
-Security/data residency and Ownership lenses follow the same pattern.
+| Security | Data class mix through each pool and link, and breaches of the residency rule: a pool outside the class's allowed zones, non-public data over an unencrypted link, or a link carrying data into a disallowed zone (with GB of prompts and KV caches) | `securityBreakdown(run, t0, t1)` |
+| Ownership | Owner team and on-call; per team, spend and breach seconds carried; unowned nodes | `spec.owners`, `costBreakdown`, `summary.bottleneck` |
+
+**Data residency model.** Sources have a data class (public, internal, confidential). Pools have a trust zone (private, dedicated cloud, shared cloud; by default private on-prem and shared in a neocloud). Links can be encrypted. The policy on the SLO node says where confidential data may run (private only, or private and dedicated) and where internal data may run (anywhere, private and dedicated, or private only), and whether non-public data must cross encrypted links only. A router set to enforce residency only routes to targets whose pool, link and (for prefill) some decode pool are allowed. Requests with no allowed target are blocked and counted. The lint flags routers that can send restricted data outside its zones, enforced routers with no allowed pool, and unencrypted links carrying restricted data.
 
 ## Metrics and outputs
 
