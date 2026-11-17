@@ -9,7 +9,7 @@
     chat: { title: 'Chat users', group: 'Traffic', color: 'src', inputs: false, outputs: true, w: 230,
       defaults: () => ({ name: 'Chat users', users: 400, turns: 6, systemTokens: 800, contextTokens: 0, turnTokens: 300, outTokens: 300, thinkS: 20, gapS: 60, prefixHit: 50, durationMin: 10 }) },
     trace: { title: 'Trace replay', group: 'Traffic', color: 'src', inputs: false, outputs: true, w: 230,
-      defaults: () => ({ name: 'Trace replay', trace: 'chat', scale: 1, prefixHit: 0 }) },
+      defaults: () => ({ name: 'Trace replay', trace: 'chat', scale: 1, prefixHit: 0, useRecordedCache: true }) },
     router: { title: 'Router', group: 'Routing', color: 'route', inputs: true, outputs: true, w: 200,
       defaults: () => ({ name: 'Router', policy: 'primary-first', burstWait: 1.5 }) },
     pool: { title: 'GPU pool', group: 'Compute', color: 'pool', inputs: true, outputs: true, w: 290,

@@ -1,0 +1,65 @@
+{
+ "data": [
+  {
+   "traceID": "t1",
+   "spans": [
+    {
+     "traceID": "t1",
+     "spanID": "s1",
+     "operationName": "llm_request",
+     "startTime": 1763373600000000,
+     "duration": 6200000,
+     "tags": [
+      {
+       "key": "gen_ai.usage.prompt_tokens",
+       "type": "int64",
+       "value": 1200
+      },
+      {
+       "key": "gen_ai.usage.completion_tokens",
+       "type": "int64",
+       "value": 250
+      },
+      {
+       "key": "gen_ai.latency.time_to_first_token",
+       "type": "float64",
+       "value": 0.31
+      },
+      {
+       "key": "gen_ai.latency.time_in_queue",
+       "type": "float64",
+       "value": 0.02
+      }
+     ]
+    },
+    {
+     "traceID": "t1",
+     "spanID": "s2",
+     "operationName": "POST /v1/completions",
+     "startTime": 1763373600000000,
+     "duration": 6300000,
+     "tags": []
+    },
+    {
+     "traceID": "t1",
+     "spanID": "s3",
+     "operationName": "llm_request",
+     "startTime": 1763373601500000,
+     "duration": 2000000,
+     "tags": [
+      {
+       "key": "gen_ai.usage.prompt_tokens",
+       "type": "int64",
+       "value": 800
+      },
+      {
+       "key": "gen_ai.usage.completion_tokens",
+       "type": "int64",
+       "value": 90
+      }
+     ]
+    }
+   ]
+  }
+ ]
+}

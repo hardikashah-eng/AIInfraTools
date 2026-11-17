@@ -163,7 +163,7 @@ Sites with VM-only telemetry can be calibrated only on request-level latency and
 ## Build phases
 
 1. **Prototype (done):** a browser-only node editor and player on the tier-1 engine, with agent, chat, trace and training nodes, seven templates and baseline compare. Profiles come from spec sheets, not measurements.
-2. **Pilot:** load one real week of production traces (vLLM tracing spans, gateway logs); YAML scenarios; profiles seeded from AIConfigurator, then calibrated against one recorded hour; engine moved into a web worker; run store and shareable run links.
+2. **Pilot:** load one real week of production traces (vLLM tracing spans and gateway logs: importer and recorded-vs-simulated TTFT done, see [TRACES.md](TRACES.md)); closed-loop replay of recorded sessions; YAML scenarios; profiles seeded from AIConfigurator, then calibrated against one recorded hour; engine moved into a web worker; run store and shareable run links.
 3. **Training and placement:** training jobs from Slurm/K8s history; SimAI hooks for collective traffic; placement policies.
 4. **Planning at scale:** tier-0 sweeps over hundreds of fleet options; cost-vs-SLO tradeoff curves; export to the procurement review.
 

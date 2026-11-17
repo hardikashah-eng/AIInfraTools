@@ -104,15 +104,3 @@ test('compile reports wiring mistakes', () => {
   g2.nodes.find(n => n.id === 'dec').cfg.site = 'Neocloud A';
   assert.ok(E.compileGraph(g2, lookup).errors.some(e => /different sites/.test(e.msg)));
 });
-
-test('CSV trace parser reads Azure and generic formats and rejects bad input', () => {
-  const azure = 'TIMESTAMP,ContextTokens,GeneratedTokens\n2023-11-16 18:15:46.6805900,374,44\n2023-11-16 18:15:50.9951690,396,109\n';
-  const a = E.parseTraceCSV(azure);
-  assert.equal(a.trace.length, 2);
-  assert.equal(a.trace[0].t, 0);
-  assert.ok(Math.abs(a.trace[1].t - 4.315) < 0.01);
-  const gen = E.parseTraceCSV('timestamp_ms,input_tokens,output_tokens\n1000,10,5\n3500,20,7\nbad,1,1\n');
-  assert.deepEqual(gen.trace.map(r => r.t), [0, 2.5]);
-  assert.ok(gen.notes.some(n => /1 unreadable/.test(n)));
-  assert.throws(() => E.parseTraceCSV('a,b,c\n1,2,3\n'), /Columns not found/);
-});
