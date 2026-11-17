@@ -205,6 +205,9 @@ button, select, input { font: inherit; color: inherit; }
 .lrows .row { cursor: pointer; }
 .lrows .row:hover span:first-child { text-decoration: underline; }
 .lbar { display: block; height: 4px; border-radius: 2px; margin-top: 2px; }
+.alerts { margin: 6px 0; padding-left: 18px; font-size: 12.5px; }
+.alerts li { margin: 3px 0; color: var(--crit); }
+.alerts li::marker { content: '! '; font-weight: 700; }
 .btn.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
 .mtx { width: 100%; border-collapse: collapse; font-size: 11.5px; margin-top: 4px; }
 .mtx th, .mtx td { padding: 3px 2px; border-bottom: 1px solid var(--line); text-align: center; }
@@ -320,6 +323,7 @@ button, select, input { font: inherit; color: inherit; }
     <div class="tb">
       <button type="button" id="whatifBtn" title="Stress this topology: peak load, peak sessions, outages, large contexts, headroom">What if…</button>
       <button type="button" id="advisorBtn" title="Which model and reasoning level serves this traffic at the SLO for the least">Model advisor</button>
+      <button type="button" id="liveBtn" title="Forecast the next hours from metrics history and predict SLO breaches">Live</button>
       <button type="button" id="calibBtn" title="Fit a pool's performance to a recorded trace, a vLLM /metrics snapshot or a benchmark_serving result">Calibrate</button>
     </div>
     <div class="status" id="status">Simulating…</div>
@@ -2313,9 +2317,161 @@ button, select, input { font: inherit; color: inherit; }
 
 </script>
 <script>
+/* FleetScope live twin: forecast traffic from metrics history, project it through the graph, and turn
+   predicted SLO breaches into alerts. Works on Prometheus query_range results (or any [{t, rate}] series). */
+(function (root) {
+  'use strict';
+  const E = (typeof module !== 'undefined' && module.exports) ? require('./engine.js') : root.FleetEngine;
+  const DAY = 86400;
+
+  // Prometheus /api/v1/query_range JSON → [{t, v}] (summed over series). Accepts the raw response,
+  // its data object, or a plain [{t, rate}] array.
+  function seriesFrom(json) {
+    const j = typeof json === 'string' ? JSON.parse(json) : json;
+    if (Array.isArray(j)) return j.map(x => ({ t: +(x.t != null ? x.t : x[0]), v: +(x.v != null ? x.v : x.rate != null ? x.rate : x[1]) })).filter(x => isFinite(x.t) && isFinite(x.v));
+    const res = (j.data || j).result || [];
+    const by = new Map();
+    for (const s of res) for (const [t, v] of s.values || (s.value ? [s.value] : [])) by.set(+t, (by.get(+t) || 0) + +v);
+    return [...by].sort((a, b) => a[0] - b[0]).map(([t, v]) => ({ t, v })).filter(x => isFinite(x.v));
+  }
+  // A bundle: request rate plus optional prompt and generation token rates, keyed as in the CLI's export.
+  function bundleFrom(json) {
+    const j = typeof json === 'string' ? JSON.parse(json) : json;
+    if (j.requests) return { requests: seriesFrom(j.requests), prompt: j.prompt ? seriesFrom(j.prompt) : null, generation: j.generation ? seriesFrom(j.generation) : null, meta: j.meta || {} };
+    return { requests: seriesFrom(j), prompt: null, generation: null, meta: {} };
+  }
+
+  // Additive Holt-Winters with a daily season (when there is at least two days of history), else Holt's linear trend.
+  // Returns the fitted state and a function giving the forecast at a future time, with a residual spread for bands.
+  function fit(series, opt) {
+    opt = opt || {};
+    const pts = series.filter(x => isFinite(x.v));
+    if (pts.length < 4) throw new Error('Need at least a few points of history');
+    const step = Math.max(1, Math.round(median(pts.slice(1).map((p, i) => p.t - pts[i].t))));
+    const m = Math.round(DAY / step), seasonal = pts.length >= 2 * m && !opt.noSeason;
+    const a = opt.alpha != null ? opt.alpha : 0.3, b = opt.beta != null ? opt.beta : 0.01, g = opt.gamma != null ? opt.gamma : 0.15;
+    let level = mean(pts.slice(0, Math.min(pts.length, seasonal ? m : 10)).map(p => p.v)), trend = 0;
+    const season = new Float64Array(seasonal ? m : 1);
+    if (seasonal) { for (let i = 0; i < m; i++) season[i] = pts[i].v - level; }
+    const resid = [];
+    for (let i = seasonal ? m : 1; i < pts.length; i++) {
+      const s = seasonal ? season[i % m] : 0, yhat = level + trend + s, y = pts[i].v;
+      resid.push(y - yhat);
+      const pl = level;
+      level = a * (y - s) + (1 - a) * (level + trend);
+      trend = b * (level - pl) + (1 - b) * trend;
+      if (seasonal) season[i % m] = g * (y - level) + (1 - g) * s;
+    }
+    const lastI = pts.length - 1, t0 = pts[lastI].t;
+    const sd = Math.sqrt(mean(resid.slice(-Math.max(10, Math.min(resid.length, seasonal ? m : 200))).map(r => r * r)));
+    const at = t => { const h = (t - t0) / step; const s = seasonal ? season[Math.round(lastI + h) % m] : 0; return Math.max(0, level + trend * h + s); };
+    return { at, sd, step, seasonal, t0, level, trend };
+  }
+  function forecast(series, horizonS, opt) {
+    const F = fit(series, opt), out = [];
+    // one-step residuals understate multi-step error: widen the 80% band with the horizon
+    for (let t = F.t0 + F.step; t <= F.t0 + horizonS + 1e-9; t += F.step) { const v = F.at(t), w = 1.28 * F.sd * Math.sqrt(1 + (t - F.t0) / 3600); out.push({ t, v, lo: Math.max(0, v - w), hi: v + w }); }
+    return { points: out, sd: F.sd, step: F.step, seasonal: F.seasonal, t0: F.t0 };
+  }
+  // Backtest: fit on everything before `cut`, forecast to the end, compare with what happened.
+  function backtest(series, cutT, horizonS, opt) {
+    const hist = series.filter(p => p.t <= cutT), actual = series.filter(p => p.t > cutT && p.t <= cutT + horizonS);
+    const fc = forecast(hist, horizonS, opt);
+    const pairs = actual.map(a => { const f = fc.points.reduce((b, p) => (Math.abs(p.t - a.t) < Math.abs(b.t - a.t) ? p : b), fc.points[0]); return { t: a.t, actual: a.v, predicted: f.v, lo: f.lo, hi: f.hi }; });
+    const ape = pairs.filter(p => p.actual > 0).map(p => Math.abs(p.predicted - p.actual) / p.actual);
+    const inBand = pairs.filter(p => p.actual >= p.lo && p.actual <= p.hi).length;
+    return { forecast: fc, pairs, mape: ape.length ? mean(ape) : NaN, coverage: pairs.length ? inBand / pairs.length : NaN };
+  }
+
+  // Arrivals for a forecast: Poisson at the forecast rate (or its upper band), sizes from recent token rates.
+  function traceFrom(fc, opt) {
+    opt = opt || {};
+    const rng = E.makeRng((opt.seed || 23) >>> 0), rows = [], pts = fc.points, t0 = fc.t0;
+    const isl = opt.islMean || 1500, osl = opt.oslMean || 300;
+    for (let i = 0; i < pts.length; i++) {
+      const r = opt.band === 'hi' ? pts[i].hi : pts[i].v, a = (i ? pts[i - 1].t : t0) - t0, bnd = pts[i].t - t0;
+      if (r <= 0) continue;
+      for (let t = a - Math.log(1 - rng.u()) / r; t < bnd; t += -Math.log(1 - rng.u()) / r) rows.push({ t, isl: Math.max(16, Math.round(rng.logn(isl / 1.28, 0.7))), osl: Math.max(2, Math.round(rng.logn(osl / 1.2, 0.6))), cached: 0 });
+    }
+    return rows;
+  }
+  // Runs a forecast through a compiled spec: its first traffic source replays the forecast, the others are dropped.
+  function project(spec, fc, opt) {
+    opt = opt || {};
+    const s = JSON.parse(JSON.stringify(spec, (k, v) => (k === 'trace' ? undefined : v)));
+    const src = Object.assign({}, s.sources[0], { kind: 'open', replay: 'timestamps', trace: traceFrom(fc, opt), prefixHit: s.sources[0].prefixHit || 0, useRecordedCache: false });
+    s.sources = [src];
+    s.train = s.train ? Object.assign({}, s.train) : null;
+    const R = E.simulate(s, opt.stress || null);
+    return { R, alerts: alertsFrom(R, fc.t0, opt) };
+  }
+  // Predicted breaches: minutes where more than `share` of first tokens miss TTFT or of answers miss TPOT,
+  // merged across gaps of up to `gapMin` minutes, kept when at least `minMin` minutes long.
+  function alertsFrom(R, t0, opt) {
+    opt = opt || {};
+    const share = opt.share || 0.1, gapMin = opt.gapMin != null ? opt.gapMin : 3, minMin = opt.minMin || 2, slo = R.spec.slo;
+    const B = Math.ceil(R.D / 60), f = new Float64Array(B), v = new Float64Array(B), fin = new Float64Array(B), tb = new Float64Array(B);
+    for (const q of R.reqs) {
+      if (isFinite(q.tFirst)) { const b = Math.min(B - 1, Math.floor(q.tFirst / 60)); f[b]++; if (q.ttft > slo.ttft) v[b]++; }
+      if (isFinite(q.tFinish) && q.osl > 1) { const b = Math.min(B - 1, Math.floor(q.tFinish / 60)); fin[b]++; if (q.tpot > slo.tpot) tb[b]++; }
+    }
+    const runs = [];
+    let cur = null;
+    for (let b = 0; b < B; b++) {
+      const ts = f[b] ? v[b] / f[b] : 0, tp = fin[b] ? tb[b] / fin[b] : 0;
+      if (ts > share || tp > share) { if (cur && b - cur.end <= gapMin + 1) { cur.end = b; } else { if (cur) runs.push(cur); cur = { start: b, end: b }; } }
+    }
+    if (cur) runs.push(cur);
+    const blame = (R.summary.bottleneck && R.summary.bottleneck.blame) || [], Sr = R.series;
+    return runs.filter(a => a.end - a.start + 1 >= minMin).map(a => {
+      let worstT = 0, worstP = 0, p99 = 0, tp99 = 0; const cause = {};
+      for (let b = a.start; b <= a.end; b++) { worstT = Math.max(worstT, f[b] ? v[b] / f[b] : 0); worstP = Math.max(worstP, fin[b] ? tb[b] / fin[b] : 0); }
+      for (let s = a.start * 60; s < Math.min(R.D, (a.end + 1) * 60); s++) { p99 = Math.max(p99, Sr.p99[s] || 0); tp99 = Math.max(tp99, Sr.tp99[s] || 0); const bl = blame[s]; if (bl) { const k = bl.kind + '|' + bl.id; cause[k] = (cause[k] || 0) + 1; } }
+      const top = Object.entries(cause).sort((x, y) => y[1] - x[1])[0];
+      const [kind, id] = top ? top[0].split('|') : [null, null];
+      const node = R.pools.find(p => p.id === id) || R.links.find(l => l.id === id);
+      return { start: t0 + a.start * 60, end: t0 + (a.end + 1) * 60, startS: a.start * 60, endS: (a.end + 1) * 60, missShare: worstT, tpotMissShare: worstP, ttftP99: p99, tpotP99: tp99,
+        metric: worstP > worstT ? 'tpot' : 'ttft', cause: kind, causeLabel: kind ? (E.CAUSE[kind] || {}).label : null, node: id, nodeName: node ? node.name : id };
+    });
+  }
+  function alertText(a, opt) {
+    const fmt = (opt && opt.fmt) || (t => new Date(t * 1000).toISOString().slice(11, 16) + ' UTC');
+    const worst = a.metric === 'tpot' ? 'in the worst minute ' : 'in the worst minute ';
+    const what = a.metric === 'tpot' ? worst + Math.round(a.tpotMissShare * 100) + '% of answers stream slower than the TPOT target (p99 up to ' + Math.round(a.tpotP99 * 1000) + ' ms per token)' : worst + Math.round(a.missShare * 100) + '% of requests miss the TTFT target (p99 up to ' + a.ttftP99.toFixed(1) + ' s)';
+    return 'FleetScope predicts SLO breaches ' + fmt(a.start) + '–' + fmt(a.end) + ': ' + what + (a.nodeName ? '. Where: ' + a.nodeName + ', ' + a.causeLabel : '') + '.';
+  }
+
+  // A synthetic week of request-rate history: a daily cycle with a weekday bump, slow growth and noise,
+  // with a launch spike in the last day. Used for the sample and the tests.
+  function sampleHistory(opt) {
+    opt = opt || {};
+    const rng = E.makeRng((opt.seed || 5) >>> 0), step = opt.step || 300, days = opt.days || 7, base = opt.base || 4, end = opt.end || 1794960000;
+    const start = end - days * DAY, out = [];
+    for (let t = start; t <= end; t += step) {
+      const h = ((t % DAY) / 3600 + 24 - 8) % 24;            // local hour, UTC−8
+      const d = (t - start) / DAY;
+      const daily = 0.35 + 0.65 * Math.exp(-Math.pow((h - 14) / 4.2, 2)) + 0.25 * Math.exp(-Math.pow((h - 10) / 2, 2));
+      const growth = 1 + 0.03 * d;
+      out.push({ t, v: Math.max(0, base * daily * growth * (1 + 0.06 * rng.normal())) });
+    }
+    return out;
+  }
+
+  // Local clock text for a unix time, given a UTC offset in hours.
+  function clock(t, offsetH) { const m = Math.floor((((t / 60) + (offsetH || 0) * 60) % 1440 + 1440) % 1440); return Math.floor(m / 60) + ':' + String(m % 60).padStart(2, '0'); }
+  function mean(a) { return a.length ? a.reduce((x, y) => x + y, 0) / a.length : NaN; }
+  function median(a) { const s = a.slice().sort((x, y) => x - y); return s.length ? s[Math.floor(s.length / 2)] : NaN; }
+
+  const api = { clock, seriesFrom, bundleFrom, fit, forecast, backtest, traceFrom, project, alertsFrom, alertText, sampleHistory };
+  if (typeof module !== 'undefined' && module.exports) module.exports = api;
+  else root.FleetForecast = api;
+})(typeof window !== 'undefined' ? window : this);
+
+</script>
+<script>
 (function () {
 'use strict';
-const E = window.FleetEngine, TP = window.FleetTemplates, NT = TP.NODE_TYPES, IN = window.FleetIngest, K = window.FleetCalibrate;
+const E = window.FleetEngine, TP = window.FleetTemplates, NT = TP.NODE_TYPES, IN = window.FleetIngest, K = window.FleetCalibrate, FC = window.FleetForecast;
 const $ = s => document.querySelector(s);
 const NS = 'http://www.w3.org/2000/svg';
 function el(tag, attrs, parent, text) {
@@ -2342,6 +2498,7 @@ const traces = {};
 function traceLookup(key, scale) {
   let tr;
   if (key === 'uploaded') tr = traces.uploaded ? traces.uploaded.trace : [];
+  else if (key === 'live') tr = traces.live ? traces.live.trace : [];
   else tr = traces[key] || (traces[key] = E.genTrace(key, 7));
   return E.scaleTrace(tr, scale || 1, 7);
 }
@@ -2443,7 +2600,7 @@ function cfgLine(n) {
   switch (n.type) {
     case 'agent': return fInt(c.users) + ' agents · ' + c.turns + ' turns · ' + fK(c.contextTokens) + ' ctx';
     case 'chat': return fInt(c.users) + ' users · ' + c.turns + ' turns · ' + c.thinkS + ' s think';
-    case 'trace': return (c.trace === 'uploaded' ? (traces.uploaded ? traces.uploaded.name : 'upload a CSV') : E.TRACES[c.trace].label.replace('Sample: ', '')) + ' · ' + c.scale + '×';
+    case 'trace': return (c.trace === 'uploaded' ? (traces.uploaded ? traces.uploaded.name : 'upload a CSV') : c.trace === 'live' ? (traces.live ? traces.live.name : 'live forecast') : (E.TRACES[c.trace] || { label: c.trace }).label.replace('Sample: ', '')) + ' · ' + c.scale + '×';
     case 'router': return ({ 'primary-first': 'Primary first, burst at ' + c.burstWait + ' s', 'least-wait': 'Least estimated wait', 'round-robin': 'Round robin' })[c.policy];
     case 'pool': { const m = prof(); const tp = m ? E.profile(c.gpu, m.cfg).tp : 1; return ((+c.calibPrefill || 1) !== 1 || (+c.calibDecode || 1) !== 1 ? '\u2713 calibrated · ' : '') + roleName[c.role] + ' · ' + c.gpu + (tp > 1 ? ' ×' + tp : '') + ' · ' + (c.autoscale ? c.min + '–' + c.max + ' inst, ' + c.coldStart + ' s cold' : c.instances + ' inst'); }
     case 'link': return c.gbps + ' Gbps · ' + c.rttMs + ' ms RTT · $' + c.egressPerGB + '/GB';
@@ -2672,7 +2829,7 @@ const FIELDS = {
     { p: 'durationMin', k: 'range', label: 'Simulated duration', min: 5, max: 30, step: 5, f: v => v + ' min' }
   ],
   trace: [
-    { p: 'trace', k: 'select', label: 'Trace', opts: () => Object.keys(E.TRACES).map(k => [k, E.TRACES[k].label]).concat(traces.uploaded ? [['uploaded', 'Uploaded: ' + traces.uploaded.name]] : []) },
+    { p: 'trace', k: 'select', label: 'Trace', opts: () => Object.keys(E.TRACES).map(k => [k, E.TRACES[k].label]).concat(traces.uploaded ? [['uploaded', 'Uploaded: ' + traces.uploaded.name]] : []).concat(traces.live ? [['live', 'Live: ' + traces.live.name]] : []) },
     { k: 'upload' },
     { p: 'scale', k: 'range', label: 'Load multiplier', min: 0.25, max: 10, step: 0.05, f: v => v.toFixed(2) + '×', hint: 'If your log was sampled (say 10% of requests), set the inverse (10×).' },
     { p: 'replay', k: 'seg', label: 'Replay', opts: [['timestamps', 'Timestamps (open loop)'], ['sessions', 'Sessions (closed loop)']], hint: 'Open loop sends every request at its recorded time, however slow the fleet is. Closed loop waits for each turn to finish before sending the session\u2019s next one, keeping the recorded think time between them.' },
@@ -2761,6 +2918,7 @@ function renderDetails() {
   if (S.sel && S.sel.type === 'stress') return renderStressPanel();
   if (S.sel && S.sel.type === 'advisor') return renderAdvisorPanel();
   if (S.sel && S.sel.type === 'calib') return renderCalibPanel();
+  if (S.sel && S.sel.type === 'live') return renderLivePanel();
   if (S.sel && S.sel.type === 'node') {
     const n = nodeById(S.sel.id);
     if (!n) { S.sel = null; return renderDetails(); }
@@ -3133,7 +3291,7 @@ function doRun() {
   $('#status').innerHTML = '<b>' + fInt(sm.requests) + '</b> requests' + (sm.users ? ' from <b>' + fInt(sm.users) + '</b> users' : '') + ' · <b>' + mmss(R.D) + '</b> simulated in ' + sm.simMs + ' ms' + (BL() ? ' · vs <b>' + esc(BL().label) + '</b>' : '');
   $('#scrub').max = Math.max(1, R.D - 1);
   renderKpis(); buildCharts(); buildStrip(); renderBanner();
-  if (S.sel && (S.sel.type === 'stress' || S.sel.type === 'advisor' || S.sel.type === 'calib')) { /* keep panel */ } else renderDetails();
+  if (S.sel && (S.sel.type === 'stress' || S.sel.type === 'advisor' || S.sel.type === 'calib' || S.sel.type === 'live')) { /* keep panel */ } else renderDetails();
   render(true);
   if (S.needFit) { S.needFit = false; requestAnimationFrame(fit); }
 }
@@ -3931,6 +4089,7 @@ function renderAnalysis() {
   }
   if (A.kind === 'error') { box.innerHTML = '<h3>' + esc(A.title) + close + '</h3><div class="warnline">' + esc(A.text) + '</div>'; return; }
   if (A.kind === 'calib') { box.innerHTML = '<h3>Calibration' + close + '</h3>' + calibCard(A); return; }
+  if (A.kind === 'live') { box.innerHTML = '<h3>Live twin' + close + '</h3>' + liveCard(A); return; }
   const bn = b => b ? mmss(b.t) + ' · ' + esc(b.name) + ': ' + b.label : '<span style="color:var(--muted)">none</span>';
   if (A.kind === 'suite') {
     const base = A.rows[0].s;
@@ -3974,6 +4133,11 @@ $('#analysis').addEventListener('click', e => {
   const t = e.target;
   const a = t.closest('[data-act]');
   if (a && a.dataset.act === 'closeAnalysis') { S.analysis = null; renderAnalysis(); return; }
+  if (a && a.dataset.act === 'lvPlay') {
+    const src = S.graph.nodes.find(n => n.type === 'trace') || null;
+    if (!src) { toast('Add a Trace replay node to play the projection.'); return; }
+    src.cfg.trace = 'live'; src.cfg.scale = 1; src.cfg.replay = 'timestamps'; renderGraph(); scheduleRun(0); toast('Playing the forecast on ' + src.cfg.name); return;
+  }
   if (a && a.dataset.act === 'calApply') { const r = S.analysis.res, n = nodeById(r.poolId); if (n) { n.cfg.calibPrefill = r.calib.prefill; n.cfg.calibDecode = r.calib.decode; renderGraph(); toast(n.cfg.name + ' calibrated'); scheduleRun(0); if (S.sel && S.sel.type === 'calib') renderCalibPanel(); } return; }
   if (a && a.dataset.act === 'cancelJob') { if (S.job) S.job.cancel = true; S.job = null; S.analysis = null; renderAnalysis(); return; }
   const su = t.closest('[data-suite]');
@@ -4036,10 +4200,89 @@ function runAdvisor() {
   function* wrap() { let x; while (!(x = it.next()).done) yield { done: x.value.done, total: x.value.total, text: 'Sizing ' + x.value.model + (x.value.thinkTokens ? ' with ' + fK(x.value.thinkTokens) + ' thinking' : '') + '…' }; return x.value; }
   startJob('Model advisor', wrap(), res => { S.analysis = { kind: 'advisor', res, minQuality: minQ == null ? '' : minQ }; });
 }
-['click', 'input', 'change'].forEach(ev => $('#details').addEventListener(ev, e => { if (stressPanelEvents(e)) e.stopImmediatePropagation(); else if (advisorPanelEvents(e)) e.stopImmediatePropagation(); else if (calibPanelEvents(e)) e.stopImmediatePropagation(); }, true));
+['click', 'input', 'change'].forEach(ev => $('#details').addEventListener(ev, e => { if (stressPanelEvents(e)) e.stopImmediatePropagation(); else if (advisorPanelEvents(e)) e.stopImmediatePropagation(); else if (calibPanelEvents(e)) e.stopImmediatePropagation(); else if (livePanelEvents(e)) e.stopImmediatePropagation(); }, true));
 $('#whatifBtn').onclick = () => { if (S.stress) S.stressDraft = JSON.parse(JSON.stringify(S.stress)); select({ type: 'stress' }); };
 $('#advisorBtn').onclick = () => select({ type: 'advisor' });
 $('#calibBtn').onclick = () => select({ type: 'calib' });
+$('#liveBtn').onclick = () => select({ type: 'live' });
+
+// ---------- live twin ----------
+const LV = { source: 'sample', url: 'http://localhost:9090', file: null, fileName: '', backH: 7, hours: 4, band: 'mid', offset: -8 };
+function renderLivePanel() {
+  const box = $('#details');
+  const seg = (k, opts) => '<div class="seg" data-lvseg="' + k + '">' + opts.map(([v, l]) => '<button type="button" data-v="' + v + '" class="' + (String(LV[k]) === String(v) ? 'on' : '') + '">' + l + '</button>').join('') + '</div>';
+  box.innerHTML = '<span class="typetag" style="background:var(--accent)">Live</span><h2>Forecast and predicted breaches</h2>' +
+    '<div class="sub">Fits a daily pattern and trend to request-rate history, runs the next hours through this graph, and lists when and where the SLO would break. For alerts on a schedule, run <code>tools/live-twin.mjs</code> with a webhook.</div>' +
+    '<div class="ctl"><span>History</span>' + seg('source', [['sample', 'Sample week'], ['prom', 'Prometheus'], ['file', 'Export file']]) + '</div>' +
+    (LV.source === 'prom' ? '<div class="ctl"><label for="lvUrl">Prometheus URL (needs CORS from this page)</label><input type="text" id="lvUrl" data-lv="url" value="' + esc(LV.url) + '"></div>'
+      : LV.source === 'file' ? '<label class="upload">Drop a query_range JSON or a <code>live-twin.mjs --export</code> file<input type="file" data-lv="file" accept=".json"><br><span>' + (LV.fileName ? esc(LV.fileName) : 'Request rate, and optionally prompt and generation token rates.') + '</span></label>' : '<div class="sub">A synthetic week: a daily cycle with a morning bump, 3% growth a day and noise.</div>') +
+    '<div class="ctl"><label for="lvBack">Forecast from (hours before the end of the history; 0 = now)</label><input type="number" id="lvBack" data-lv="backH" min="0" max="72" step="1" value="' + LV.backH + '"></div>' +
+    '<div class="sub">Starting before the end scores the forecast against what actually happened.</div>' +
+    '<div class="ctl"><label for="lvH">Hours ahead</label><input type="number" id="lvH" data-lv="hours" min="1" max="8" step="1" value="' + LV.hours + '"></div>' +
+    '<div class="ctl"><span>Traffic</span>' + seg('band', [['mid', 'Expected'], ['hi', '80% upper band']]) + '</div>' +
+    '<div class="ctl"><label for="lvOff">Clock: UTC offset (hours)</label><input type="number" id="lvOff" data-lv="offset" min="-12" max="14" step="0.5" value="' + LV.offset + '"></div>' +
+    '<div class="btnrow"><button class="btn primary" type="button" data-act="lvRun">Project</button></div>';
+}
+function livePanelEvents(e) {
+  if (!(S.sel && S.sel.type === 'live')) return false;
+  const t = e.target;
+  if (e.type === 'change' && t.dataset.lv === 'file') { const f = t.files[0]; if (f) f.text().then(x => { LV.file = x; LV.fileName = f.name; renderLivePanel(); }); return true; }
+  if ((e.type === 'change' || e.type === 'input') && t.dataset.lv) { LV[t.dataset.lv] = t.dataset.lv === 'url' ? t.value : +t.value; return true; }
+  if (e.type !== 'click') return false;
+  const sg = t.closest('[data-lvseg] button');
+  if (sg) { LV[sg.parentNode.dataset.lvseg] = sg.dataset.v; renderLivePanel(); return true; }
+  if (t.closest('[data-act="lvRun"]')) { runLive(); return true; }
+  return false;
+}
+async function liveHistory() {
+  if (LV.source === 'sample') return { requests: FC.sampleHistory({ base: 15 }), prompt: null, generation: null, meta: { source: 'sample week' } };
+  if (LV.source === 'file') { if (!LV.file) throw new Error('Choose a file first'); return FC.bundleFrom(LV.file); }
+  const end = Math.floor(Date.now() / 1000), start = end - 8 * 86400, q = { requests: 'sum(rate(vllm:request_success_total[5m]))', prompt: 'sum(rate(vllm:prompt_tokens_total[5m]))', generation: 'sum(rate(vllm:generation_tokens_total[5m]))' }, raw = {};
+  for (const k in q) { const u = new URL('/api/v1/query_range', LV.url); u.search = new URLSearchParams({ query: q[k], start, end, step: 300 }).toString(); const r = await fetch(u); if (!r.ok) throw new Error('Prometheus answered ' + r.status); raw[k] = await r.json(); }
+  return FC.bundleFrom(raw);
+}
+async function runLive() {
+  const c = E.compileGraph(S.graph, traceLookup);
+  if (c.errors.length) { toast('Fix the problems in the left panel first.'); return; }
+  S.analysis = { kind: 'progress', title: 'Live twin', done: 0, total: 2, text: 'Reading history…' }; renderAnalysis();
+  let B;
+  try { B = await liveHistory(); } catch (err) { S.analysis = { kind: 'error', title: 'Live twin', text: err.message + (LV.source === 'prom' ? '. A browser page can only query Prometheus if it allows cross-origin requests; otherwise export with tools/live-twin.mjs --export and load the file.' : '') }; renderAnalysis(); return; }
+  const all = B.requests, end = all[all.length - 1].t, now = end - LV.backH * 3600, hist = all.filter(p => p.t <= now);
+  const avg = s => (s && s.length ? s.filter(p => p.t <= now).slice(-12).reduce((a, p) => a + p.v, 0) / 12 : NaN);
+  const rr = avg(B.requests), isl = B.prompt ? avg(B.prompt) / rr : 1500, osl = B.generation ? avg(B.generation) / rr : 300;
+  S.analysis.text = 'Projecting ' + LV.hours + ' h…'; S.analysis.done = 1; renderAnalysis();
+  setTimeout(() => {
+    try {
+      const fc = FC.forecast(hist, LV.hours * 3600), P = FC.project(c.spec, fc, { band: LV.band, islMean: isFinite(isl) ? isl : 1500, oslMean: isFinite(osl) ? osl : 300 });
+      const bt = now < end ? FC.backtest(all, now, LV.hours * 3600) : null;
+      traces.live = { name: 'live forecast from ' + FC.clock(now, LV.offset), trace: FC.traceFrom(fc, { band: LV.band, islMean: isl, oslMean: osl }), stats: {} };
+      S.analysis = { kind: 'live', fc, P, bt, hist: hist.filter(p => p.t > now - 36 * 3600), actual: all.filter(p => p.t > now && p.t <= now + LV.hours * 3600), now, band: LV.band, hours: LV.hours, offset: LV.offset, source: B.meta.source || LV.fileName || LV.url };
+    } catch (err) { S.analysis = { kind: 'error', title: 'Live twin', text: err.message }; }
+    renderAnalysis();
+  }, 20);
+}
+function liveCard(A) {
+  const W = 980, H = 170, L = 40, fmt = t => FC.clock(t, A.offset);
+  const t0 = A.hist[0].t, t1 = A.fc.points[A.fc.points.length - 1].t, X = t => L + (W - L - 10) * (t - t0) / (t1 - t0);
+  const vmax = Math.max(...A.hist.map(p => p.v), ...A.fc.points.map(p => p.hi), ...A.actual.map(p => p.v)) * 1.08, Y = v => 8 + (H - 30) * (1 - v / vmax);
+  const line = (pts, k) => pts.map((p, i) => (i ? 'L' : 'M') + X(p.t).toFixed(1) + ' ' + Y(p[k || 'v']).toFixed(1)).join('');
+  const band = line(A.fc.points, 'hi') + A.fc.points.slice().reverse().map(p => 'L' + X(p.t).toFixed(1) + ' ' + Y(p.lo).toFixed(1)).join('') + 'Z';
+  let svg = '<svg viewBox="0 0 ' + W + ' ' + H + '" style="width:100%;height:auto" role="img" aria-label="Request rate history and forecast">';
+  for (const a of A.P.alerts) svg += '<rect x="' + X(a.start) + '" y="0" width="' + Math.max(2, X(a.end) - X(a.start)) + '" height="' + (H - 22) + '" fill="var(--crit)" opacity=".14"/>';
+  svg += '<path d="' + band + '" fill="var(--accent)" opacity=".15"/><path d="' + line(A.hist) + '" fill="none" stroke="var(--muted)" stroke-width="1.5"/><path d="' + line(A.fc.points) + '" fill="none" stroke="var(--accent)" stroke-width="2"/>';
+  if (A.band === 'hi') svg += '<path d="' + line(A.fc.points, 'hi') + '" fill="none" stroke="var(--accent)" stroke-width="1.5" stroke-dasharray="5 4"/>';
+  if (A.actual.length) svg += '<path d="' + line(A.actual) + '" fill="none" stroke="var(--ink)" stroke-width="1.5"/>';
+  svg += '<line x1="' + X(A.now) + '" x2="' + X(A.now) + '" y1="0" y2="' + (H - 22) + '" stroke="var(--ink)" stroke-dasharray="3 3"/><text x="' + (X(A.now) + 4) + '" y="12" font-size="11" fill="var(--ink)">now ' + fmt(A.now) + '</text>';
+  for (let t = Math.ceil(t0 / 21600) * 21600; t <= t1; t += 21600) svg += '<text x="' + X(t) + '" y="' + (H - 6) + '" font-size="10" fill="var(--muted)" text-anchor="middle">' + fmt(t) + '</text>';
+  svg += '<text x="0" y="14" font-size="10" fill="var(--muted)">' + vmax.toFixed(0) + ' req/s</text></svg>';
+  const s = A.P.R.summary, peak = A.fc.points.reduce((b, p) => (p.v > b.v ? p : b));
+  return '<p class="lead">From ' + esc(A.source) + ', forecast from <b>' + fmt(A.now) + '</b> for ' + A.hours + ' h' + (A.band === 'hi' ? ' at the 80% upper band' : '') + ': peak <b>' + peak.v.toFixed(1) + ' req/s</b> at ' + fmt(peak.t) + (A.fc.seasonal ? '' : ' (no daily pattern: under two days of history)') + '. Through this graph, <b>' + fPct(s.slo) + '</b> of requests would meet the SLO. ' +
+    (A.P.alerts.length ? '<b>' + A.P.alerts.length + ' predicted breach' + (A.P.alerts.length > 1 ? 'es' : '') + '</b>:' : 'No breaches predicted.') + '</p>' + svg +
+    '<div class="glegend"><span><i style="background:var(--muted)"></i>history</span><span><i style="background:var(--accent)"></i>forecast, with 80% band</span>' + (A.actual.length ? '<span><i style="background:var(--ink)"></i>what happened</span>' : '') + '<span><i style="background:var(--crit);opacity:.4"></i>predicted breach</span></div>' +
+    (A.P.alerts.length ? '<ul class="alerts">' + A.P.alerts.map(a => '<li>' + esc(FC.alertText(a, { fmt })) + '</li>').join('') + '</ul>' : '') +
+    (A.bt ? '<p class="lead">Prediction vs reality: request rate off by <b>' + (A.bt.mape * 100).toFixed(1) + '%</b> on average (MAPE), with <b>' + fPct(A.bt.coverage) + '</b> of actual points inside the 80% band.</p>' : '') +
+    '<div class="btnrow"><button class="btn" type="button" data-act="lvPlay">Play the projection on the canvas</button></div>';
+}
 
 // ---------- calibration ----------
 const CAL = { pool: null, source: 'recorded', windowMin: 60, instances: null, file: null, fileName: '', before: null };
