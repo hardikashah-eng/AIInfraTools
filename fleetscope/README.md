@@ -8,6 +8,40 @@ A node-editor prototype for capacity planning on hybrid GPU fleets: on-prem plus
 
 Open `dist/index.html` in a browser. It is a single self-contained file with no server and no install.
 
+## Demo
+
+These screenshots are of `dist/index.html` running its built-in templates. Synthetic traces only: no real traffic. All figures are uncalibrated spec-sheet estimates.
+
+### Editor and live fleet
+
+A hybrid fleet replaying a chat trace that spikes. The on-prem pool's KV cache is full (99.7%) and its queue is turning red. The neocloud's seven burst instances are still cold-starting (hatched). The right panel lists the slowest requests of the last 20 seconds, each bar split into queue and prefill time.
+
+![FleetScope editor](docs/img/editor.png)
+
+### Inspecting a pool
+
+Click any node to edit its knobs in the details panel and see its live state at the playhead: instances, load, queue, KV use, throughput and cost, with sparklines over the run.
+
+![Pool inspector](docs/img/pool-inspector.png)
+
+### Where one request's time went
+
+Click a request for its lifecycle. This one waited 7.7 s in the queue, prefilled for 2 s, then decoded slowly in an overloaded batch.
+
+![Request lifecycle](docs/img/request-lifecycle.png)
+
+### Prefill on-prem, decode in the neocloud
+
+Every prompt's KV cache crosses a 100 Gbps link. The link sits at 100% and moves 4.1 TB in ten minutes. KV transfer (purple) dominates the TTFT breakdown, and the red strip under the canvas marks seconds that miss the TTFT target.
+
+![Cross-site KV transfer](docs/img/cross-site-kv.png)
+
+### Replaying real traces
+
+Upload a log to the Trace replay node: vLLM OpenTelemetry spans, gateway JSON logs or CSV. When the log records TTFT, the run compares it with the simulation. Here, 3,619 vLLM spans give simulated p99 910 ms against 838 ms recorded (+8%), inside the spec's acceptance bar. See [docs/TRACES.md](docs/TRACES.md).
+
+![Trace import](docs/img/trace-import.png)
+
 ## Develop
 
 ```bash
