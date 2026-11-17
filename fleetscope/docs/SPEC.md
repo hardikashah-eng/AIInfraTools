@@ -202,6 +202,10 @@ Pools carry prefill and decode multipliers fitted by re-simulation to a recorded
 
 Request-rate history is forecast with Holt-Winters and an 80% band, projected through the graph, and turned into minute-level breach alerts that name the node and cause. Forecasts are backtested against what happened. A CLI runs it on a schedule and posts to Slack or Lark. Details: [LIVE.md](LIVE.md).
 
+## One scenario (built)
+
+The views share a clock and a change set with a pin-all baseline. Fleet pools can follow a cluster inference workload: its ready-replica shortfall becomes outages on the pool. Details: [SCENARIO.md](SCENARIO.md).
+
 ## Build phases
 
 1. **Prototype (done):** a browser-only node editor and player on the tier-1 engine, with agent, chat, trace and training nodes, seven templates and baseline compare. Profiles come from spec sheets, not measurements.

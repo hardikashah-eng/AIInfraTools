@@ -51,7 +51,14 @@ button, select, input { font: inherit; color: inherit; }
 .viewbar b { font: 600 13px var(--font-display); margin-right: 12px; letter-spacing: .3px; }
 .viewbar button { border: 0; background: transparent; color: inherit; opacity: .7; padding: 5px 12px; border-radius: 6px; cursor: pointer; font-size: 12.5px; }
 .viewbar button[aria-selected="true"] { opacity: 1; background: color-mix(in srgb, var(--panel) 18%, transparent); font-weight: 600; }
+.viewbar { position: relative; }
 .viewbar .hint { margin-left: auto; font-size: 11.5px; opacity: .65; }
+.viewbar .vclock { font: 500 12px var(--font-mono); margin-left: 14px; opacity: .85; }
+.viewbar .vbtn { border: 1px solid color-mix(in srgb, var(--panel) 35%, transparent); opacity: .9; padding: 3px 9px; margin-left: 6px; }
+.viewbar .vbtn.has { background: var(--warn); color: #000; border-color: var(--warn); opacity: 1; font-weight: 600; }
+.chgList { position: absolute; right: 10px; top: 34px; z-index: 20; width: 460px; max-height: 60vh; overflow: auto; background: var(--panel); color: var(--ink); border: 1px solid var(--line); border-radius: 10px; box-shadow: 0 8px 28px rgba(0,0,0,.18); padding: 10px 12px; font-size: 12.5px; }
+.chgList[hidden] { display: none; }
+.chgList .row span:first-child { color: var(--muted); min-width: 70px; text-transform: capitalize; }
 /* cluster view */
 .cfg .card { border: 1px solid var(--line); border-radius: 8px; padding: 4px 8px; margin-bottom: 6px; background: var(--panel-2); }
 .cfg .card summary { cursor: pointer; font-size: 12px; display: flex; gap: 6px; align-items: center; flex-wrap: wrap; }
@@ -298,7 +305,11 @@ button, select, input { font: inherit; color: inherit; }
   <button type="button" role="tab" data-view="cluster" aria-selected="false" title="Kubernetes layer: nodes, GPUs, queues, scheduler policy">Cluster</button>
   <button type="button" role="tab" data-view="training" aria-selected="false" title="One training job seen by GPU, by phase, by scheduling, or all at once">Training</button>
   <button type="button" role="tab" data-view="inference" aria-selected="false" title="Serving deployments as pods: replicas wanted vs ready, start-up time, contention for GPUs">Inference</button>
-  <span class="hint" id="viewhint">Traffic, routing and pools across sites</span></nav>
+  <span class="hint" id="viewhint">Traffic, routing and pools across sites</span>
+  <span class="vclock" id="vclock" title="One clock across all views: moving the playhead in one view moves it in the others">clock 0:00</span>
+  <button type="button" id="pinAll" class="vbtn" title="Pin every view's current setup as the baseline; later changes are listed and compared">Pin all as baseline</button>
+  <button type="button" id="chgBtn" class="vbtn" hidden aria-expanded="false">0 changes</button>
+  <div class="chgList" id="chgList" hidden></div></nav>
 <div class="shell" id="fleetApp">
   <header class="toolbar">
     <div class="brand"><b>FleetScope</b><span title="Performance comes from spec-sheet figures and fixed efficiency factors, not measurements">uncalibrated prototype</span></div>
@@ -1736,7 +1747,7 @@ button, select, input { font: inherit; color: inherit; }
     router: { title: 'Router', group: 'Routing', color: 'route', inputs: true, outputs: true, w: 200,
       defaults: () => ({ name: 'Router', policy: 'primary-first', burstWait: 1.5, enforceResidency: false, owner: '', oncall: '' }) },
     pool: { title: 'GPU pool', group: 'Compute', color: 'pool', inputs: true, outputs: true, w: 290,
-      defaults: () => ({ name: 'On-prem pool', site: 'On-prem DC', siteKind: 'onprem', role: 'agg', gpu: 'H100', instances: 4, autoscale: false, min: 0, max: 8, coldStart: 90, upWait: 1, downUtil: 30, maxBatch: 256, fabricGbps: 400, zone: 'auto', owner: '', oncall: '', calibPrefill: 1, calibDecode: 1 }) },
+      defaults: () => ({ name: 'On-prem pool', site: 'On-prem DC', siteKind: 'onprem', role: 'agg', gpu: 'H100', instances: 4, autoscale: false, min: 0, max: 8, coldStart: 90, upWait: 1, downUtil: 30, maxBatch: 256, fabricGbps: 400, zone: 'auto', owner: '', oncall: '', calibPrefill: 1, calibDecode: 1, clusterWorkload: '', clusterAtH: 0 }) },
     link: { title: 'Cross-site link', group: 'Network', color: 'link', inputs: true, outputs: true, w: 210,
       defaults: () => ({ name: 'Cloud link', gbps: 100, rttMs: 20, egressPerGB: 0.05, encrypted: true, owner: '', oncall: '' }) },
     train: { title: 'Training job', group: 'Compute', color: 'train', inputs: false, outputs: true, w: 250,
@@ -2469,6 +2480,104 @@ button, select, input { font: inherit; color: inherit; }
 
 </script>
 <script>
+/* FleetScope scenario: one clock and one change set across the Fleet, Cluster, Training and Inference views,
+   and fleet pools whose capacity follows a cluster workload's ready replicas. */
+(function (root) {
+  'use strict';
+
+  // ---------- linking a fleet pool to a cluster workload ----------
+  // The cluster's shortfall of ready replicas over the window [startS, startS + durS) becomes outages on the fleet pool:
+  // a replica the cluster cannot keep ready is an instance the pool loses. Shares are rounded to `quantum` and
+  // consecutive seconds at the same share are merged.
+  function linkOutages(readiness, step, poolId, startS, durS, opt) {
+    opt = opt || {};
+    const q = opt.quantum || 0.05, out = [];
+    let cur = null;
+    for (let s = 0; s < durS; s++) {
+      const k = Math.floor((startS + s) / step);
+      const tgt = readiness.target[k] || 0, rdy = readiness.ready[k] || 0;
+      const frac = tgt > 0 ? Math.round(Math.max(0, tgt - rdy) / tgt / q) * q : 0;
+      if (cur && cur.fraction === frac) { cur.dur++; continue; }
+      if (cur && cur.fraction > 0) out.push(cur);
+      cur = { target: poolId, fraction: frac, start: s, dur: 1, recovery: 0, linked: true };
+    }
+    if (cur && cur.fraction > 0) out.push(cur);
+    return out.map(o => Object.assign(o, { fraction: Math.min(1, +o.fraction.toFixed(2)) }));
+  }
+
+  // ---------- diffs for the change set ----------
+  function diff(a, b, path, out) {
+    out = out || []; path = path || '';
+    if (a === b) return out;
+    const ta = Array.isArray(a) ? 'array' : typeof a, tb = Array.isArray(b) ? 'array' : typeof b;
+    if (ta !== tb || ta !== 'object' && ta !== 'array' || a === null || b === null) { out.push({ path, from: a, to: b }); return out; }
+    const keys = new Set(Object.keys(a).concat(Object.keys(b)));
+    for (const k of keys) diff(a[k], b[k], path ? path + '.' + k : k, out);
+    return out;
+  }
+  const show = v => (v === undefined || v === '' || v === null ? '—' : typeof v === 'number' ? (Math.round(v * 1000) / 1000).toString() : typeof v === 'boolean' ? (v ? 'on' : 'off') : typeof v === 'object' ? JSON.stringify(v).slice(0, 40) : String(v));
+  const HIDE = /(^|\.)(x|y|trace|label|key)$/;
+  // Fleet graph: by node name; added/removed nodes and wires
+  function describeGraph(a, b) {
+    const out = [], byId = g => Object.fromEntries(g.nodes.map(n => [n.id, n]));
+    const A = byId(a), B = byId(b), nameOf = n => (n.cfg && n.cfg.name) || n.id;
+    for (const id in B) if (!A[id]) out.push('added ' + nameOf(B[id]));
+    for (const id in A) if (!B[id]) out.push('removed ' + nameOf(A[id]));
+    for (const id in B) if (A[id]) for (const d of diff(A[id].cfg, B[id].cfg)) if (!HIDE.test(d.path)) out.push(nameOf(B[id]) + ': ' + d.path + ' ' + show(d.from) + ' → ' + show(d.to));
+    const ek = g => new Set(g.edges.map(e => e.from + '>' + e.to));
+    const EA = ek(a), EB = ek(b), nm = (g, id) => { const n = g.nodes.find(x => x.id === id); return n ? nameOf(n) : id; };
+    for (const e of EB) if (!EA.has(e)) { const [f, t] = e.split('>'); out.push('wired ' + nm(b, f) + ' → ' + nm(b, t)); }
+    for (const e of EA) if (!EB.has(e)) { const [f, t] = e.split('>'); out.push('unwired ' + nm(a, f) + ' → ' + nm(a, t)); }
+    return out;
+  }
+  // Specs with named lists (cluster pools, queues, workloads; training mixes)
+  function describeSpec(a, b) {
+    const out = [];
+    for (const d of diff(a, b)) {
+      if (HIDE.test(d.path)) continue;
+      const m = d.path.match(/^(pools|queues|workloads|mixes)\.(\d+)\.(.+)$/);
+      if (m) { const it = (b[m[1]] || [])[+m[2]] || (a[m[1]] || [])[+m[2]] || {}; out.push((it.name || m[1] + ' ' + m[2]) + ': ' + m[3] + ' ' + show(d.from) + ' → ' + show(d.to)); }
+      else out.push(d.path + ' ' + show(d.from) + ' → ' + show(d.to));
+    }
+    return out;
+  }
+
+  // ---------- the shared store (browser) ----------
+  function createStore() {
+    const views = {}, listeners = [];
+    const store = {
+      clock: 0, baseline: null, views,
+      register(name, api) { views[name] = api; },
+      setClock(t, from) { store.clock = Math.max(0, t); for (const f of listeners) f(store.clock, from); },
+      onClock(f) { listeners.push(f); },
+      pinAll() {
+        const snap = {};
+        for (const k in views) { try { snap[k] = JSON.parse(JSON.stringify(views[k].snapshot())); if (views[k].pin) views[k].pin(); } catch (e) { /* a view not started yet has nothing to pin */ } }
+        store.baseline = snap;
+        return snap;
+      },
+      changes() {
+        if (!store.baseline) return [];
+        const out = [];
+        for (const k in views) {
+          const b = store.baseline[k]; if (!b) continue;
+          let cur; try { cur = views[k].snapshot(); } catch (e) { continue; }
+          for (const line of (views[k].describe || describeSpec)(b, cur)) out.push({ view: k, text: line });
+        }
+        return out;
+      },
+      resetAll() { if (!store.baseline) return; for (const k in views) if (store.baseline[k] && views[k].restore) views[k].restore(JSON.parse(JSON.stringify(store.baseline[k]))); }
+    };
+    return store;
+  }
+
+  const api = { linkOutages, diff, describeGraph, describeSpec, createStore };
+  if (typeof module !== 'undefined' && module.exports) module.exports = api;
+  else { root.FleetScenarioLib = api; root.FleetScenario = root.FleetScenario || createStore(); }
+})(typeof window !== 'undefined' ? window : this);
+
+</script>
+<script>
 (function () {
 'use strict';
 const E = window.FleetEngine, TP = window.FleetTemplates, NT = TP.NODE_TYPES, IN = window.FleetIngest, K = window.FleetCalibrate, FC = window.FleetForecast;
@@ -2857,6 +2966,8 @@ const FIELDS = {
     { p: 'downUtil', k: 'range', label: 'Scale down below load', min: 5, max: 80, step: 5, f: v => v + '%', show: c => c.autoscale },
     { p: 'maxBatch', k: 'range', label: 'Max batch per instance', min: 8, max: 512, step: 8, f: v => v + ' seqs' },
     { p: 'fabricGbps', k: 'range', label: 'Fabric per instance (KV, sync)', min: 25, max: 3200, step: 25, f: v => v + ' Gbps' },
+    { p: 'clusterWorkload', k: 'select', label: 'Capacity follows cluster workload', opts: () => [['', 'None (as drawn)']].concat(clusterInferenceNames().map(n => [n, n])), hint: 'Instances the cluster cannot keep ready (preempted, starting up, pending) are taken away from this pool, so cluster decisions show up as SLO breaches here.' },
+    { p: 'clusterAtH', k: 'number', label: 'Starting at cluster hour', min: 0, max: 72, step: 0.25, show: c => !!c.clusterWorkload },
     { k: 'grid', ctl: [{ p: 'calibPrefill', k: 'number', label: 'Calibrated prefill ×', min: 0.05, max: 20, step: 0.01 }, { p: 'calibDecode', k: 'number', label: 'Calibrated decode ×', min: 0.05, max: 20, step: 0.01 }] },
     { k: 'poolReadout' }
   ],
@@ -3270,8 +3381,12 @@ function doRun() {
   if (c.errors.length) { $('#status').innerHTML = '<span class="bad">' + c.errors.length + ' problem' + (c.errors.length > 1 ? 's' : '') + ' to fix before it can run</span> (see the left panel)'; return; }
   let R;
   try {
-    R = E.simulate(c.spec, S.stress);
-    if (S.stress && !S.baseline) { const b = E.simulate(c.spec); S.autoBase = baselineOf(b, 'Unstressed'); } else S.autoBase = null;
+    const L = linkedOutages(c.spec);
+    S.link = L;
+    const st = L && L.outages.length ? Object.assign({ name: S.stress ? S.stress.name + ' + cluster capacity' : 'Cluster capacity' }, S.stress || {}, { outages: ((S.stress && S.stress.outages) || []).concat(L.outages) }) : S.stress;
+    if (st && L && L.outages.length) st.name = S.stress ? S.stress.name + ' + cluster capacity' : 'Cluster capacity';
+    R = E.simulate(c.spec, st);
+    if (st && !S.baseline) { const b = E.simulate(c.spec); S.autoBase = baselineOf(b, S.stress ? 'Unstressed' : 'Pools as drawn'); } else S.autoBase = null;
   } catch (err) { $('#status').textContent = 'Simulation failed: ' + err.message; return; }
   prep(R);
   R.health = E.healthOf(R);
@@ -3288,7 +3403,8 @@ function doRun() {
   S.T = clamp(S.T, 0, Math.max(0, R.D - 1));
   if (S.sel && S.sel.type === 'req') S.sel = null;
   const sm = R.summary;
-  $('#status').innerHTML = '<b>' + fInt(sm.requests) + '</b> requests' + (sm.users ? ' from <b>' + fInt(sm.users) + '</b> users' : '') + ' · <b>' + mmss(R.D) + '</b> simulated in ' + sm.simMs + ' ms' + (BL() ? ' · vs <b>' + esc(BL().label) + '</b>' : '');
+  if (S.link && S.link.notes.length) toastOnce(S.link.notes.join(' · '));
+  $('#status').innerHTML = (S.link && S.link.outages.length ? '<span title="' + esc(S.link.notes.join('\n')) + '">&#128279; linked to cluster · </span>' : '') + '<b>' + fInt(sm.requests) + '</b> requests' + (sm.users ? ' from <b>' + fInt(sm.users) + '</b> users' : '') + ' · <b>' + mmss(R.D) + '</b> simulated in ' + sm.simMs + ' ms' + (BL() ? ' · vs <b>' + esc(BL().label) + '</b>' : '');
   $('#scrub').max = Math.max(1, R.D - 1);
   renderKpis(); buildCharts(); buildStrip(); renderBanner();
   if (S.sel && (S.sel.type === 'stress' || S.sel.type === 'advisor' || S.sel.type === 'calib' || S.sel.type === 'live')) { /* keep panel */ } else renderDetails();
@@ -3828,7 +3944,42 @@ $('#vstrip').addEventListener('click', e => { if (!S.run) return; const b = e.cu
 
 // ---------- playback ----------
 let lastSec = -1;
-function seek(t) { if (!S.run) return; S.T = clamp(t, 0, Math.max(0, S.run.D - 1)); render(true); }
+function seek(t) { if (!S.run) return; S.T = clamp(t, 0, Math.max(0, S.run.D - 1)); render(true); if (window.FleetScenario) { const ln = S.graph.nodes.find(n => n.type === 'pool' && n.cfg.clusterWorkload); FleetScenario.setClock(S.T + (ln ? (+ln.cfg.clusterAtH || 0) * 3600 : 0), 'fleet'); } }
+// ---------- one scenario across views ----------
+function clusterSpecNow() { const cv = window.FleetClusterView && window.FleetClusterView.state; return cv && cv.spec ? cv.spec : window.FleetCluster ? window.FleetCluster.sampleCluster() : null; }
+function clusterInferenceNames() { const cs = clusterSpecNow(); return cs ? cs.workloads.filter(w => w.kind === 'inference').map(w => w.name) : []; }
+function linkedOutages(spec) {
+  const linked = S.graph.nodes.filter(n => n.type === 'pool' && n.cfg.clusterWorkload);
+  if (!linked.length || !window.FleetCluster || !window.FleetScenarioLib) return null;
+  const cs = clusterSpecNow(), key = JSON.stringify(cs);
+  if (!S.clusterCache || S.clusterCache.key !== key) S.clusterCache = { key, run: FleetCluster.simulateCluster(cs) };
+  const CR = S.clusterCache.run, out = { outages: [], notes: [] }, dur = Math.max(600, spec.horizon || 0, ...spec.sources.map(x => x.duration || (x.trace && x.trace.length ? x.trace[x.trace.length - 1].t : 0)));
+  for (const n of linked) {
+    const wi = CR.spec.workloads.findIndex(w => w.name === n.cfg.clusterWorkload);
+    if (wi < 0) { out.notes.push(n.cfg.name + ': no cluster workload "' + n.cfg.clusterWorkload + '"'); continue; }
+    const su = window.FleetInferenceView && FleetInferenceView.startupFor ? FleetInferenceView.startupFor(n.cfg.clusterWorkload) : 240;
+    const rd = FleetCluster.inferenceReadiness(CR, wi, su), at = (+n.cfg.clusterAtH || 0) * 3600;
+    const os = FleetScenarioLib.linkOutages(rd, CR.step, n.id, at, Math.ceil(dur));
+    out.outages.push(...os);
+    const worst = os.reduce((m, o) => Math.max(m, o.fraction), 0);
+    out.notes.push(n.cfg.name + ' follows ' + n.cfg.clusterWorkload + ' from cluster hour ' + (+n.cfg.clusterAtH || 0) + (worst ? ': up to ' + Math.round(worst * 100) + '% of its instances not ready' : ': fully ready throughout'));
+  }
+  return out;
+}
+window.FleetGraphView = {
+  snapshot: () => S.graph,
+  restore: g => { S.graph = g; S.sel = null; renderGraph(); renderPalette(); scheduleRun(0); },
+  pin: () => { if (S.run) $('#pinBtn').click(); },
+  describe: (a, b) => FleetScenarioLib.describeGraph(a, b),
+  // A fleet run is a short window. When a pool follows a cluster workload, the window starts at that cluster hour,
+  // so the shared clock maps into it; otherwise the clock is used as is, and ignored past the end of the run.
+  syncClock: () => {
+    if (!S.run || !window.FleetScenario) return;
+    const ln = S.graph.nodes.find(n => n.type === 'pool' && n.cfg.clusterWorkload), t = FleetScenario.clock - (ln ? (+ln.cfg.clusterAtH || 0) * 3600 : 0);
+    if (t >= 0 && t < S.run.D) { S.T = t; render(true); }
+  }
+};
+if (window.FleetScenario) FleetScenario.register('fleet', window.FleetGraphView);
 function render(force) {
   const R = S.run;
   if (!R) return;
@@ -3942,6 +4093,8 @@ function applyStress(st) {
   S.stress = stressActive(st) ? JSON.parse(JSON.stringify(st)) : null;
   scheduleRun(0);
 }
+let lastToast = '';
+function toastOnce(msg) { if (msg !== lastToast) { lastToast = msg; toast(msg); } }
 function renderBanner() {
   const b = $('#stressBanner');
   if (!S.stress) { b.hidden = true; return; }
@@ -5191,7 +5344,7 @@ window.addEventListener('resize', () => {});
     seek(Math.round((x - l) / (b.width - l - TL.r) * (R.T - 1)));
   });
   $('#cScrub').addEventListener('input', e => seek(+e.target.value));
-  function seek(k) { CS.k = clamp(k, 0, CS.run.T - 1); draw(); renderSideLive(); }
+  function seek(k) { CS.k = clamp(k, 0, CS.run.T - 1); draw(); renderSideLive(); if (window.FleetScenario) FleetScenario.setClock(CS.k * CS.run.step, 'cluster'); }
 
   // ---------- side panel ----------
   function renderSide() {
@@ -5288,10 +5441,19 @@ window.addEventListener('resize', () => {});
 
   let started = false;
   window.FleetClusterView = {
-    show() { root.hidden = false; readColors(); if (!started) { started = true; renderCfg(); run(); } else { layoutGrid(); drawTimeline(); drawGantt(); draw(); } },
+    show() {
+      root.hidden = false; readColors();
+      if (!started) { started = true; renderCfg(); run(); } else { layoutGrid(); drawTimeline(); drawGantt(); }
+      if (window.FleetScenario && CS.run) CS.k = clamp(Math.round(FleetScenario.clock / CS.run.step), 0, CS.run.T - 1);
+      draw(); renderSideLive();
+    },
+    snapshot: () => CS.spec,
+    restore: sp => { CS.spec = sp; CS.baseline = null; renderCfg(); if (started) run(); },
+    pin: () => { if (CS.run) { CS.baseline = { label: 'baseline (pinned for all views)', summary: CS.run.summary }; $('#cClear').hidden = false; renderKpis(); renderHead(); } },
     hide() { root.hidden = true; setPlaying(false); },
     state: CS
   };
+  if (window.FleetScenario) FleetScenario.register('cluster', window.FleetClusterView);
 })();
 
 </script>
@@ -5854,7 +6016,7 @@ window.addEventListener('resize', () => {});
     seek((e.clientX - b.left - L) / (b.width - L - 6) * (cv.id === 'tPhase' ? R.spec.horizonH : TS.sched.r.spec.horizonH) * 3600);
   });
   $('#tScrub').addEventListener('input', e => seek(+e.target.value));
-  function seek(t) { TS.t = clamp(t, 0, TS.run.spec.horizonH * 3600); draw(); }
+  function seek(t) { TS.t = clamp(t, 0, TS.run.spec.horizonH * 3600); draw(); if (window.FleetScenario) FleetScenario.setClock(TS.t, 'training'); }
 
   // ---------- side ----------
   function renderSide() { $('#tSide').innerHTML = '<div id="tLive"></div>'; renderSideLive(); }
@@ -5913,10 +6075,14 @@ window.addEventListener('resize', () => {});
 
   let started = false;
   window.FleetTrainingView = {
-    show() { root.hidden = false; readColors(); if (!started) { started = true; renderSubs(); renderCfg(); } run(); },
+    show() { root.hidden = false; readColors(); if (!started) { started = true; renderSubs(); renderCfg(); } if (window.FleetScenario) TS.t = FleetScenario.clock; run(); },
+    snapshot: () => TS.spec,
+    restore: sp => { TS.spec = T.normalizeTraining(sp); TS.baseline = null; if (started) { renderCfg(); run(); } },
+    pin: () => { if (TS.run) { TS.baseline = { label: 'baseline (pinned for all views)', summary: TS.run.summary, byMix: TS.run.byMix, queueWaitS: TS.run.spec.queueWaitS }; $('#tClear').hidden = false; renderKpis(); renderHead(); } },
     hide() { root.hidden = true; setPlaying(false); },
     state: TS
   };
+  if (window.FleetScenario) FleetScenario.register('training', window.FleetTrainingView);
 })();
 
 </script>
@@ -6125,7 +6291,7 @@ window.addEventListener('resize', () => {});
     if (near.length) h += '<h3 class="sec">Events around now</h3>' + near.slice(-5).map(e => '<div class="row"><span>' + hm(e.t) + ' ' + esc(R.spec.workloads[e.wl].name) + '</span><span>' + esc(e.detail) + (e.n > 1 ? ' ×' + e.n : '') + '</span></div>').join('');
     $('#iSide').innerHTML = h;
   }
-  $('#iScrub').addEventListener('input', e => { IS.k = +e.target.value; draw(); });
+  $('#iScrub').addEventListener('input', e => { IS.k = +e.target.value; draw(); if (window.FleetScenario) FleetScenario.setClock(IS.k * IS.run.step, 'inference'); });
   root.addEventListener('click', e => {
     const cv = e.target.closest('canvas'); if (!cv || !IS.run) return;
     const b = cv.getBoundingClientRect(); IS.k = clamp(Math.round((e.clientX - b.left - 40) / (b.width - 46) * (IS.run.T - 1)), 0, IS.run.T - 1); draw();
@@ -6138,10 +6304,14 @@ window.addEventListener('resize', () => {});
   window.addEventListener('resize', () => { if (IS.run && !root.hidden) { drawMix(); renderDeps(); draw(); } });
 
   window.FleetInferenceView = {
-    show() { root.hidden = false; readColors(); run(); },
+    show() { root.hidden = false; readColors(); if (window.FleetScenario) IS.k = Math.round(FleetScenario.clock / C.STEP); run(); },
+    startupFor: name => startup(name).total,
+    snapshot: () => ({ scenario: IS.scenario, imageGB: IS.imageGB, registryGBs: IS.registryGBs, source: IS.source, warmupS: IS.warmupS, models: IS.models }),
+    restore: o => { Object.assign(IS, o); $('#iScen').value = IS.scenario; if (IS.run) run(); },
     hide() { root.hidden = true; setPlaying(false); },
     state: IS
   };
+  if (window.FleetScenario) FleetScenario.register('inference', window.FleetInferenceView);
 })();
 
 </script>
@@ -6157,7 +6327,23 @@ window.addEventListener('resize', () => {});
     if (v === 'cluster') window.FleetClusterView.show(); else window.FleetClusterView.hide();
     if (v === 'training') window.FleetTrainingView.show(); else window.FleetTrainingView.hide();
     if (v === 'inference') window.FleetInferenceView.show(); else window.FleetInferenceView.hide();
+    if (v === 'fleet') window.FleetGraphView.syncClock();
   });
+  const SC = window.FleetScenario, hm = t => { const m = Math.floor(t / 60); return Math.floor(m / 60) + ':' + String(m % 60).padStart(2, '0'); };
+  SC.onClock(t => { document.getElementById('vclock').textContent = 'clock ' + hm(t); });
+  const chgBtn = document.getElementById('chgBtn'), list = document.getElementById('chgList');
+  const esc = x => String(x).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+  function refreshChanges() {
+    if (!SC.baseline) return;
+    const ch = SC.changes();
+    chgBtn.hidden = false; chgBtn.textContent = ch.length + ' change' + (ch.length === 1 ? '' : 's') + ' since baseline';
+    chgBtn.classList.toggle('has', ch.length > 0);
+    if (!list.hidden) list.innerHTML = '<b>Changes since the baseline, in every view</b>' + (ch.length ? ch.map(c => '<div class="row"><span>' + esc(c.view) + '</span><span>' + esc(c.text) + '</span></div>').join('') : '<div class="sub">None yet.</div>') + '<div class="btnrow"><button class="btn" type="button" id="chgReset">Reset every view to the baseline</button></div>';
+  }
+  document.getElementById('pinAll').addEventListener('click', () => { SC.pinAll(); refreshChanges(); });
+  chgBtn.addEventListener('click', () => { list.hidden = !list.hidden; chgBtn.setAttribute('aria-expanded', String(!list.hidden)); refreshChanges(); });
+  list.addEventListener('click', e => { if (e.target.id === 'chgReset') { SC.resetAll(); setTimeout(refreshChanges, 400); } });
+  setInterval(refreshChanges, 1500);
 })();
 </script>
 </body>

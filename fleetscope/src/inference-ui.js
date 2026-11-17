@@ -202,7 +202,7 @@
     if (near.length) h += '<h3 class="sec">Events around now</h3>' + near.slice(-5).map(e => '<div class="row"><span>' + hm(e.t) + ' ' + esc(R.spec.workloads[e.wl].name) + '</span><span>' + esc(e.detail) + (e.n > 1 ? ' ×' + e.n : '') + '</span></div>').join('');
     $('#iSide').innerHTML = h;
   }
-  $('#iScrub').addEventListener('input', e => { IS.k = +e.target.value; draw(); });
+  $('#iScrub').addEventListener('input', e => { IS.k = +e.target.value; draw(); if (window.FleetScenario) FleetScenario.setClock(IS.k * IS.run.step, 'inference'); });
   root.addEventListener('click', e => {
     const cv = e.target.closest('canvas'); if (!cv || !IS.run) return;
     const b = cv.getBoundingClientRect(); IS.k = clamp(Math.round((e.clientX - b.left - 40) / (b.width - 46) * (IS.run.T - 1)), 0, IS.run.T - 1); draw();
@@ -215,8 +215,12 @@
   window.addEventListener('resize', () => { if (IS.run && !root.hidden) { drawMix(); renderDeps(); draw(); } });
 
   window.FleetInferenceView = {
-    show() { root.hidden = false; readColors(); run(); },
+    show() { root.hidden = false; readColors(); if (window.FleetScenario) IS.k = Math.round(FleetScenario.clock / C.STEP); run(); },
+    startupFor: name => startup(name).total,
+    snapshot: () => ({ scenario: IS.scenario, imageGB: IS.imageGB, registryGBs: IS.registryGBs, source: IS.source, warmupS: IS.warmupS, models: IS.models }),
+    restore: o => { Object.assign(IS, o); $('#iScen').value = IS.scenario; if (IS.run) run(); },
     hide() { root.hidden = true; setPlaying(false); },
     state: IS
   };
+  if (window.FleetScenario) FleetScenario.register('inference', window.FleetInferenceView);
 })();
