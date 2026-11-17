@@ -58,7 +58,14 @@
     const b0 = 2 * m.active * 1e9 / (tp * tflops * 0.5);
     const c = kvBytesPerToken / (tp * bw);
     const kvCap = Math.max(0, Math.floor((tp * G.hbm * 1e9 * 0.9 - wBytes) / kvBytesPerToken));
-    return { gpu: gpuKey, tp, prefill, a, b0, c, kvCap, kvBytesPerToken, wBytes, multiNode: tp > 8 };
+    // MoE: every token's hidden state is sent to its experts and back at each layer (all-to-all), over NVLink
+    // inside a node and InfiniBand when an instance spans nodes. Added per sequence to the decode step.
+    let a2a = 0;
+    if (m.params > m.active * 1.5) {
+      const hidden = Math.sqrt(m.active * 1e9 / (12 * m.layers)), link = (tp > 8 ? 50e9 : 450e9) * 0.5;
+      a2a = 2 * 2 * hidden * m.layers / (Math.max(1, tp) * link) * (tp > 1 ? 1 : 0);
+    }
+    return { gpu: gpuKey, tp, prefill, a, b0: b0 + a2a, a2a, c, kvCap, kvBytesPerToken, wBytes, multiNode: tp > 8 };
   }
 
   // Calibration: measured multipliers on the spec-sheet profile. prefill scales prefill throughput;
@@ -677,7 +684,7 @@
       const p = { id: n.id, name: c.name, site: c.site, siteKind: c.siteKind, role: c.role, gpu: c.gpu,
         min: c.autoscale ? c.min : c.instances, max: c.autoscale ? Math.max(c.min, c.max, 1) : c.instances,
         auto: !!c.autoscale, coldStart: c.coldStart, upWait: c.upWait, downUtil: c.downUtil / 100, maxBatch: c.maxBatch, fabricGbps: c.fabricGbps, decode: [],
-        zone: zoneOf(c), calib: (c.calibPrefill && c.calibPrefill !== 1) || (c.calibDecode && c.calibDecode !== 1) ? { prefill: c.calibPrefill || 1, decode: c.calibDecode || 1 } : null };
+        zone: zoneOf(c), offloadGB: +c.offloadGB || 0, offloadGBs: +c.offloadGBs || 50, loraAdapters: +c.loraAdapters || 0, loraSlots: Math.max(1, +c.loraSlots || 8), calib: (c.calibPrefill && c.calibPrefill !== 1) || (c.calibDecode && c.calibDecode !== 1) ? { prefill: c.calibPrefill || 1, decode: c.calibDecode || 1 } : null };
       if (c.role === 'prefill') {
         for (const e of outs(n.id)) for (const r of reach(e)) {
           const d = byId[r.pool];
@@ -700,7 +707,7 @@
         targets.push(r);
       }
       if (!targets.length) errors.push({ node: n.id, msg: n.cfg.name + ' has no pool to send requests to.' });
-      spec.routers.push({ id: n.id, name: n.cfg.name, policy: n.cfg.policy, burstWait: n.cfg.burstWait, targets, enforce: !!n.cfg.enforceResidency });
+      spec.routers.push({ id: n.id, name: n.cfg.name, policy: n.cfg.policy, burstWait: n.cfg.burstWait, targets, enforce: !!n.cfg.enforceResidency, affinity: ['session', 'none'].includes(n.cfg.affinity) ? n.cfg.affinity : 'ideal' });
     }
     let uidBase = 0;
     for (const n of g.nodes) {
@@ -817,6 +824,11 @@
       return r;
     }
     let horizon = spec.horizon || 0;
+    const specK = Math.max(0, Math.round(+m.specK || 0)), specAlpha = clamp(+m.specAccept || 0.7, 0.05, 0.98), specDraft = +m.specDraftCost || 0.06;
+    const specTok = specK ? (1 - Math.pow(specAlpha, specK + 1)) / (1 - specAlpha) : 1;   // expected tokens accepted per verification step
+    const rngA = makeRng(((spec.seed || 7) * 31 + 5) >>> 0);
+    const affin = new Map();   // session → { pool, inst, sys }: where its prefix cache lives
+    let localityMiss = 0, localityHit = 0, offloadLoads = 0;
     const replayStats = { sources: 0, sessions: 0, turns: 0, branches: 0, estimated: 0, abandoned: 0, retried: 0, drift: [] };
     const users = [];
     let surgeBase = spec.sources.reduce((m, S) => Math.max(m, (S.userBase || 0) + (S.users || 0)), 0) + 100000;
@@ -895,6 +907,7 @@
       const isl = Math.min(maxCtx - 512, st.ctx + add);
       const osl = clamp(Math.round(rng.logn(S.outTokens, 0.7)), 4, 8192);
       const r = mkReq(S, t, isl, osl, Math.round(Math.min(st.ctx, isl) * S.prefixHit), st.id);
+      r.sys = Math.round((S.systemTokens || 0) * S.prefixHit);
       if (st.surge) r.surge = true;
       return r;
     }
@@ -981,21 +994,38 @@
         const r = p.q.peek();
         if (p.role !== 'prefill' && r.isl + r.dec > p.P.kvCap) { p.q.shift(); if (p.role !== 'decode') p.qTokens -= Math.max(1, r.isl - r.cached); failReq(r, t, 'Context does not fit in one instance’s KV cache', 'kv'); continue; }
         let best = null, bl = Infinity;
+        const cap = p.loraAdapters > p.loraSlots ? Math.max(1, Math.floor(p.maxBatch * p.loraSlots / p.loraAdapters)) : p.maxBatch;
         for (const x of cand) {
           let l;
           if (p.role === 'prefill') { if (x.pre.length >= 16) continue; l = x.preTok; }
           else {
             const load = x.batch.length + x.pre.length;
-            if (load >= p.maxBatch) continue;
+            if (load >= cap) continue;
             if (x.kvUsed + r.isl + r.dec > x.kvCap) continue;
             l = x.kvUsed / x.kvCap + x.preTok / 1e5;
           }
           if (l < bl) { bl = l; best = x; }
         }
         if (!best) break;
+        // KV-aware routing sends a returning session to the instance holding its prefix when it has room
+        if (r.kvAware && r.prevInst != null && p.role !== 'decode') { const own = cand.find(x => x.id === r.prevInst); if (own && (p.role === 'prefill' ? own.pre.length < 16 : own.batch.length + own.pre.length < cap && own.kvUsed + r.isl + r.dec <= own.kvCap)) best = own; }
         p.q.shift();
+        if (p.role !== 'decode' && r.sessKey != null && p.role !== 'decode') {
+          const prev = affin.get(r.sessKey);
+          if (prev && prev.pool === p.id) {
+            if (prev.inst !== best.id) { r.cached = Math.min(r.cached, prev.sys || 0); localityMiss++; }
+            else {
+              // the prefix may have been evicted under KV pressure; with a CPU offload tier it survives but must be loaded
+              const util = best.kvCap ? best.kvUsed / best.kvCap : 0;
+              if (p.offloadGB > 0) { r.loadS = r.cached * p.P.kvBytesPerToken / (p.offloadGBs * 1e9); offloadLoads++; localityHit++; }
+              else if (rngA.u() < Math.pow(Math.max(0, (util - 0.5) / 0.5), 2)) { r.cached = Math.min(r.cached, prev.sys || 0); localityMiss++; }
+              else localityHit++;
+            }
+          }
+          affin.set(r.sessKey, { pool: p.id, inst: best.id, sys: r.sys || 0 });
+        }
         if (p.role !== 'decode') {
-          const work = Math.max(1, r.isl - r.cached);
+          const work = Math.max(1, r.isl - r.cached) + (r.loadS ? r.loadS * p.P.prefill : 0);
           p.qTokens -= work;
           r.tAdmit = t; r.preRem = work;
           best.pre.push(r); best.preTok += work;
@@ -1014,7 +1044,9 @@
         it++;
         const B = x.batch.length;
         const chunk = Math.min(x.preTok, chunkMax);
-        const iterT = (B > 0 ? P.a + P.b0 * B + P.c * x.ctxTok : 0) + (chunk > 0 ? chunk / P.prefill + (B > 0 ? 0 : P.a * 0.5) : 0);
+        // speculative decoding: k draft tokens, verified in one pass; LoRA: overhead per adapter resident in the batch
+        const lora = p.loraAdapters ? 1 + 0.04 * Math.min(p.loraAdapters, p.loraSlots, B || 1) : 1;
+        const iterT = (B > 0 ? (P.a * (1 + specDraft * specK) + P.b0 * B * (specK + 1) * lora + P.c * x.ctxTok) : 0) + (chunk > 0 ? chunk / P.prefill + (B > 0 ? 0 : P.a * 0.5) : 0);
         if (iterT <= 0) break;
         const frac = Math.min(1, left / iterT);
         const tEnd = t0 + (dt - left) + iterT * frac;
@@ -1022,13 +1054,13 @@
           let w = 0;
           for (let i = 0; i < B; i++) {
             const r = x.batch[i];
-            r.gen += frac; x.ctxTok += frac;
+            r.gen += frac * specTok; x.ctxTok += frac * specTok;
             if (r.think && !isFinite(r.tFirst) && r.gen >= r.think + 1) r.tFirst = tEnd;
             if (r.gen >= r.dec) { x.kvUsed -= r.kvRes; x.ctxTok -= r.isl + r.gen; finish(r, tEnd); }
             else x.batch[w++] = r;
           }
           x.batch.length = w;
-          p.tokSec += B * frac;
+          p.tokSec += B * frac * specTok;
           if (x.ctxTok < 0) x.ctxTok = 0;
         }
         if (chunk > 0) {
@@ -1186,10 +1218,22 @@
         const x = route(R, r);
         if (!x) { failReq(r, t, 'No pool is allowed for ' + r.cls + ' data', 'policy'); continue; }
         r.enforce = !!R.enforce;
-        const p = x.P;
+        let xx = x;
+        // Prefix-cache locality: a returning session's cached prefix lives on one instance. KV-aware routing keeps
+        // the session on that pool (and instance) unless its wait is far over the burst threshold.
+        r.sessKey = R.affinity === 'ideal' ? null : r.user >= 0 ? 'u' + r.user : r.sess ? r.sess : null;
+        const prev = r.sessKey != null ? affin.get(r.sessKey) : null;
+        if (prev && R.affinity === 'session' && prev.pool !== x.P.id) {
+          const tx = R.targets.find(y => y.P.id === prev.pool && (!R.enforce || targetOk(y, r.cls)));
+          if (tx && targetWait(tx) <= R.burstWait * 2) xx = tx;
+        }
+        if (prev && prev.pool !== xx.P.id) { r.cached = Math.min(r.cached, prev.sys || 0); localityMiss++; }
+        r.prevInst = prev && prev.pool === xx.P.id ? prev.inst : null;
+        r.kvAware = R.affinity === 'session';
+        const p = xx.P;
         r.site = p.site; r.pPool = p.id;
-        if (x.link) {
-          const L = links[x.link];
+        if (xx.link) {
+          const L = links[xx.link];
           r.inLink = L.id; r.net = L.rtt;
           const b = (r.isl - r.cached) * 4;
           L.bytesSec += b; L.totalBytes += b;
@@ -1321,6 +1365,8 @@
     const summary = {
       requests: reqs.length, completed, dropped, rejected: failCounts.kv, lost: failCounts.outage, blocked: failCounts.policy, retried,
       surgeRequests: reqs.filter(r => r.surge).length, bottleneck,
+      locality: { misses: localityMiss, hits: localityHit, offloadLoads, cachedShare: reqs.length ? reqs.reduce((a, r) => a + (r.cached || 0), 0) / Math.max(1, reqs.reduce((a, r) => a + r.isl, 0)) : 0 },
+      spec: specK ? { k: specK, accept: specAlpha, tokensPerStep: specTok } : null,
       replay: replayStats.sources ? (() => { const d = replayStats.drift.map(Math.abs).sort((a, b) => a - b); return { sessions: replayStats.sessions, turns: replayStats.turns, branches: replayStats.branches, estimatedGaps: replayStats.estimated, abandoned: replayStats.abandoned, retried: replayStats.retried, issued: replayStats.drift.length, driftP50: pct(d, 0.5), driftP90: pct(d, 0.9), meanDrift: replayStats.drift.length ? replayStats.drift.reduce((a, b) => a + b, 0) / replayStats.drift.length : NaN }; })() : null,
       slo: reqs.length ? ok / reqs.length : NaN,
       ttftP50: pct(ttftAll, 0.5), ttftP99: pct(ttftAll, 0.99), tpotP99: pct(tpotAll, 0.99),

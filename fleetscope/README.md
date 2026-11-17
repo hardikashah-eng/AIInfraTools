@@ -142,6 +142,16 @@ Scenarios in `scenarios/` are planned on every pull request that changes them. T
 
 ![Plan report](docs/img/plan-report.png)
 
+### Richer physics
+
+Opt-in knobs model:
+- **Serving:** prefix-cache locality with cache-oblivious or KV-aware routing, CPU KV offload, speculative decoding, LoRA adapters, MoE all-to-all.
+- **Training:** elastic jobs, power caps with energy, two-site gradient sync.
+
+Here the coding-agent fleet's router switches from cache-oblivious to KV-aware routing with CPU offload, and SLO met rises from 10% to 78%. See [docs/PHYSICS.md](docs/PHYSICS.md).
+
+![KV-aware routing](docs/img/kv-aware-routing.png)
+
 ### What if… a partial outage
 
 Half of the on-prem pool fails for two and a half minutes. Down instances show red, streams cut mid-answer are counted as lost, the KPIs compare against the same graph unstressed, and the banner names where it breaks first. See [docs/STRESS.md](docs/STRESS.md).
@@ -236,4 +246,4 @@ Requests that don't fit an instance's KV cache are rejected. Training steps cost
 
 ## Known gaps
 
-Calibration fits two multipliers per pool, not every term of the model; no prefix-cache locality across instances, no preemption when KV runs out mid-decode, training modelled per step rather than per collective. The spec's build phases cover what comes next.
+Calibration fits two multipliers per pool, not every term of the model; no preemption when KV runs out mid-decode, training modelled per step rather than per collective. The spec's build phases cover what comes next.

@@ -435,7 +435,14 @@ button, select, input { font: inherit; color: inherit; }
     const b0 = 2 * m.active * 1e9 / (tp * tflops * 0.5);
     const c = kvBytesPerToken / (tp * bw);
     const kvCap = Math.max(0, Math.floor((tp * G.hbm * 1e9 * 0.9 - wBytes) / kvBytesPerToken));
-    return { gpu: gpuKey, tp, prefill, a, b0, c, kvCap, kvBytesPerToken, wBytes, multiNode: tp > 8 };
+    // MoE: every token's hidden state is sent to its experts and back at each layer (all-to-all), over NVLink
+    // inside a node and InfiniBand when an instance spans nodes. Added per sequence to the decode step.
+    let a2a = 0;
+    if (m.params > m.active * 1.5) {
+      const hidden = Math.sqrt(m.active * 1e9 / (12 * m.layers)), link = (tp > 8 ? 50e9 : 450e9) * 0.5;
+      a2a = 2 * 2 * hidden * m.layers / (Math.max(1, tp) * link) * (tp > 1 ? 1 : 0);
+    }
+    return { gpu: gpuKey, tp, prefill, a, b0: b0 + a2a, a2a, c, kvCap, kvBytesPerToken, wBytes, multiNode: tp > 8 };
   }
 
   // Calibration: measured multipliers on the spec-sheet profile. prefill scales prefill throughput;
@@ -1054,7 +1061,7 @@ button, select, input { font: inherit; color: inherit; }
       const p = { id: n.id, name: c.name, site: c.site, siteKind: c.siteKind, role: c.role, gpu: c.gpu,
         min: c.autoscale ? c.min : c.instances, max: c.autoscale ? Math.max(c.min, c.max, 1) : c.instances,
         auto: !!c.autoscale, coldStart: c.coldStart, upWait: c.upWait, downUtil: c.downUtil / 100, maxBatch: c.maxBatch, fabricGbps: c.fabricGbps, decode: [],
-        zone: zoneOf(c), calib: (c.calibPrefill && c.calibPrefill !== 1) || (c.calibDecode && c.calibDecode !== 1) ? { prefill: c.calibPrefill || 1, decode: c.calibDecode || 1 } : null };
+        zone: zoneOf(c), offloadGB: +c.offloadGB || 0, offloadGBs: +c.offloadGBs || 50, loraAdapters: +c.loraAdapters || 0, loraSlots: Math.max(1, +c.loraSlots || 8), calib: (c.calibPrefill && c.calibPrefill !== 1) || (c.calibDecode && c.calibDecode !== 1) ? { prefill: c.calibPrefill || 1, decode: c.calibDecode || 1 } : null };
       if (c.role === 'prefill') {
         for (const e of outs(n.id)) for (const r of reach(e)) {
           const d = byId[r.pool];
@@ -1077,7 +1084,7 @@ button, select, input { font: inherit; color: inherit; }
         targets.push(r);
       }
       if (!targets.length) errors.push({ node: n.id, msg: n.cfg.name + ' has no pool to send requests to.' });
-      spec.routers.push({ id: n.id, name: n.cfg.name, policy: n.cfg.policy, burstWait: n.cfg.burstWait, targets, enforce: !!n.cfg.enforceResidency });
+      spec.routers.push({ id: n.id, name: n.cfg.name, policy: n.cfg.policy, burstWait: n.cfg.burstWait, targets, enforce: !!n.cfg.enforceResidency, affinity: ['session', 'none'].includes(n.cfg.affinity) ? n.cfg.affinity : 'ideal' });
     }
     let uidBase = 0;
     for (const n of g.nodes) {
@@ -1194,6 +1201,11 @@ button, select, input { font: inherit; color: inherit; }
       return r;
     }
     let horizon = spec.horizon || 0;
+    const specK = Math.max(0, Math.round(+m.specK || 0)), specAlpha = clamp(+m.specAccept || 0.7, 0.05, 0.98), specDraft = +m.specDraftCost || 0.06;
+    const specTok = specK ? (1 - Math.pow(specAlpha, specK + 1)) / (1 - specAlpha) : 1;   // expected tokens accepted per verification step
+    const rngA = makeRng(((spec.seed || 7) * 31 + 5) >>> 0);
+    const affin = new Map();   // session → { pool, inst, sys }: where its prefix cache lives
+    let localityMiss = 0, localityHit = 0, offloadLoads = 0;
     const replayStats = { sources: 0, sessions: 0, turns: 0, branches: 0, estimated: 0, abandoned: 0, retried: 0, drift: [] };
     const users = [];
     let surgeBase = spec.sources.reduce((m, S) => Math.max(m, (S.userBase || 0) + (S.users || 0)), 0) + 100000;
@@ -1272,6 +1284,7 @@ button, select, input { font: inherit; color: inherit; }
       const isl = Math.min(maxCtx - 512, st.ctx + add);
       const osl = clamp(Math.round(rng.logn(S.outTokens, 0.7)), 4, 8192);
       const r = mkReq(S, t, isl, osl, Math.round(Math.min(st.ctx, isl) * S.prefixHit), st.id);
+      r.sys = Math.round((S.systemTokens || 0) * S.prefixHit);
       if (st.surge) r.surge = true;
       return r;
     }
@@ -1358,21 +1371,38 @@ button, select, input { font: inherit; color: inherit; }
         const r = p.q.peek();
         if (p.role !== 'prefill' && r.isl + r.dec > p.P.kvCap) { p.q.shift(); if (p.role !== 'decode') p.qTokens -= Math.max(1, r.isl - r.cached); failReq(r, t, 'Context does not fit in one instance’s KV cache', 'kv'); continue; }
         let best = null, bl = Infinity;
+        const cap = p.loraAdapters > p.loraSlots ? Math.max(1, Math.floor(p.maxBatch * p.loraSlots / p.loraAdapters)) : p.maxBatch;
         for (const x of cand) {
           let l;
           if (p.role === 'prefill') { if (x.pre.length >= 16) continue; l = x.preTok; }
           else {
             const load = x.batch.length + x.pre.length;
-            if (load >= p.maxBatch) continue;
+            if (load >= cap) continue;
             if (x.kvUsed + r.isl + r.dec > x.kvCap) continue;
             l = x.kvUsed / x.kvCap + x.preTok / 1e5;
           }
           if (l < bl) { bl = l; best = x; }
         }
         if (!best) break;
+        // KV-aware routing sends a returning session to the instance holding its prefix when it has room
+        if (r.kvAware && r.prevInst != null && p.role !== 'decode') { const own = cand.find(x => x.id === r.prevInst); if (own && (p.role === 'prefill' ? own.pre.length < 16 : own.batch.length + own.pre.length < cap && own.kvUsed + r.isl + r.dec <= own.kvCap)) best = own; }
         p.q.shift();
+        if (p.role !== 'decode' && r.sessKey != null && p.role !== 'decode') {
+          const prev = affin.get(r.sessKey);
+          if (prev && prev.pool === p.id) {
+            if (prev.inst !== best.id) { r.cached = Math.min(r.cached, prev.sys || 0); localityMiss++; }
+            else {
+              // the prefix may have been evicted under KV pressure; with a CPU offload tier it survives but must be loaded
+              const util = best.kvCap ? best.kvUsed / best.kvCap : 0;
+              if (p.offloadGB > 0) { r.loadS = r.cached * p.P.kvBytesPerToken / (p.offloadGBs * 1e9); offloadLoads++; localityHit++; }
+              else if (rngA.u() < Math.pow(Math.max(0, (util - 0.5) / 0.5), 2)) { r.cached = Math.min(r.cached, prev.sys || 0); localityMiss++; }
+              else localityHit++;
+            }
+          }
+          affin.set(r.sessKey, { pool: p.id, inst: best.id, sys: r.sys || 0 });
+        }
         if (p.role !== 'decode') {
-          const work = Math.max(1, r.isl - r.cached);
+          const work = Math.max(1, r.isl - r.cached) + (r.loadS ? r.loadS * p.P.prefill : 0);
           p.qTokens -= work;
           r.tAdmit = t; r.preRem = work;
           best.pre.push(r); best.preTok += work;
@@ -1391,7 +1421,9 @@ button, select, input { font: inherit; color: inherit; }
         it++;
         const B = x.batch.length;
         const chunk = Math.min(x.preTok, chunkMax);
-        const iterT = (B > 0 ? P.a + P.b0 * B + P.c * x.ctxTok : 0) + (chunk > 0 ? chunk / P.prefill + (B > 0 ? 0 : P.a * 0.5) : 0);
+        // speculative decoding: k draft tokens, verified in one pass; LoRA: overhead per adapter resident in the batch
+        const lora = p.loraAdapters ? 1 + 0.04 * Math.min(p.loraAdapters, p.loraSlots, B || 1) : 1;
+        const iterT = (B > 0 ? (P.a * (1 + specDraft * specK) + P.b0 * B * (specK + 1) * lora + P.c * x.ctxTok) : 0) + (chunk > 0 ? chunk / P.prefill + (B > 0 ? 0 : P.a * 0.5) : 0);
         if (iterT <= 0) break;
         const frac = Math.min(1, left / iterT);
         const tEnd = t0 + (dt - left) + iterT * frac;
@@ -1399,13 +1431,13 @@ button, select, input { font: inherit; color: inherit; }
           let w = 0;
           for (let i = 0; i < B; i++) {
             const r = x.batch[i];
-            r.gen += frac; x.ctxTok += frac;
+            r.gen += frac * specTok; x.ctxTok += frac * specTok;
             if (r.think && !isFinite(r.tFirst) && r.gen >= r.think + 1) r.tFirst = tEnd;
             if (r.gen >= r.dec) { x.kvUsed -= r.kvRes; x.ctxTok -= r.isl + r.gen; finish(r, tEnd); }
             else x.batch[w++] = r;
           }
           x.batch.length = w;
-          p.tokSec += B * frac;
+          p.tokSec += B * frac * specTok;
           if (x.ctxTok < 0) x.ctxTok = 0;
         }
         if (chunk > 0) {
@@ -1563,10 +1595,22 @@ button, select, input { font: inherit; color: inherit; }
         const x = route(R, r);
         if (!x) { failReq(r, t, 'No pool is allowed for ' + r.cls + ' data', 'policy'); continue; }
         r.enforce = !!R.enforce;
-        const p = x.P;
+        let xx = x;
+        // Prefix-cache locality: a returning session's cached prefix lives on one instance. KV-aware routing keeps
+        // the session on that pool (and instance) unless its wait is far over the burst threshold.
+        r.sessKey = R.affinity === 'ideal' ? null : r.user >= 0 ? 'u' + r.user : r.sess ? r.sess : null;
+        const prev = r.sessKey != null ? affin.get(r.sessKey) : null;
+        if (prev && R.affinity === 'session' && prev.pool !== x.P.id) {
+          const tx = R.targets.find(y => y.P.id === prev.pool && (!R.enforce || targetOk(y, r.cls)));
+          if (tx && targetWait(tx) <= R.burstWait * 2) xx = tx;
+        }
+        if (prev && prev.pool !== xx.P.id) { r.cached = Math.min(r.cached, prev.sys || 0); localityMiss++; }
+        r.prevInst = prev && prev.pool === xx.P.id ? prev.inst : null;
+        r.kvAware = R.affinity === 'session';
+        const p = xx.P;
         r.site = p.site; r.pPool = p.id;
-        if (x.link) {
-          const L = links[x.link];
+        if (xx.link) {
+          const L = links[xx.link];
           r.inLink = L.id; r.net = L.rtt;
           const b = (r.isl - r.cached) * 4;
           L.bytesSec += b; L.totalBytes += b;
@@ -1698,6 +1742,8 @@ button, select, input { font: inherit; color: inherit; }
     const summary = {
       requests: reqs.length, completed, dropped, rejected: failCounts.kv, lost: failCounts.outage, blocked: failCounts.policy, retried,
       surgeRequests: reqs.filter(r => r.surge).length, bottleneck,
+      locality: { misses: localityMiss, hits: localityHit, offloadLoads, cachedShare: reqs.length ? reqs.reduce((a, r) => a + (r.cached || 0), 0) / Math.max(1, reqs.reduce((a, r) => a + r.isl, 0)) : 0 },
+      spec: specK ? { k: specK, accept: specAlpha, tokensPerStep: specTok } : null,
       replay: replayStats.sources ? (() => { const d = replayStats.drift.map(Math.abs).sort((a, b) => a - b); return { sessions: replayStats.sessions, turns: replayStats.turns, branches: replayStats.branches, estimatedGaps: replayStats.estimated, abandoned: replayStats.abandoned, retried: replayStats.retried, issued: replayStats.drift.length, driftP50: pct(d, 0.5), driftP90: pct(d, 0.9), meanDrift: replayStats.drift.length ? replayStats.drift.reduce((a, b) => a + b, 0) / replayStats.drift.length : NaN }; })() : null,
       slo: reqs.length ? ok / reqs.length : NaN,
       ttftP50: pct(ttftAll, 0.5), ttftP99: pct(ttftAll, 0.99), tpotP99: pct(tpotAll, 0.99),
@@ -1738,7 +1784,7 @@ button, select, input { font: inherit; color: inherit; }
 (function (root) {
   'use strict';
   const E = (typeof module !== 'undefined' && module.exports) ? require('./engine.js') : root.FleetEngine;
-  const M = key => Object.assign({ name: 'Model', key, wPrec: 'fp8', kvPrec: 'fp8', thinkTokens: 0, thinkKeep: false }, E.MODELS[key]);
+  const M = key => Object.assign({ name: 'Model', key, wPrec: 'fp8', kvPrec: 'fp8', thinkTokens: 0, thinkKeep: false, specK: 0, specAccept: 0.7 }, E.MODELS[key]);
   const NODE_TYPES = {
     agent: { title: 'Coding agents', group: 'Traffic', color: 'src', inputs: false, outputs: true, w: 230,
       defaults: () => ({ name: 'Coding agents', users: 60, turns: 12, systemTokens: 6000, contextTokens: 30000, turnTokens: 2500, outTokens: 350, thinkS: 4, gapS: 30, prefixHit: 85, durationMin: 10, dataClass: 'internal', owner: '', oncall: '' }) },
@@ -1747,9 +1793,9 @@ button, select, input { font: inherit; color: inherit; }
     trace: { title: 'Trace replay', group: 'Traffic', color: 'src', inputs: false, outputs: true, w: 230,
       defaults: () => ({ name: 'Trace replay', trace: 'chat', scale: 1, prefixHit: 0, useRecordedCache: true, replay: 'timestamps', onFail: 'retry', dataClass: 'internal', owner: '', oncall: '' }) },
     router: { title: 'Router', group: 'Routing', color: 'route', inputs: true, outputs: true, w: 200,
-      defaults: () => ({ name: 'Router', policy: 'primary-first', burstWait: 1.5, enforceResidency: false, owner: '', oncall: '' }) },
+      defaults: () => ({ name: 'Router', policy: 'primary-first', burstWait: 1.5, affinity: 'ideal', enforceResidency: false, owner: '', oncall: '' }) },
     pool: { title: 'GPU pool', group: 'Compute', color: 'pool', inputs: true, outputs: true, w: 290,
-      defaults: () => ({ name: 'On-prem pool', site: 'On-prem DC', siteKind: 'onprem', role: 'agg', gpu: 'H100', instances: 4, autoscale: false, min: 0, max: 8, coldStart: 90, upWait: 1, downUtil: 30, maxBatch: 256, fabricGbps: 400, zone: 'auto', owner: '', oncall: '', calibPrefill: 1, calibDecode: 1, clusterWorkload: '', clusterAtH: 0 }) },
+      defaults: () => ({ name: 'On-prem pool', site: 'On-prem DC', siteKind: 'onprem', role: 'agg', gpu: 'H100', instances: 4, autoscale: false, min: 0, max: 8, coldStart: 90, upWait: 1, downUtil: 30, maxBatch: 256, fabricGbps: 400, zone: 'auto', owner: '', oncall: '', calibPrefill: 1, calibDecode: 1, clusterWorkload: '', clusterAtH: 0, offloadGB: 0, offloadGBs: 50, loraAdapters: 0, loraSlots: 8 }) },
     link: { title: 'Cross-site link', group: 'Network', color: 'link', inputs: true, outputs: true, w: 210,
       defaults: () => ({ name: 'Cloud link', gbps: 100, rttMs: 20, egressPerGB: 0.05, encrypted: true, owner: '', oncall: '' }) },
     train: { title: 'Training job', group: 'Compute', color: 'train', inputs: false, outputs: true, w: 250,
@@ -2952,6 +2998,7 @@ const FIELDS = {
   router: [
     { p: 'policy', k: 'select', label: 'Policy', opts: [['primary-first', 'Primary first, burst when queued'], ['least-wait', 'Least estimated wait'], ['round-robin', 'Round robin (naive)']] },
     { p: 'burstWait', k: 'range', label: 'Burst when primary wait exceeds', min: 0.1, max: 10, step: 0.1, f: v => v.toFixed(1) + ' s', show: c => c.policy === 'primary-first' },
+    { p: 'affinity', k: 'select', label: 'Prefix cache', opts: [['ideal', 'Ideal: every cached prefix is found'], ['none', 'Cache-oblivious routing'], ['session', 'KV-aware routing (sessions stay with their cache)']], hint: 'A returning session\u2019s cached prefix lives on one instance. Cache-oblivious routing loses it whenever the session lands elsewhere; KV-aware routing (llm-d, Dynamo) keeps sessions on the instance that holds it.' },
     { k: 'targets' }
   ],
   pool: [
@@ -2968,6 +3015,12 @@ const FIELDS = {
     { p: 'downUtil', k: 'range', label: 'Scale down below load', min: 5, max: 80, step: 5, f: v => v + '%', show: c => c.autoscale },
     { p: 'maxBatch', k: 'range', label: 'Max batch per instance', min: 8, max: 512, step: 8, f: v => v + ' seqs' },
     { p: 'fabricGbps', k: 'range', label: 'Fabric per instance (KV, sync)', min: 25, max: 3200, step: 25, f: v => v + ' Gbps' },
+    { k: 'grid', ctl: [
+      { p: 'offloadGB', k: 'number', label: 'CPU KV offload (GB/inst)', min: 0, max: 4096, step: 16 },
+      { p: 'offloadGBs', k: 'number', label: 'Offload link GB/s', min: 1, max: 400, step: 1, show: c => +c.offloadGB > 0 },
+      { p: 'loraAdapters', k: 'number', label: 'LoRA adapters in traffic', min: 0, max: 1000, step: 1 },
+      { p: 'loraSlots', k: 'number', label: 'Adapters per batch', min: 1, max: 128, step: 1, show: c => +c.loraAdapters > 0 }
+    ] },
     { p: 'clusterWorkload', k: 'select', label: 'Capacity follows cluster workload', opts: () => [['', 'None (as drawn)']].concat(clusterInferenceNames().map(n => [n, n])), hint: 'Instances the cluster cannot keep ready (preempted, starting up, pending) are taken away from this pool, so cluster decisions show up as SLO breaches here.' },
     { p: 'clusterAtH', k: 'number', label: 'Starting at cluster hour', min: 0, max: 72, step: 0.25, show: c => !!c.clusterWorkload },
     { k: 'grid', ctl: [{ p: 'calibPrefill', k: 'number', label: 'Calibrated prefill ×', min: 0.05, max: 20, step: 0.01 }, { p: 'calibDecode', k: 'number', label: 'Calibrated decode ×', min: 0.05, max: 20, step: 0.01 }] },
@@ -3001,6 +3054,10 @@ const FIELDS = {
     ] },
     { p: 'wPrec', k: 'seg', label: 'Weights', opts: [['fp8', 'FP8'], ['bf16', 'BF16']] },
     { p: 'kvPrec', k: 'seg', label: 'KV cache', opts: [['fp8', 'FP8'], ['bf16', 'BF16']] },
+    { k: 'grid', ctl: [
+      { p: 'specK', k: 'number', label: 'Speculative draft tokens', min: 0, max: 16, step: 1 },
+      { p: 'specAccept', k: 'number', label: 'Draft acceptance', min: 0.05, max: 0.98, step: 0.05, show: c => +c.specK > 0 }
+    ] },
     { p: 'thinkTokens', k: 'range', label: 'Reasoning: hidden thinking per request', min: 0, max: 16000, step: 250, f: v => (+v ? fK(+v) + ' tok (median)' : 'off'), hint: 'Decoded before the first answer token; holds KV cache and is billed.' },
     { p: 'thinkKeep', k: 'check', label: 'Keep thinking in later turns\u2019 context', show: c => c.thinkTokens > 0 },
     { k: 'modelReadout' }
@@ -3823,6 +3880,8 @@ function renderKpis() {
     if (s.recorded && isFinite(s.recorded.errP99)) { const e = s.recorded.errP99; tiles.push(kpiTile('Recorded TTFT p99 (log)', fS(s.recorded.ttftP99), Math.abs(e) <= 0.2 ? 'good' : 'warn', 'sim ' + (e >= 0 ? '+' : '') + Math.round(e * 100) + '% vs log', '')); }
     if (s.replay) { const rp = s.replay; tiles.push(kpiTile('Turns behind the log (p50)', fS(rp.driftP50), rp.driftP90 > 30 ? 'warn' : '', 'p90 ' + fS(rp.driftP90) + ' · ' + fInt(rp.sessions) + ' sessions' + (rp.abandoned ? ' · ' + fInt(rp.abandoned) + ' turns abandoned' : rp.retried ? ' · ' + fInt(rp.retried) + ' retried' : ''), '')); }
     t1('$ / 1k requests', fUsd(s.costPerKReq), '', s.costPerKReq, b.costPerKReq, true, fUsd);
+    if (s.locality && (s.locality.misses || s.locality.hits)) tiles.push(kpiTile('Prompt tokens served from cache', fPct(s.locality.cachedShare), s.locality.misses > s.locality.hits ? 'warn' : '', fInt(s.locality.misses) + ' sessions lost their cache', ''));
+    if (s.spec) tiles.push(kpiTile('Speculative decoding', s.spec.tokensPerStep.toFixed(2) + ' tok/step', '', s.spec.k + ' drafts at ' + Math.round(s.spec.accept * 100) + '% acceptance', ''));
     if (s.thinkShare > 0) tiles.push(kpiTile('Thinking share of tokens', fPct(s.thinkShare), '', 'hidden reasoning, billed', ''));
     if (s.rejected) tiles.push(kpiTile('Rejected (context > KV)', fInt(s.rejected), 'crit', '', ''));
     if (s.lost) tiles.push(kpiTile('Lost in outage', fInt(s.lost), 'crit', 'streams cut mid-answer', ''));
@@ -5510,8 +5569,11 @@ window.addEventListener('resize', () => {});
     ],
     switchMixAtH: 4,
     ckptMin: 45, ckptGBs: 20, asyncCkpt: false, restartMin: 12, faultPerGpuDay: 0.03, repairH: 4, spares: 1,
-    stragglerShare: 0.01, stragglerSlow: 0.12, queueWaitS: 0, faultLog: null
+    stragglerShare: 0.01, stragglerSlow: 0.12, queueWaitS: 0, faultLog: null,
+    elastic: false, powerCapPct: 100, sites: 1, wanGbps: 400
   };
+  // Board power per GPU (W), for power caps and energy.
+  const TDP = { A100: 400, L40S: 350, H100: 700, H200: 700, MI300X: 750, B200: 1000 };
   const PHASES = ['queue', 'data', 'compute', 'straggler', 'sync', 'optimizer', 'checkpoint', 'restart', 'lost'];
   const PHASE_LABEL = { queue: 'waiting to be scheduled', data: 'waiting on data loading', compute: 'computing', straggler: 'waiting on slow GPUs', sync: 'waiting on gradient sync', optimizer: 'optimizer step', checkpoint: 'writing checkpoints', restart: 'restarting after faults', lost: 'redoing work lost to faults' };
 
@@ -5527,13 +5589,17 @@ window.addEventListener('resize', () => {});
   function stepModel(s, mix) {
     const M = E.MODELS[s.model] || E.MODELS['llama-70b'], G = E.GPUS[s.gpu] || E.GPUS.H100;
     const N = s.gpus, tokens = s.batchMTokens * 1e6, dp = Math.max(1, Math.floor(N / (s.tp * s.pp)));
-    const compute = 6 * M.active * 1e9 * tokens / (N * G.bf16 * 1e12 * s.kernelEff);
+    // a power cap below board power costs throughput sub-linearly (clocks drop less than power)
+    const powerFactor = s.powerCapPct < 100 ? Math.pow(Math.max(0.3, s.powerCapPct / 100), 0.35) : 1;
+    const compute = 6 * M.active * 1e9 * tokens / (N * G.bf16 * 1e12 * s.kernelEff * powerFactor);
     const tpOver = s.tp > 1 ? compute * 0.06 * Math.log2(s.tp) : 0;
     const bubble = s.pp > 1 ? compute * (s.pp - 1) / (s.microbatches + s.pp - 1) : 0;
     const gradBytes = 2 * M.params * 1e9 / (s.tp * s.pp);
     const multiNode = N > s.gpusPerNode;
     const bw = (multiNode ? s.ibGbpsPerGpu / 8 : s.nvlinkGBs) * 1e9;
-    const comm = dp > 1 ? 2 * (dp - 1) / dp * gradBytes / bw : 0;
+    // split across two sites, the reduced gradients also cross the WAN once per step (hierarchical all-reduce)
+    const cross = s.sites > 1 ? 2 * M.params * 1e9 / (s.wanGbps * 1e9 / 8) : 0;
+    const comm = (dp > 1 ? 2 * (dp - 1) / dp * gradBytes / bw : 0) + cross;
     const sync = comm * (1 - s.overlap);
     const optimizer = 16 * M.params * 1e9 / N / (G.bw * 1e12 * 0.5);
     const bytes = tokens * mix.bytesPerToken, miss = 1 - s.cacheHit;
@@ -5545,7 +5611,7 @@ window.addEventListener('resize', () => {});
     const ckptBytes = 14 * M.params * 1e9;
     const ckptWrite = ckptBytes / (s.ckptGBs * 1e9);
     const minGpus = Math.ceil(16 * M.params * 1e9 / (0.75 * G.hbm * 1e9));
-    return { compute, tpOver, bubble, busy, comm, sync, optimizer, dataRaw, io, cpu, data, dataBound: cpu >= io ? 'cpu' : 'io', bytes, tokens, dp, ckptWrite, ckptBytes, minGpus, multiNode, flops: 6 * M.active * 1e9 * tokens };
+    return { compute, tpOver, bubble, busy, comm, cross, powerFactor, sync, optimizer, dataRaw, io, cpu, data, dataBound: cpu >= io ? 'cpu' : 'io', bytes, tokens, dp, ckptWrite, ckptBytes, minGpus, multiNode, flops: 6 * M.active * 1e9 * tokens };
   }
 
   // Parses a GPU fault log: CSV or JSON lines with a node/host, a GPU index and optionally a time and Xid.
@@ -5606,10 +5672,14 @@ window.addEventListener('resize', () => {});
     const models = s.mixes.map(m => stepModel(s, m));
     const mixAt = tt => (s.mixes.length > 1 && tt >= s.switchMixAtH * 3600 ? 1 : 0);
     let stepsSinceCkpt = [];
+    const shrunk = [];
+    let shrunkS = 0;
     while (t < H) {
       const mi = mixAt(t), m = models[mi];
       const jitter = 1 + 0.01 * rng.normal();
-      const compute = (m.compute + m.tpOver + m.bubble) * jitter;
+      for (let i = shrunk.length - 1; i >= 0; i--) if (shrunk[i].until <= t) shrunk.splice(i, 1);
+      const lost = shrunk.reduce((a, x) => a + x.gpus, 0), scale = lost ? N / Math.max(1, N - lost) : 1;
+      const compute = (m.compute + m.tpOver + m.bubble) * jitter * scale;
       const strag = compute * (maxSlow - 1);
       const total = m.data + compute + strag + m.sync + m.optimizer;
       // a fault during this step?
@@ -5624,6 +5694,7 @@ window.addEventListener('resize', () => {});
         tokens = ckptTokens; stepsSinceCkpt = [];
         let down = s.restartMin * 60;
         if (sparesLeft > 0) { sparesLeft--; sparesBack.push(tf + s.repairH * 3600); sparesBack.sort((a, b) => a - b); }
+        else if (s.elastic) { shrunk.push({ until: tf + s.repairH * 3600, gpus: s.gpusPerNode }); f.elastic = true; }   // elastic: carry on without the node
         else down += s.repairH * 3600;   // no spare: wait for the node to be repaired
         f.lostS = lostS; f.down = down; f.spare = sparesLeft >= 0 && down === s.restartMin * 60;
         const t1 = Math.min(H, tf + down);
@@ -5635,7 +5706,8 @@ window.addEventListener('resize', () => {});
         continue;
       }
       if (t + total > H) break;
-      const st = { t, mix: mi, data: m.data, compute, straggler: strag, sync: m.sync, optimizer: m.optimizer, total, tokens: m.tokens, bytes: m.bytes, lost: false };
+      const st = { t, mix: mi, data: m.data, compute, straggler: strag, sync: m.sync, optimizer: m.optimizer, total, tokens: m.tokens, bytes: m.bytes, lost: false, shrunk: lost };
+      if (lost) shrunkS += total;
       steps.push(st); stepsSinceCkpt.push(st);
       per.data += m.data; per.compute += compute; per.straggler += strag; per.sync += m.sync; per.optimizer += m.optimizer;
       for (let g = 0; g < N; g++) { gpuS.compute[g] += compute * slow[g]; gpuS.straggler[g] += compute * (maxSlow - slow[g]); gpuS.data[g] += m.data; gpuS.sync[g] += m.sync; gpuS.optimizer[g] += m.optimizer; }
@@ -5670,11 +5742,13 @@ window.addEventListener('resize', () => {});
       wallH: wall / 3600, steps: steps.length, keptSteps: kept.length, tokensB: keptTokens / 1e9, tokensPerS: wall ? keptTokens / wall : 0,
       goodput: shares.compute + shares.optimizer, mfu: wall ? usefulFlops / (wall * N * G.bf16 * 1e12) : 0,
       faults: faults.filter(f => f.lostS != null).length, lostH: per.lost / 3600, restartH: per.restart / 3600,
+      shrunkH: shrunkS / 3600, elasticFaults: faults.filter(f => f.elastic).length,
+      energyMWh: N * (TDP[s.gpu] || 700) * (s.powerCapPct / 100) * wall * (0.35 + 0.65 * Math.min(1, shares.compute + shares.optimizer + shares.straggler)) / 3.6e9,
       dataGBs: steps.length ? steps.reduce((a, x) => a + x.bytes, 0) / steps.reduce((a, x) => a + x.total, 0) / 1e9 : 0,
       bottleneck: losses[0] && losses[0][1] > 0.02 ? { phase: losses[0][0], share: losses[0][1], label: PHASE_LABEL[losses[0][0]] } : null,
       losses, shares, minGpus: models[0].minGpus, nodes, dp: models[0].dp, maxSlow, stragglers: slowRank.filter(x => x.slow > 1.03).length
     };
-    return { spec: s, N, nodes, slow, steps, segs, faults: faults.filter(f => f.lostS != null), shares, per, byMix, gpuS, idleGpuH, nodeFaults, gpuFaultN, slowRank, models, summary, PHASE_LABEL };
+    return { spec: s, N, nodes, slow, steps, TDP: TDP[s.gpu] || 700, segs, faults: faults.filter(f => f.lostS != null), shares, per, byMix, gpuS, idleGpuH, nodeFaults, gpuFaultN, slowRank, models, summary, PHASE_LABEL };
   }
 
   // Training job state at time t: which phase each GPU is in (for the GPU-centric view).
@@ -5973,6 +6047,7 @@ window.addEventListener('resize', () => {});
       (s.mixes.length > 1 ? row('Switch mix at hour', 'switchMixAtH', s.switchMixAtH, 0, 168, 0.5) : '');
     h += '<h3>Checkpoints and faults</h3>' + row('Checkpoint every (min)', 'ckptMin', s.ckptMin, 0, 600, 1) + row('Checkpoint write GB/s', 'ckptGBs', s.ckptGBs, 0.5, 1000, 0.5) + chk('Asynchronous checkpoints', 'asyncCkpt', s.asyncCkpt) +
       row('Faults per GPU-day', 'faultPerGpuDay', s.faultPerGpuDay, 0, 2, 0.005) + row('Restart + reload (min)', 'restartMin', s.restartMin, 0, 240, 1) + row('Node repair (h)', 'repairH', s.repairH, 0, 72, 0.5) + row('Hot spare nodes', 'spares', s.spares, 0, 64, 1) +
+      chk('Elastic: carry on with fewer nodes instead of waiting for repair', 'elasticFlag', s.elastic) + row('GPU power cap (% of board power)', 'powerCapPct', s.powerCapPct, 30, 100, 5) + row('Sites the job spans', 'sites', s.sites, 1, 2, 1) + (s.sites > 1 ? row('WAN between sites (Gb/s)', 'wanGbps', s.wanGbps, 10, 3200, 10) : '') +
       row('Slow-GPU share', 'stragglerShare', s.stragglerShare, 0, 0.5, 0.005, 'Share of GPUs running slow (thermal throttling, ECC retries, a weak link)') + row('Slowdown of slow GPUs', 'stragglerSlow', s.stragglerSlow, 0, 1, 0.01) + row('Seed', 'seed', s.seed, 1, 9999, 1);
     h += '<h3>Scheduling</h3>' + '<label class="chk"><input type="checkbox" id="tUseCluster"' + (TS.useCluster ? ' checked' : '') + '> Start when the Cluster view’s scheduler admits it</label><div class="note">Runs this job through the cluster from the Cluster tab, as its pre-training workload, to get the admission wait.</div>';
     $('#tCfg').innerHTML = h;
@@ -5982,7 +6057,9 @@ window.addEventListener('resize', () => {});
     const t = e.target;
     if (t.id === 'tUseCluster') { TS.useCluster = t.checked; schedule(); return; }
     if (!t.dataset.path) return;
+    if (t.dataset.path === 'elasticFlag') { TS.spec.elastic = t.checked; schedule(); return; }
     setPath(t.dataset.path, t.type === 'checkbox' ? t.checked : t.tagName === 'SELECT' ? t.value : +t.value);
+    if (t.dataset.path === 'sites') renderCfg();
     schedule();
   });
   let timer = 0;
@@ -6046,7 +6123,8 @@ window.addEventListener('resize', () => {});
       tile('Data throughput', s.dataGBs.toFixed(2) + ' GB/s', '', s.dataGBs, bb.dataGBs, false, v => v.toFixed(2) + ' GB/s'),
       tile('GPU faults (restarts)', fInt(s.faults), s.faults ? 'warn' : '', s.faults, bb.faults, true, fInt),
       tile('Work lost + restart', fS((s.lostH + s.restartH) * 3600), s.lostH + s.restartH > 0.5 ? 'crit' : '', s.lostH + s.restartH, b ? bb.lostH + bb.restartH : NaN, true, v => fS(v * 3600)),
-      tile('Waited to start', fS(TS.run.spec.queueWaitS), TS.run.spec.queueWaitS > 1800 ? 'crit' : '', TS.run.spec.queueWaitS, b ? TS.baseline.queueWaitS : NaN, true, fS)
+      tile('Energy', s.energyMWh.toFixed(2) + ' MWh', '', s.energyMWh, bb.energyMWh, true, v => v.toFixed(2) + ' MWh'),
+            tile('Waited to start', fS(TS.run.spec.queueWaitS), TS.run.spec.queueWaitS > 1800 ? 'crit' : '', TS.run.spec.queueWaitS, b ? TS.baseline.queueWaitS : NaN, true, fS)
     ].join('');
   }
   function bottleneckText() {

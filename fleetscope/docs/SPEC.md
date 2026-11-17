@@ -210,6 +210,14 @@ The views share a clock and a change set with a pin-all baseline. Fleet pools ca
 
 Scenario folders (graph, cluster, Kueue YAML, training, thresholds) are planned on pull requests: base vs head through a fleet stress suite, the cluster and the training job, with changes, owners and a verdict commented on the PR. The browser's Report produces the same plan against the pinned baseline. Details: [CI.md](CI.md).
 
+## Richer physics (built)
+
+These knobs are opt-in:
+- **Serving:** prefix-cache locality (ideal, cache-oblivious, KV-aware routing), CPU KV offload, speculative decoding, LoRA adapters, MoE all-to-all.
+- **Training:** elastic shrink on faults, power caps with energy, two-site gradient sync.
+
+Details: [PHYSICS.md](PHYSICS.md).
+
 ## Build phases
 
 1. **Prototype (done):** a browser-only node editor and player on the tier-1 engine, with agent, chat, trace and training nodes, seven templates and baseline compare. Profiles come from spec sheets, not measurements.

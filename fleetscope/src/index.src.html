@@ -765,6 +765,7 @@ const FIELDS = {
   router: [
     { p: 'policy', k: 'select', label: 'Policy', opts: [['primary-first', 'Primary first, burst when queued'], ['least-wait', 'Least estimated wait'], ['round-robin', 'Round robin (naive)']] },
     { p: 'burstWait', k: 'range', label: 'Burst when primary wait exceeds', min: 0.1, max: 10, step: 0.1, f: v => v.toFixed(1) + ' s', show: c => c.policy === 'primary-first' },
+    { p: 'affinity', k: 'select', label: 'Prefix cache', opts: [['ideal', 'Ideal: every cached prefix is found'], ['none', 'Cache-oblivious routing'], ['session', 'KV-aware routing (sessions stay with their cache)']], hint: 'A returning session\u2019s cached prefix lives on one instance. Cache-oblivious routing loses it whenever the session lands elsewhere; KV-aware routing (llm-d, Dynamo) keeps sessions on the instance that holds it.' },
     { k: 'targets' }
   ],
   pool: [
@@ -781,6 +782,12 @@ const FIELDS = {
     { p: 'downUtil', k: 'range', label: 'Scale down below load', min: 5, max: 80, step: 5, f: v => v + '%', show: c => c.autoscale },
     { p: 'maxBatch', k: 'range', label: 'Max batch per instance', min: 8, max: 512, step: 8, f: v => v + ' seqs' },
     { p: 'fabricGbps', k: 'range', label: 'Fabric per instance (KV, sync)', min: 25, max: 3200, step: 25, f: v => v + ' Gbps' },
+    { k: 'grid', ctl: [
+      { p: 'offloadGB', k: 'number', label: 'CPU KV offload (GB/inst)', min: 0, max: 4096, step: 16 },
+      { p: 'offloadGBs', k: 'number', label: 'Offload link GB/s', min: 1, max: 400, step: 1, show: c => +c.offloadGB > 0 },
+      { p: 'loraAdapters', k: 'number', label: 'LoRA adapters in traffic', min: 0, max: 1000, step: 1 },
+      { p: 'loraSlots', k: 'number', label: 'Adapters per batch', min: 1, max: 128, step: 1, show: c => +c.loraAdapters > 0 }
+    ] },
     { p: 'clusterWorkload', k: 'select', label: 'Capacity follows cluster workload', opts: () => [['', 'None (as drawn)']].concat(clusterInferenceNames().map(n => [n, n])), hint: 'Instances the cluster cannot keep ready (preempted, starting up, pending) are taken away from this pool, so cluster decisions show up as SLO breaches here.' },
     { p: 'clusterAtH', k: 'number', label: 'Starting at cluster hour', min: 0, max: 72, step: 0.25, show: c => !!c.clusterWorkload },
     { k: 'grid', ctl: [{ p: 'calibPrefill', k: 'number', label: 'Calibrated prefill ×', min: 0.05, max: 20, step: 0.01 }, { p: 'calibDecode', k: 'number', label: 'Calibrated decode ×', min: 0.05, max: 20, step: 0.01 }] },
@@ -814,6 +821,10 @@ const FIELDS = {
     ] },
     { p: 'wPrec', k: 'seg', label: 'Weights', opts: [['fp8', 'FP8'], ['bf16', 'BF16']] },
     { p: 'kvPrec', k: 'seg', label: 'KV cache', opts: [['fp8', 'FP8'], ['bf16', 'BF16']] },
+    { k: 'grid', ctl: [
+      { p: 'specK', k: 'number', label: 'Speculative draft tokens', min: 0, max: 16, step: 1 },
+      { p: 'specAccept', k: 'number', label: 'Draft acceptance', min: 0.05, max: 0.98, step: 0.05, show: c => +c.specK > 0 }
+    ] },
     { p: 'thinkTokens', k: 'range', label: 'Reasoning: hidden thinking per request', min: 0, max: 16000, step: 250, f: v => (+v ? fK(+v) + ' tok (median)' : 'off'), hint: 'Decoded before the first answer token; holds KV cache and is billed.' },
     { p: 'thinkKeep', k: 'check', label: 'Keep thinking in later turns\u2019 context', show: c => c.thinkTokens > 0 },
     { k: 'modelReadout' }
@@ -1636,6 +1647,8 @@ function renderKpis() {
     if (s.recorded && isFinite(s.recorded.errP99)) { const e = s.recorded.errP99; tiles.push(kpiTile('Recorded TTFT p99 (log)', fS(s.recorded.ttftP99), Math.abs(e) <= 0.2 ? 'good' : 'warn', 'sim ' + (e >= 0 ? '+' : '') + Math.round(e * 100) + '% vs log', '')); }
     if (s.replay) { const rp = s.replay; tiles.push(kpiTile('Turns behind the log (p50)', fS(rp.driftP50), rp.driftP90 > 30 ? 'warn' : '', 'p90 ' + fS(rp.driftP90) + ' · ' + fInt(rp.sessions) + ' sessions' + (rp.abandoned ? ' · ' + fInt(rp.abandoned) + ' turns abandoned' : rp.retried ? ' · ' + fInt(rp.retried) + ' retried' : ''), '')); }
     t1('$ / 1k requests', fUsd(s.costPerKReq), '', s.costPerKReq, b.costPerKReq, true, fUsd);
+    if (s.locality && (s.locality.misses || s.locality.hits)) tiles.push(kpiTile('Prompt tokens served from cache', fPct(s.locality.cachedShare), s.locality.misses > s.locality.hits ? 'warn' : '', fInt(s.locality.misses) + ' sessions lost their cache', ''));
+    if (s.spec) tiles.push(kpiTile('Speculative decoding', s.spec.tokensPerStep.toFixed(2) + ' tok/step', '', s.spec.k + ' drafts at ' + Math.round(s.spec.accept * 100) + '% acceptance', ''));
     if (s.thinkShare > 0) tiles.push(kpiTile('Thinking share of tokens', fPct(s.thinkShare), '', 'hidden reasoning, billed', ''));
     if (s.rejected) tiles.push(kpiTile('Rejected (context > KV)', fInt(s.rejected), 'crit', '', ''));
     if (s.lost) tiles.push(kpiTile('Lost in outage', fInt(s.lost), 'crit', 'streams cut mid-answer', ''));

@@ -2,7 +2,7 @@
 (function (root) {
   'use strict';
   const E = (typeof module !== 'undefined' && module.exports) ? require('./engine.js') : root.FleetEngine;
-  const M = key => Object.assign({ name: 'Model', key, wPrec: 'fp8', kvPrec: 'fp8', thinkTokens: 0, thinkKeep: false }, E.MODELS[key]);
+  const M = key => Object.assign({ name: 'Model', key, wPrec: 'fp8', kvPrec: 'fp8', thinkTokens: 0, thinkKeep: false, specK: 0, specAccept: 0.7 }, E.MODELS[key]);
   const NODE_TYPES = {
     agent: { title: 'Coding agents', group: 'Traffic', color: 'src', inputs: false, outputs: true, w: 230,
       defaults: () => ({ name: 'Coding agents', users: 60, turns: 12, systemTokens: 6000, contextTokens: 30000, turnTokens: 2500, outTokens: 350, thinkS: 4, gapS: 30, prefixHit: 85, durationMin: 10, dataClass: 'internal', owner: '', oncall: '' }) },
@@ -11,9 +11,9 @@
     trace: { title: 'Trace replay', group: 'Traffic', color: 'src', inputs: false, outputs: true, w: 230,
       defaults: () => ({ name: 'Trace replay', trace: 'chat', scale: 1, prefixHit: 0, useRecordedCache: true, replay: 'timestamps', onFail: 'retry', dataClass: 'internal', owner: '', oncall: '' }) },
     router: { title: 'Router', group: 'Routing', color: 'route', inputs: true, outputs: true, w: 200,
-      defaults: () => ({ name: 'Router', policy: 'primary-first', burstWait: 1.5, enforceResidency: false, owner: '', oncall: '' }) },
+      defaults: () => ({ name: 'Router', policy: 'primary-first', burstWait: 1.5, affinity: 'ideal', enforceResidency: false, owner: '', oncall: '' }) },
     pool: { title: 'GPU pool', group: 'Compute', color: 'pool', inputs: true, outputs: true, w: 290,
-      defaults: () => ({ name: 'On-prem pool', site: 'On-prem DC', siteKind: 'onprem', role: 'agg', gpu: 'H100', instances: 4, autoscale: false, min: 0, max: 8, coldStart: 90, upWait: 1, downUtil: 30, maxBatch: 256, fabricGbps: 400, zone: 'auto', owner: '', oncall: '', calibPrefill: 1, calibDecode: 1, clusterWorkload: '', clusterAtH: 0 }) },
+      defaults: () => ({ name: 'On-prem pool', site: 'On-prem DC', siteKind: 'onprem', role: 'agg', gpu: 'H100', instances: 4, autoscale: false, min: 0, max: 8, coldStart: 90, upWait: 1, downUtil: 30, maxBatch: 256, fabricGbps: 400, zone: 'auto', owner: '', oncall: '', calibPrefill: 1, calibDecode: 1, clusterWorkload: '', clusterAtH: 0, offloadGB: 0, offloadGBs: 50, loraAdapters: 0, loraSlots: 8 }) },
     link: { title: 'Cross-site link', group: 'Network', color: 'link', inputs: true, outputs: true, w: 210,
       defaults: () => ({ name: 'Cloud link', gbps: 100, rttMs: 20, egressPerGB: 0.05, encrypted: true, owner: '', oncall: '' }) },
     train: { title: 'Training job', group: 'Compute', color: 'train', inputs: false, outputs: true, w: 250,
