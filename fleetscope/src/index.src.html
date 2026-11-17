@@ -212,6 +212,9 @@ button, select, input { font: inherit; color: inherit; }
 .lrows .row { cursor: pointer; }
 .lrows .row:hover span:first-child { text-decoration: underline; }
 .lbar { display: block; height: 4px; border-radius: 2px; margin-top: 2px; }
+.migbar { display: flex; gap: 2px; width: 70%; }
+.migbar i { display: block; font: 10px var(--font-mono); font-style: normal; background: color-mix(in srgb, var(--accent) 25%, var(--panel)); border: 1px solid var(--accent); border-radius: 3px; padding: 1px 3px; overflow: hidden; white-space: nowrap; }
+.migbar i.free { background: none; border-style: dashed; border-color: var(--line); }
 .plain { margin: 4px 0 8px; padding-left: 18px; font-size: 12.5px; }
 .alerts { margin: 6px 0; padding-left: 18px; font-size: 12.5px; }
 .alerts li { margin: 3px 0; color: var(--crit); }
@@ -335,6 +338,7 @@ button, select, input { font: inherit; color: inherit; }
     <div class="tb">
       <button type="button" id="whatifBtn" title="Stress this topology: peak load, peak sessions, outages, large contexts, headroom">What if…</button>
       <button type="button" id="advisorBtn" title="Which model and reasoning level serves this traffic at the SLO for the least">Model advisor</button>
+      <button type="button" id="planBtn" title="Cheapest setup that meets the targets, buy vs rent over 24 months, and MIG packing">Plan</button>
       <button type="button" id="reportBtn" title="Plan the current setup against the pinned baseline in every view, as CI would, and export it">Report</button>
       <button type="button" id="liveBtn" title="Forecast the next hours from metrics history and predict SLO breaches">Live</button>
       <button type="button" id="calibBtn" title="Fit a pool's performance to a recorded trace, a vLLM /metrics snapshot or a benchmark_serving result">Calibrate</button>
@@ -856,6 +860,7 @@ function renderDetails() {
   if (S.sel && S.sel.type === 'advisor') return renderAdvisorPanel();
   if (S.sel && S.sel.type === 'calib') return renderCalibPanel();
   if (S.sel && S.sel.type === 'live') return renderLivePanel();
+  if (S.sel && S.sel.type === 'plan') return renderPlanPanel();
   if (S.sel && S.sel.type === 'node') {
     const n = nodeById(S.sel.id);
     if (!n) { S.sel = null; return renderDetails(); }
@@ -1233,7 +1238,7 @@ function doRun() {
   $('#status').innerHTML = (S.link && S.link.outages.length ? '<span title="' + esc(S.link.notes.join('\n')) + '">&#128279; linked to cluster · </span>' : '') + '<b>' + fInt(sm.requests) + '</b> requests' + (sm.users ? ' from <b>' + fInt(sm.users) + '</b> users' : '') + ' · <b>' + mmss(R.D) + '</b> simulated in ' + sm.simMs + ' ms' + (BL() ? ' · vs <b>' + esc(BL().label) + '</b>' : '');
   $('#scrub').max = Math.max(1, R.D - 1);
   renderKpis(); buildCharts(); buildStrip(); renderBanner();
-  if (S.sel && (S.sel.type === 'stress' || S.sel.type === 'advisor' || S.sel.type === 'calib' || S.sel.type === 'live')) { /* keep panel */ } else renderDetails();
+  if (S.sel && (S.sel.type === 'stress' || S.sel.type === 'advisor' || S.sel.type === 'calib' || S.sel.type === 'live' || S.sel.type === 'plan')) { /* keep panel */ } else renderDetails();
   render(true);
   if (S.needFit) { S.needFit = false; requestAnimationFrame(fit); }
 }
@@ -2071,6 +2076,9 @@ function renderAnalysis() {
   if (A.kind === 'error') { box.innerHTML = '<h3>' + esc(A.title) + close + '</h3><div class="warnline">' + esc(A.text) + '</div>'; return; }
   if (A.kind === 'calib') { box.innerHTML = '<h3>Calibration' + close + '</h3>' + calibCard(A); return; }
   if (A.kind === 'live') { box.innerHTML = '<h3>Live twin' + close + '</h3>' + liveCard(A); return; }
+  if (A.kind === 'opt') { box.innerHTML = '<h3>Optimiser' + close + '</h3>' + optCard(A); return; }
+  if (A.kind === 'cap') { box.innerHTML = '<h3>Buy vs rent' + close + '</h3>' + capCard(A); return; }
+  if (A.kind === 'mig') { box.innerHTML = '<h3>MIG packing' + close + '</h3>' + migCard(A); return; }
   if (A.kind === 'report') { box.innerHTML = '<h3>Plan: this setup against ' + (A.pinned ? 'the pinned baseline' : 'itself (pin a baseline first to see changes)') + close + '</h3>' + mdToHtml(A.md) + '<div class="btnrow"><button class="btn" type="button" data-act="repCopy">Copy as Markdown</button><button class="btn" type="button" data-act="repSave">Download .md</button></div><div class="sub">The same plan CI posts on pull requests that change a scenario in <code>fleetscope/scenarios/</code>.</div>'; return; }
   const bn = b => b ? mmss(b.t) + ' · ' + esc(b.name) + ': ' + b.label : '<span style="color:var(--muted)">none</span>';
   if (A.kind === 'suite') {
@@ -2115,6 +2123,7 @@ $('#analysis').addEventListener('click', e => {
   const t = e.target;
   const a = t.closest('[data-act]');
   if (a && a.dataset.act === 'closeAnalysis') { S.analysis = null; renderAnalysis(); return; }
+  if (a && a.dataset.act === 'optApply') { S.graph = JSON.parse(JSON.stringify(S.analysis.res.graph)); renderGraph(); renderPalette(); toast('Applied the optimised setup'); scheduleRun(0); return; }
   if (a && a.dataset.act === 'repCopy') { navigator.clipboard.writeText(S.analysis.md).then(() => toast('Plan copied'), () => toast('Copy failed')); return; }
   if (a && a.dataset.act === 'repSave') { const u = URL.createObjectURL(new Blob([S.analysis.md], { type: 'text/markdown' })); const x = document.createElement('a'); x.href = u; x.download = 'fleetscope-plan.md'; x.click(); setTimeout(() => URL.revokeObjectURL(u), 1000); return; }
   if (a && a.dataset.act === 'lvPlay') {
@@ -2184,11 +2193,90 @@ function runAdvisor() {
   function* wrap() { let x; while (!(x = it.next()).done) yield { done: x.value.done, total: x.value.total, text: 'Sizing ' + x.value.model + (x.value.thinkTokens ? ' with ' + fK(x.value.thinkTokens) + ' thinking' : '') + '…' }; return x.value; }
   startJob('Model advisor', wrap(), res => { S.analysis = { kind: 'advisor', res, minQuality: minQ == null ? '' : minQ }; });
 }
-['click', 'input', 'change'].forEach(ev => $('#details').addEventListener(ev, e => { if (stressPanelEvents(e)) e.stopImmediatePropagation(); else if (advisorPanelEvents(e)) e.stopImmediatePropagation(); else if (calibPanelEvents(e)) e.stopImmediatePropagation(); else if (livePanelEvents(e)) e.stopImmediatePropagation(); }, true));
+['click', 'input', 'change'].forEach(ev => $('#details').addEventListener(ev, e => { if (stressPanelEvents(e)) e.stopImmediatePropagation(); else if (advisorPanelEvents(e)) e.stopImmediatePropagation(); else if (calibPanelEvents(e)) e.stopImmediatePropagation(); else if (livePanelEvents(e)) e.stopImmediatePropagation(); else if (planPanelEvents(e)) e.stopImmediatePropagation(); }, true));
 $('#whatifBtn').onclick = () => { if (S.stress) S.stressDraft = JSON.parse(JSON.stringify(S.stress)); select({ type: 'stress' }); };
 $('#advisorBtn').onclick = () => select({ type: 'advisor' });
 $('#calibBtn').onclick = () => select({ type: 'calib' });
 $('#liveBtn').onclick = () => select({ type: 'live' });
+$('#planBtn').onclick = () => select({ type: 'plan' });
+
+// ---------- planning ----------
+const PL = { tab: 'opt', target: 95, n1: 0, gpuSwap: true, evals: 60, cap: null, migText: 'embeddings, 4, 6\nreranker, 9, 4\nllama-8b-guard, 16, 3', migGpu: 'H100' };
+function renderPlanPanel() {
+  const box = $('#details'), O = window.FleetOptimize;
+  if (!PL.cap) PL.cap = Object.assign({}, O.CAP_DEFAULTS, { gpusNow: S.run ? S.run.summary.peakGpus : 64 });
+  const tabs = '<div class="seg" data-plseg="tab">' + [['opt', 'Optimise'], ['cap', 'Buy vs rent'], ['mig', 'MIG']].map(([k, l]) => '<button type="button" data-v="' + k + '" class="' + (PL.tab === k ? 'on' : '') + '">' + l + '</button>').join('') + '</div>';
+  const num = (k, label, v, lo, hi, st, obj) => '<div class="ctl"><label>' + label + '</label><input type="number" data-pl="' + k + '"' + (obj ? ' data-plobj="' + obj + '"' : '') + ' min="' + lo + '" max="' + hi + '" step="' + st + '" value="' + v + '"></div>';
+  let h = '<span class="typetag" style="background:var(--accent)">Plan</span><h2>Plan and optimise</h2>' + tabs;
+  if (PL.tab === 'opt') h += '<div class="sub">Searches instance counts' + (PL.gpuSwap ? ', GPU types' : '') + ' and router policies for the cheapest graph (serving $/hour) that meets the SLO target, keeps restricted data in its zones and, if set, holds an N-1 floor with the largest pool down.</div>' +
+    num('target', 'SLO attainment target (%)', PL.target, 50, 99.9, 0.5) + num('n1', 'N-1 floor: SLO with the largest pool down (%, 0 = off)', PL.n1, 0, 99, 1) +
+    '<div class="ctl check"><label><input type="checkbox" data-pl="gpuSwap"' + (PL.gpuSwap ? ' checked' : '') + '>Try other GPU types (H100, H200, B200)</label></div>' + num('evals', 'Simulation budget', PL.evals, 10, 200, 10) +
+    '<div class="btnrow"><button class="btn primary" type="button" data-act="plOpt">Find the cheapest setup</button></div>';
+  else if (PL.tab === 'cap') { const c = PL.cap; h += '<div class="sub">Costs three ways to supply growing GPU demand over ' + c.months + ' months: rent on demand, reserve the base load, or buy on-prem for the base load (with a lead time) and rent the peaks.</div>' +
+    num('gpusNow', 'Peak GPUs needed today', c.gpusNow, 1, 100000, 1, 'cap') + num('growthPct', 'Growth per month (%)', c.growthPct, -10, 50, 0.5, 'cap') + num('baseShare', 'Base load as a share of peak', c.baseShare, 0.1, 1, 0.05, 'cap') + num('peakHoursShare', 'Share of hours above base', c.peakHoursShare, 0.05, 1, 0.05, 'cap') +
+    num('gpuCapex', 'On-prem $ per GPU (with server share)', c.gpuCapex, 1000, 200000, 500, 'cap') + num('leadMonths', 'Lead time (months)', c.leadMonths, 0, 18, 1, 'cap') + num('amortMonths', 'Depreciation (months)', c.amortMonths, 12, 84, 6, 'cap') + num('kwhPrice', 'Power $/kWh', c.kwhPrice, 0.01, 1, 0.01, 'cap') +
+    num('reservedPerGpuH', 'Reserved $/GPU-hour', c.reservedPerGpuH, 0.1, 20, 0.05, 'cap') + num('onDemandPerGpuH', 'On-demand $/GPU-hour', c.onDemandPerGpuH, 0.1, 20, 0.05, 'cap') + num('months', 'Horizon (months)', c.months, 6, 60, 6, 'cap') +
+    '<div class="btnrow"><button class="btn primary" type="button" data-act="plCap">Compare</button></div>'; }
+  else h += '<div class="sub">Packs small models onto MIG slices instead of whole GPUs. Each line: name, GPU memory in GB, replicas. Memory gets 30% headroom for KV cache.</div>' +
+    '<div class="ctl"><textarea data-pl="migText" rows="6" style="width:100%;font-family:var(--font-mono);font-size:12px">' + esc(PL.migText) + '</textarea></div>' +
+    '<div class="ctl"><label>GPU</label><select data-pl="migGpu">' + ['H100', 'H200', 'A100'].map(g => '<option' + (g === PL.migGpu ? ' selected' : '') + '>' + g + '</option>').join('') + '</select></div>' +
+    '<div class="btnrow"><button class="btn primary" type="button" data-act="plMig">Pack</button></div>';
+  box.innerHTML = h;
+}
+function planPanelEvents(e) {
+  if (!(S.sel && S.sel.type === 'plan')) return false;
+  const t = e.target;
+  if ((e.type === 'change' || e.type === 'input') && t.dataset.pl) {
+    const k = t.dataset.pl, v = t.type === 'checkbox' ? t.checked : t.tagName === 'TEXTAREA' || t.tagName === 'SELECT' ? t.value : +t.value;
+    if (t.dataset.plobj === 'cap') PL.cap[k] = v; else PL[k] = v;
+    return true;
+  }
+  if (e.type !== 'click') return false;
+  const sg = t.closest('[data-plseg] button'); if (sg) { PL.tab = sg.dataset.v; renderPlanPanel(); return true; }
+  const a = t.closest('[data-act]'); if (!a) return false;
+  const O = window.FleetOptimize;
+  if (a.dataset.act === 'plOpt') {
+    const it = O.optimizeIter(JSON.parse(JSON.stringify(S.graph)), { target: PL.target / 100, n1Floor: PL.n1 / 100, maxEvals: PL.evals, gpuChoices: PL.gpuSwap ? ['H100', 'H200', 'B200'] : null, traceLookup });
+    startJob('Optimising', it, res => { S.analysis = { kind: 'opt', res }; });
+    return true;
+  }
+  if (a.dataset.act === 'plCap') { S.analysis = { kind: 'cap', res: O.capacityPlan(PL.cap) }; renderAnalysis(); return true; }
+  if (a.dataset.act === 'plMig') {
+    const ws = PL.migText.split('\n').map(l => l.split(',').map(x => x.trim())).filter(x => x.length >= 2 && x[0]).map(([name, mem, rep]) => ({ name, memoryGB: +mem, replicas: +(rep || 1) }));
+    S.analysis = { kind: 'mig', res: O.migPlan(ws, PL.migGpu) }; renderAnalysis(); return true;
+  }
+  return false;
+}
+function optCard(A) {
+  const r = A.res, b = r.before, x = r.after;
+  const row = (k, f, g) => '<tr><td>' + k + '</td><td class="num">' + f(b) + '</td><td class="num">' + f(x) + '</td></tr>';
+  return '<p class="lead">' + (r.status === 'infeasible' ? '<b>No setup within the budget meets the targets.</b> The closest found is below; raise the budget, allow GPU swaps, or relax the target.' :
+    'Cheapest setup found in ' + r.evals + ' runs that meets <b>' + fPct(r.target) + '</b> SLO' + (r.n1Floor ? ' and holds <b>' + fPct(r.n1Floor) + '</b> with the largest pool down' : '') + ': <b>' + fUsd(x.cost) + '/h</b>' + (b.ok ? ', ' + (x.cost < b.cost ? fUsd(b.cost - x.cost) + '/h less than today' : 'the same as today') : ' (today misses the targets at ' + fUsd(b.cost) + '/h)') + '.') + '</p>' +
+    '<table class="atable"><thead><tr><th></th><th>Today</th><th>Proposed</th></tr></thead><tbody>' + row('SLO met', v => fPct(v.slo)) + row('Serving $ / hour', v => fUsd(v.cost)) + row('Peak GPUs', v => fInt(v.gpus)) + (r.n1Floor ? row('SLO, largest pool down', v => fPct(v.n1)) : '') + row('Residency breaches', v => fInt(v.breaches)) + row('Meets targets', v => (v.ok ? 'yes' : 'no')) + '</tbody></table>' +
+    (r.changes.length ? '<h3 class="sec">Changes</h3><ul class="plain">' + r.changes.map(c => '<li>' + esc(c) + '</li>').join('') + '</ul><div class="btnrow"><button class="btn primary" type="button" data-act="optApply">Apply to the canvas</button></div>' : '<div class="sub">No change needed.</div>');
+}
+function capCard(A) {
+  const r = A.res, M = r.months, W = 980, H = 190, L = 56, k = 1000;
+  const cum = key => { let c = 0; return M.map(x => (c += x[key])); };
+  const series = { rent: cum('rent'), reserved: cum('reserved'), hybrid: cum('hybrid') };
+  const vmax = Math.max(...Object.values(series).map(a => a[a.length - 1])) * 1.05, X = m => L + (W - L - 10) * m / (M.length - 1), Y = v => 8 + (H - 30) * (1 - v / vmax);
+  const col = { rent: 'var(--crit)', reserved: 'var(--warn)', hybrid: 'var(--accent)' }, lab = { rent: 'Rent on demand', reserved: 'Reserve the base', hybrid: 'Buy the base, rent the peaks' };
+  let svg = '<svg viewBox="0 0 ' + W + ' ' + H + '" style="width:100%;height:auto" role="img" aria-label="Cumulative cost by strategy">';
+  for (const key in series) svg += '<path d="' + series[key].map((v, i) => (i ? 'L' : 'M') + X(i).toFixed(1) + ' ' + Y(v).toFixed(1)).join('') + '" fill="none" stroke="' + col[key] + '" stroke-width="2"/>';
+  for (let m = 0; m < M.length; m += 6) svg += '<text x="' + X(m) + '" y="' + (H - 6) + '" font-size="10" fill="var(--muted)" text-anchor="middle">month ' + m + '</text>';
+  svg += '<text x="0" y="14" font-size="10" fill="var(--muted)">' + fUsd(vmax) + ' cumulative</text></svg>';
+  const orders = M.filter(x => x.order > 0).slice(0, 6).map(x => 'month ' + x.m + ': order ' + x.order + ' GPU' + (x.order === 1 ? '' : 's') + ' (delivered month ' + (x.m + r.opt.leadMonths) + ')');
+  return '<p class="lead">Over ' + r.opt.months + ' months, peak demand grows from ' + fInt(r.opt.gpusNow) + ' to ' + fInt(M[M.length - 1].peak) + ' GPUs. Cheapest: <b>' + lab[r.best] + '</b>. ' +
+    (r.best === 'hybrid' ? 'Buying pays back against renting by month ' + (r.breakEven == null ? '—' : r.breakEven) + ', and leaves ' + fInt(r.ownedEnd) + ' GPUs worth about ' + fUsd(r.residual) + ' after depreciation.' : 'At these prices and growth, owning does not pay back within the horizon.') + '</p>' + svg +
+    '<div class="glegend">' + Object.keys(series).map(key => '<span><i style="background:' + col[key] + '"></i>' + lab[key] + ': ' + fUsd(r.totals[key] / 1) + (key === 'hybrid' ? ' net of residual value (' + fUsd(r.totals.hybridCash) + ' cash)' : '') + '</span>').join('') + '</div>' +
+    (orders.length ? '<h3 class="sec">On-prem orders</h3><ul class="plain">' + orders.map(o => '<li>' + o + '</li>').join('') + '</ul>' : '') +
+    '<div class="sub">Rough model: average utilisation from base and peak shares, power at ' + r.opt.kwPerGpu + ' kW per GPU and PUE ' + r.opt.pue + ', operations ' + fUsd(r.opt.opsPerGpuMonth) + ' per GPU-month. Not financial advice.</div>';
+}
+function migCard(A) {
+  const r = A.res;
+  return '<p class="lead">On ' + r.gpu + ' with MIG these replicas fit on <b>' + r.used + ' GPU' + (r.used === 1 ? '' : 's') + '</b> instead of ' + r.whole + ' whole GPUs (' + r.saved + ' saved), with ' + fPct(r.sliceUse) + ' of compute slices in use.' + (r.unfit.length ? ' Too large for a MIG slice, so a whole GPU each: ' + esc([...new Set(r.unfit)].join(', ')) + '.' : '') + '</p>' +
+    r.gpus.map((g, i) => '<div class="row"><span>GPU ' + (i + 1) + '</span><span class="migbar">' + g.parts.map(p => '<i style="flex:' + p.slices + '" title="' + esc(p.name + ' · ' + (p.profile || 'whole GPU')) + '">' + esc(p.profile || 'whole') + '</i>').join('') + (g.slices < 7 ? '<i class="free" style="flex:' + (7 - g.slices) + '"></i>' : '') + '</span></div>').join('');
+}
 $('#reportBtn').onclick = () => {
   if (!window.FleetPlan) return;
   const SCx = window.FleetScenario, cv = window.FleetClusterView && window.FleetClusterView.state, tv = window.FleetTrainingView && window.FleetTrainingView.state;
@@ -2395,6 +2483,9 @@ window.addEventListener('resize', () => {});
 </script>
 <script>
 /*PLAN*/
+</script>
+<script>
+/*OPTIMIZE*/
 </script>
 <script>
 /*TRAININGUI*/

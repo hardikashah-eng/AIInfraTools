@@ -152,6 +152,14 @@ Here the coding-agent fleet's router switches from cache-oblivious to KV-aware r
 
 ![KV-aware routing](docs/img/kv-aware-routing.png)
 
+### Plan and optimise
+
+**Plan** finds the cheapest setup that meets the SLO target, the residency rule and an optional N-1 floor. On the burst graph that's 6 B200 instances at $19/h. Plan also compares renting, reserving and buying the base load over 24 months, and packs small models onto MIG slices. See [docs/PLANNING.md](docs/PLANNING.md).
+
+![Optimiser](docs/img/plan-optimise.png)
+
+![Buy vs rent](docs/img/plan-buy-vs-rent.png)
+
 ### What if… a partial outage
 
 Half of the on-prem pool fails for two and a half minutes. Down instances show red, streams cut mid-answer are counted as lost, the KPIs compare against the same graph unstressed, and the banner names where it breaks first. See [docs/STRESS.md](docs/STRESS.md).
@@ -200,6 +208,7 @@ npm run build     # inline src/ into dist/index.html
 | `src/cluster.js`, `src/cluster-ui.js` | Cluster engine (scheduler, quotas, faults, kubectl import) and the Cluster view |
 | `docs/CLUSTER.md` | The cluster model, policy knobs, and importing a real cluster |
 | `src/training.js`, `src/training-ui.js` | Training job model (phases, data loading, stragglers, checkpoints, faults) and the Training view |
+| `src/optimize.js`, `docs/PLANNING.md` | Optimiser, buy-vs-rent planner, MIG packing |
 | `src/plan.js`, `tools/fleetscope-plan.mjs`, `scenarios/`, `docs/CI.md` | Plans base vs head scenarios for CI and the Report button |
 | `src/scenario.js`, `docs/SCENARIO.md` | Shared clock, change set across views, and fleet pools linked to cluster workloads |
 | `src/forecast.js`, `tools/live-twin.mjs`, `docs/LIVE.md` | Forecasts, projections, predicted-breach alerts and the scheduled CLI |

@@ -218,6 +218,15 @@ These knobs are opt-in:
 
 Details: [PHYSICS.md](PHYSICS.md).
 
+## Plan and optimise (built)
+
+These tools are built:
+- **Optimiser:** finds the cheapest graph that meets the SLO, residency and N-1 targets, searching instance counts, GPU types and router policies.
+- **Buy vs rent:** a 24-month comparison of renting, reserving and buying the base load.
+- **MIG:** packs small models onto slices.
+
+Details: [PLANNING.md](PLANNING.md).
+
 ## Build phases
 
 1. **Prototype (done):** a browser-only node editor and player on the tier-1 engine, with agent, chat, trace and training nodes, seven templates and baseline compare. Profiles come from spec sheets, not measurements.
