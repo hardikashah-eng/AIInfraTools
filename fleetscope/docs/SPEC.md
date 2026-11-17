@@ -144,6 +144,19 @@ The model advisor right-sizes the fleet for each candidate model and reasoning l
 - **Health.** `healthOf(run)` gives every node a level per second (0 healthy, 1 strained, 2 failing) and a cause. Pools: instances down, KV ≥ 95% with a queue, oldest queued request older than the TTFT target (failing); KV or load ≥ 85%, queue wait over a third of the target, cold starts with a queue (strained). Links: degraded or ≥ 90% used (failing), ≥ 70% (strained). Routers inherit strain from their targets; traffic sources fail when over 10% of their first tokens miss the target that second. The node blamed for an SLO breach is always failing. The canvas colours frames, badges and incoming wires from this.
 - **Potential issues.** `lintSpec(spec)` runs before simulation on the compiled graph and a traffic estimate (mean and 10-second peak rate, mean prompt, longest context): contexts over an instance's KV cache, KV under 20k tokens, instances spanning nodes, an empty burst pool with a cold start of a minute or more, peak prefill demand above 80% of pool capacity, peak KV transfer demand above 70% of a link, training sharing a link with KV transfers, and a single pool behind a router.
 
+## Lenses
+
+A tab bar above the canvas switches what node colours, badges and wires mean. Each lens computes a value per node, shades it from neutral to the lens colour by its share of the largest value, and writes a one-line summary and a ranked list in the overview. Latency and Cost take a scope: the ten seconds up to the playhead, or the whole run.
+
+| Lens | Per node | Engine call |
+| --- | --- | --- |
+| Performance | Health level and cause at the playhead | `healthOf(run)` |
+| Latency | Mean seconds of TTFT spent there per request, and its share: queue and prefill at the prefill pool, transfer and network at links, decode wait and thinking at the decode pool; sources show mean and p99 TTFT | `latencyBreakdown(run, t0, t1)` (requests arriving in the window) |
+| Cost | GPU spend (amortized on-prem, rented neocloud) with idle share, egress per link (responses and training sync), training GPU spend | `costBreakdown(run, s0, s1)` |
+| Reliability | SLO lost if this pool, link or site failed for the whole run, and the share of requests left unserved | `blastIter(spec, stress)`, run in the background after each change |
+
+Security/data residency and Ownership lenses follow the same pattern.
+
 ## Metrics and outputs
 
 SLO attainment and cost per million tokens are the two headline numbers for every run. Everything else explains them.

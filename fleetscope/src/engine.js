@@ -159,6 +159,79 @@
   }
 
   // ---------- simulation ----------
+  // ----- lenses: where cost and latency go, and what each failure would cost -----
+  // Spend per pool (with the share paid for idle GPUs), egress per link and training spend over seconds [s0, s1).
+  function costBreakdown(R, s0, s1) {
+    s0 = Math.max(0, Math.floor(s0)); s1 = Math.min(R.D, Math.ceil(s1));
+    const out = { nodes: {}, total: 0, idle: 0, egress: 0, seconds: Math.max(0, s1 - s0), bySite: { onprem: 0, neo: 0 } };
+    for (const p of R.pools) {
+      let spend = 0, idle = 0, gpuS = 0, tok = 0;
+      for (let s = s0; s < s1; s++) { const f = R.frames[s].pools[p.id]; if (!f) continue; spend += f.cost; gpuS += f.gpus; tok += f.tok; if (f.gpus > 0) idle += f.cost * Math.max(0, 1 - f.busyGpu / f.gpus); }
+      out.nodes[p.id] = { kind: 'pool', spend, idle, gpuHours: gpuS / 3600, tokens: tok, perMTok: tok ? spend / (tok / 1e6) : NaN };
+      out.total += spend; out.idle += idle; out.bySite[p.siteKind === 'neo' ? 'neo' : 'onprem'] += spend;
+    }
+    for (const L of R.links) {
+      if (L.fabric) continue;
+      let egr = 0, tegr = 0;
+      for (let s = s0; s < s1; s++) { const f = R.frames[s].links[L.id]; if (f) { egr += f.egr || 0; tegr += f.tegr || 0; } }
+      out.nodes[L.id] = { kind: 'link', spend: egr + tegr, egress: egr, trainEgress: tegr };
+      out.total += egr + tegr; out.egress += egr + tegr;
+    }
+    const T = R.spec.train;
+    if (T && R.summary.train) {
+      const spend = R.summary.train.gpuCostPerHr * out.seconds / 3600;
+      out.nodes[T.id] = { kind: 'train', spend };
+      out.total += spend;
+    }
+    out.perHour = out.seconds ? out.total * 3600 / out.seconds : NaN;
+    return out;
+  }
+  // Where time to first token goes, node by node, for requests that arrived in [t0, t1).
+  function latencyBreakdown(R, t0, t1) {
+    const nodes = {}, add = (id, k, v) => { if (!id || !(v > 0)) return; const n = nodes[id] || (nodes[id] = { sec: 0, parts: {} }); n.sec += v; n.parts[k] = (n.parts[k] || 0) + v; };
+    const src = {};
+    let n = 0, total = 0, lo = 0, hi = R.reqs.length;
+    while (lo < hi) { const m = (lo + hi) >> 1; if (R.reqs[m].t < t0) lo = m + 1; else hi = m; }
+    for (let i = lo; i < R.reqs.length; i++) {
+      const q = R.reqs[i];
+      if (q.t >= t1) break;
+      if (!isFinite(q.ttft)) continue;
+      n++; total += q.ttft;
+      const S = src[q.src] || (src[q.src] = { n: 0, sum: 0, miss: 0, list: [] });
+      S.n++; S.sum += q.ttft; S.list.push(q.ttft); if (q.ttft > R.spec.slo.ttft) S.miss++;
+      add(q.pPool, 'queue', q.bQueue); add(q.pPool, 'prefill', q.bPrefill);
+      if (q.dPool && q.dPool !== q.pPool) { add(q.xLink, 'transfer', q.tXferEnd - q.tPrefEnd); add(q.inLink || q.xLink, 'network', q.net); add(q.dPool, 'decode wait', q.bDwait); add(q.dPool, 'thinking', q.bThink); }
+      else { add(q.inLink, 'network', q.net); add(q.pPool, 'thinking', q.bThink); }
+    }
+    for (const id in nodes) { nodes[id].perReq = n ? nodes[id].sec / n : 0; nodes[id].share = total ? nodes[id].sec / total : 0; }
+    for (const id in src) { const S = src[id]; S.list.sort((a, b) => a - b); nodes[id] = { kind: 'source', perReq: S.sum / S.n, p99: pct(S.list, 0.99), miss: S.miss / S.n, n: S.n, share: 0 }; delete S.list; }
+    return { nodes, n, meanTtft: n ? total / n : NaN };
+  }
+  // N-1: fail each pool, link and site in turn for the whole run and measure the damage.
+  function* blastIter(spec, stressIn) {
+    const base = normStress(stressIn);
+    const targets = [];
+    for (const p of spec.pools) targets.push({ kind: 'pool', target: p.id, id: p.id, name: p.name });
+    for (const L of spec.links) targets.push({ kind: 'link', target: L.id, id: L.id, name: L.name });
+    const sites = [...new Set(spec.pools.map(p => p.site))];
+    if (sites.length > 1) for (const st of sites) { const ps = spec.pools.filter(p => p.site === st); if (ps.length > 1) targets.push({ kind: 'site', target: 'site:' + st, id: null, ids: ps.map(p => p.id), name: st }); }
+    const total = targets.length + 1;
+    yield { done: 0, total, text: 'Baseline' };
+    const b = simulate(spec, base).summary;
+    const rows = [];
+    for (let i = 0; i < targets.length; i++) {
+      const T = targets[i];
+      yield { done: i + 1, total, text: 'Losing ' + T.name };
+      const st = Object.assign({}, base, { outages: (base.outages || []).concat([{ target: T.target, fraction: 1, start: 0, dur: 1e9, recovery: 0 }]) });
+      const s = simulate(spec, st).summary;
+      const failed = Math.max(0, s.requests - s.completed); // rejected, cut off, or never served before the run ended
+      rows.push(Object.assign({}, T, { slo: s.slo, dSlo: s.slo - b.slo, ttftP99: s.ttftP99, failed, failedShare: s.requests ? failed / s.requests : 0, costPerHr: s.costPerHr, bottleneck: s.bottleneck.first }));
+    }
+    rows.sort((a, b) => a.dSlo - b.dSlo || b.failedShare - a.failedShare);
+    return { base: { slo: b.slo, ttftP99: b.ttftP99, costPerHr: b.costPerHr }, rows };
+  }
+  const blastRadius = (spec, st) => drain(blastIter(spec, st));
+
   // Turns a recorded trace into session chains for closed-loop replay.
   // Within a session, a turn that starts after the previous turn finished waits for the simulated finish plus the
   // recorded think time; a turn that overlaps it (a parallel tool call) is a branch timed from the previous turn's issue.
@@ -614,7 +687,7 @@
     }
     const links = {};
     function addLink(id, name, gbps, rtt, egress, fabric, site) {
-      links[id] = { id, name, gbps, bps0: gbps * 1e9 / 8, bps: gbps * 1e9 / 8, factor: 1, rtt, egress, fabric, site, xfers: [], bytesSec: 0, trainSec: 0, totalBytes: 0, trainBytes: 0, egressBytes: 0 };
+      links[id] = { id, name, gbps, bps0: gbps * 1e9 / 8, bps: gbps * 1e9 / 8, factor: 1, rtt, egress, fabric, site, xfers: [], bytesSec: 0, trainSec: 0, totalBytes: 0, trainBytes: 0, egressBytes: 0, egrSec: 0 };
     }
     const sites = {};
     for (const p of pools) sites[p.site] = Math.max(sites[p.site] || 0, p.fabricGbps || 400);
@@ -788,7 +861,7 @@
       r.tFinish = t; doneCount++; outTokens += r.osl; genTokens += r.dec;
       if (r.sess) sessionTurnDone(r, t, true);
       const dp = byId[r.dPool];
-      if (dp && dp.siteKind === 'neo') { const L = links[r.inLink] || links[r.xLink]; if (L && !L.fabric) { L.egressBytes += r.osl * 4; L.totalBytes += r.osl * 4; } }
+      if (dp && dp.siteKind === 'neo') { const L = links[r.inLink] || links[r.xLink]; if (L && !L.fabric) { L.egressBytes += r.osl * 4; L.egrSec += r.osl * 4; L.totalBytes += r.osl * 4; } }
       if (r.user >= 0) after(r.user, r.isl, r.osl, t);
     }
     const failCounts = { kv: 0, outage: 0, route: 0 };
@@ -1075,8 +1148,9 @@
           p.inst = p.inst.filter(x => !(x.state === 'draining' && x.batch.length === 0 && x.pre.length === 0));
         }
         for (const L of linkList) {
-          fr.links[L.id] = { factor: L.factor, util: L.bps > 0 ? Math.min(1, L.bytesSec / L.bps) : (L.xfers.length ? 1 : 0), gbps: L.bytesSec * 8 / 1e9, trainGbps: L.trainSec * 8 / 1e9, xfers: L.xfers.filter(x => !x.train).length, trainXfer: L.xfers.some(x => x.train) };
-          L.bytesSec = 0; L.trainSec = 0;
+          fr.links[L.id] = { factor: L.factor, util: L.bps > 0 ? Math.min(1, L.bytesSec / L.bps) : (L.xfers.length ? 1 : 0), gbps: L.bytesSec * 8 / 1e9, trainGbps: L.trainSec * 8 / 1e9, xfers: L.xfers.filter(x => !x.train).length, trainXfer: L.xfers.some(x => x.train),
+            egr: L.fabric ? 0 : L.egrSec / 1e9 * L.egress, tegr: L.fabric ? 0 : L.trainSec / 2 / 1e9 * L.egress };
+          L.bytesSec = 0; L.trainSec = 0; L.egrSec = 0;
         }
         if (tr) {
           const last = tr.steps[tr.steps.length - 1];
@@ -1154,7 +1228,7 @@
       const mean = st.length ? st.reduce((s, x) => s + (x.end - x.start), 0) / st.length : NaN;
       const tokS = tr.tokens / mean;
       trainSum = { model: tr.model, gpus: tr.gpus, split: tr.split, site: tr.site, steps: tr.steps.length, stepS: mean, computeS: tr.compute,
-        commShare: mean ? Math.max(0, 1 - tr.compute / mean) : NaN, tokPerS: tokS, costPerHr: tr.gpus * tr.price + trainEgress / hrs,
+        commShare: mean ? Math.max(0, 1 - tr.compute / mean) : NaN, tokPerS: tokS, gpuCostPerHr: tr.gpus * tr.price, costPerHr: tr.gpus * tr.price + trainEgress / hrs,
         daysPer100B: 1e11 / tokS / 86400, crossGB: tr.L ? tr.L.trainBytes / 1e9 : 0 };
     }
     const recorded = compareRecorded(reqs, D);
@@ -1191,7 +1265,7 @@
   }
 
   const api = { GPUS, MODELS, TRACES, NODE_RULES, CAUSE, profile, genTrace, scaleTrace, compileGraph, simulate, normStress, findBottleneck,
-    headroomIter, findHeadroom, healthOf, HEALTH_LABEL, scaleFleet, sizeFleetIter, sizeFleet, adviseIter, adviseModels, compareRecorded, planSessions, lintSpec, makeRng };
+    headroomIter, findHeadroom, healthOf, HEALTH_LABEL, costBreakdown, latencyBreakdown, blastIter, blastRadius, scaleFleet, sizeFleetIter, sizeFleet, adviseIter, adviseModels, compareRecorded, planSessions, lintSpec, makeRng };
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
   else root.FleetEngine = api;
 })(typeof window !== 'undefined' ? window : this);
