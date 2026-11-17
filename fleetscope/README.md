@@ -10,25 +10,59 @@ Open `dist/index.html` in a browser. It is a single self-contained file with no 
 
 ## Demo
 
-The screenshots below come from `dist/index.html` with its built-in templates and sample traces; no real traffic is involved.
+These screenshots are of `dist/index.html` running its built-in templates. Synthetic traces only: no real traffic. All figures are uncalibrated spec-sheet estimates.
 
-**Editor.** A hybrid fleet replaying a chat trace: the on-prem pool's KV cache fills during a spike, and the neocloud's instances are still cold-starting.
+### Editor and live fleet
+
+A hybrid fleet replaying a chat trace that spikes. The on-prem pool's KV cache is full (99.7%) and its queue is turning red. The neocloud's seven burst instances are still cold-starting (hatched). The right panel ranks this run's bottlenecks and lists the slowest requests of the last 20 seconds. The *First bottleneck* tile jumps to the moment it starts.
 
 ![FleetScope editor](docs/img/editor.png)
 
-**What if… partial outage.** Half of the on-prem pool fails for two and a half minutes. Down instances show red, KPIs compare against the same graph unstressed, and the first bottleneck is named.
+### Inspecting a pool
+
+Click any node to edit its knobs in the details panel and see its live state at the playhead: instances, load, queue, KV use, throughput and cost, with sparklines over the run.
+
+![Pool inspector](docs/img/pool-inspector.png)
+
+### Where one request's time went
+
+Click a request for its lifecycle. This one waited 7.7 s in the queue, prefilled for 2 s, then decoded slowly in an overloaded batch.
+
+![Request lifecycle](docs/img/request-lifecycle.png)
+
+### Prefill on-prem, decode in the neocloud
+
+Every prompt's KV cache crosses a 100 Gbps link. The link sits at 100% and moves 4.1 TB in ten minutes. KV transfer (purple) dominates the TTFT breakdown, and the red strip under the canvas marks seconds that miss the TTFT target.
+
+![Cross-site KV transfer](docs/img/cross-site-kv.png)
+
+### Replaying real traces
+
+Upload a log to the Trace replay node: vLLM OpenTelemetry spans, gateway JSON logs or CSV. When the log records TTFT, the run compares it with the simulation. Here, 3,619 vLLM spans give simulated p99 910 ms against 838 ms recorded (+8%), inside the spec's acceptance bar. See [docs/TRACES.md](docs/TRACES.md).
+
+![Trace import](docs/img/trace-import.png)
+
+### What if… a partial outage
+
+Half of the on-prem pool fails for two and a half minutes. Down instances show red, streams cut mid-answer are counted as lost, the KPIs compare against the same graph unstressed, and the banner names where it breaks first. See [docs/STRESS.md](docs/STRESS.md).
 
 ![Partial outage](docs/img/stress-outage.png)
 
-**Scenario suite.** Every stress scenario on the same graph, side by side.
+### Every scenario side by side
+
+The scenario suite runs peak load, partial outage, neocloud down, link down, large contexts, and peak load plus an outage on the same graph. On this one, losing the neocloud barely matters (its cold start was too slow to help anyway); doubling context length is the real threat.
 
 ![Scenario suite](docs/img/scenario-suite.png)
 
-**Breaking point.** With 10 on-prem instances, the graph holds 95% SLO attainment up to 1.33× today's traffic, then breaks on decode batch size (TPOT).
+### Breaking point
+
+With 10 on-prem instances, the graph holds 95% SLO attainment up to 1.33× today's traffic. At 1.44× it breaks on decode batch size (TPOT).
 
 ![Breaking point](docs/img/headroom.png)
 
-**Model advisor.** Coding-agent traffic: each candidate model and reasoning level is right-sized to the SLO and ranked by cost per 1,000 requests, with a quality floor from your own eval scores.
+### Model advisor
+
+Coding-agent traffic. Each candidate model and reasoning level is right-sized to the SLO and ranked by cost per 1,000 requests, with a quality floor taken from your own eval scores.
 
 ![Model advisor](docs/img/model-advisor.png)
 
