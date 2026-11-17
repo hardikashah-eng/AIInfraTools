@@ -54,6 +54,22 @@ During playback each node's frame turns amber when strained and red when failing
 
 ![Health colouring](docs/img/health-colouring.png)
 
+### Lenses: latency, cost, reliability
+
+The tabs above the canvas switch what the colours mean. **Performance** is the health view above. The other lenses shade each node from neutral to the lens colour, put a figure on its badge, and summarise in one line. Latency and Cost can cover the ten seconds up to the playhead or the whole run.
+
+**Latency** splits time to first token across the nodes requests pass through. Here, in the cross-site P/D template at 02:25, requests waited a mean 2.2 s. Two thirds of that was prefill on-prem; a third was KV caches crossing the link.
+
+![Latency lens](docs/img/lens-latency.png)
+
+**Cost** shows GPU spend per pool, with the share paid for idle GPUs, plus egress per link. In the training template the run costs $155 for ten minutes. The serving pools are 4% of that; gradient sync egress over the link is 43%.
+
+![Cost lens](docs/img/lens-cost.png)
+
+**Reliability** fails each pool, link and site for the whole run in the background, then shows the SLO each one would cost. With two neoclouds, losing on-prem drops SLO from 70% to 6%; losing either neocloud costs 6 to 17 points.
+
+![Reliability lens](docs/img/lens-reliability.png)
+
 ### What if… a partial outage
 
 Half of the on-prem pool fails for two and a half minutes. Down instances show red, streams cut mid-answer are counted as lost, the KPIs compare against the same graph unstressed, and the banner names where it breaks first. See [docs/STRESS.md](docs/STRESS.md).

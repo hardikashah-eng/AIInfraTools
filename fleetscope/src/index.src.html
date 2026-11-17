@@ -98,7 +98,7 @@ button, select, input { font: inherit; color: inherit; }
 #graph .node.h1 .frame { stroke: var(--warn); stroke-width: 2.6; }
 #graph .node.h2 .frame { stroke: var(--crit); stroke-width: 3.2; }
 #graph .node.h2 .frame { filter: drop-shadow(0 0 6px color-mix(in srgb, var(--crit) 55%, transparent)); }
-#graph .hbadge { pointer-events: none; }
+#graph .hbadge { cursor: help; }
 #graph .lint { cursor: help; }
 .probs li.lint { border-left-color: var(--warn); }
 .probs li.lint.info { border-left-color: var(--accent); }
@@ -138,6 +138,21 @@ button, select, input { font: inherit; color: inherit; }
 .sgrid button:disabled { opacity: .45; cursor: not-allowed; }
 .sgrid button span { display: block; color: var(--muted); font-size: 10.5px; }
 .orow { border: 1px solid var(--line); border-radius: 8px; padding: 6px 8px; margin-top: 6px; background: var(--panel-2); }
+.lensbar { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin: 8px 10px 0; }
+.ltabs { display: flex; gap: 2px; background: var(--panel-2); border: 1px solid var(--line); border-radius: 9px; padding: 2px; }
+.ltabs button { border: 0; background: transparent; border-radius: 7px; padding: 4px 11px; font-size: 12.5px; cursor: pointer; color: var(--muted); display: flex; align-items: center; gap: 6px; }
+.ltabs button i { width: 8px; height: 8px; border-radius: 50%; display: inline-block; }
+.ltabs button[aria-selected="true"] { background: var(--panel); color: var(--ink); font-weight: 600; box-shadow: 0 0 0 1px var(--line); }
+.lscope { display: flex; border: 1px solid var(--line); border-radius: 7px; overflow: hidden; }
+.lscope button { border: 0; background: var(--panel-2); padding: 3px 9px; font-size: 11.5px; cursor: pointer; }
+.lscope button.on { background: var(--ink); color: var(--panel); }
+.lscope[hidden] { display: none; }
+.linfo { flex: 1; min-width: 260px; font-size: 12px; color: var(--muted); }
+.linfo b { color: var(--ink); font-weight: 600; }
+.lgrad { display: inline-block; width: 60px; height: 8px; border-radius: 4px; vertical-align: -1px; margin: 0 4px; }
+.lrows .row { cursor: pointer; }
+.lrows .row:hover span:first-child { text-decoration: underline; }
+.lbar { display: block; height: 4px; border-radius: 2px; margin-top: 2px; }
 .btn.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
 .mtx { width: 100%; border-collapse: collapse; font-size: 11.5px; margin-top: 4px; }
 .mtx th, .mtx td { padding: 3px 2px; border-bottom: 1px solid var(--line); text-align: center; }
@@ -252,6 +267,11 @@ button, select, input { font: inherit; color: inherit; }
   </header>
   <aside class="palette" id="palette"></aside>
   <section class="center">
+    <nav class="lensbar" id="lensbar" aria-label="Lens">
+      <div class="ltabs" role="tablist" id="ltabs"></div>
+      <div class="lscope" id="lscope" role="group" aria-label="Lens scope"><button type="button" data-scope="now" title="The ten seconds up to the playhead">At playhead</button><button type="button" data-scope="run" title="The whole simulated run">Whole run</button></div>
+      <div class="linfo" id="linfo" aria-live="polite"></div>
+    </nav>
     <div class="kpis" id="kpis"></div>
     <div class="canvasWrap" id="cwrap">
       <svg id="graph" aria-label="Fleet graph editor">
@@ -262,7 +282,7 @@ button, select, input { font: inherit; color: inherit; }
         <g id="vp"><rect x="-20000" y="-20000" width="40000" height="40000" fill="url(#gridp)" id="bg"/><g id="edges"></g><g id="nodes"></g><g id="dots"></g><path id="tempWire" fill="none" stroke="var(--accent)" stroke-width="2" stroke-dasharray="5 4" d=""/></g>
       </svg>
       <div class="hud"><button type="button" id="zIn" aria-label="Zoom in">+</button><button type="button" id="zOut" aria-label="Zoom out">&minus;</button><button type="button" id="zFit">Fit</button></div>
-      <div class="legendHud"><span><i style="background:var(--onprem)"></i>request to on-prem</span><span><i style="background:var(--neo)"></i>request to neocloud</span><span><i style="background:var(--c-xfer)"></i>KV cache transfer</span><span><i style="background:var(--train)"></i>gradient sync</span><span><i style="background:var(--warn)"></i>strained</span><span><i style="background:var(--crit)"></i>failing</span><span><b style="color:var(--warn)">!</b> potential issue</span></div>
+      <div class="legendHud" id="legendHud"><span><i style="background:var(--onprem)"></i>request to on-prem</span><span><i style="background:var(--neo)"></i>request to neocloud</span><span><i style="background:var(--c-xfer)"></i>KV cache transfer</span><span><i style="background:var(--train)"></i>gradient sync</span><span><i style="background:var(--warn)"></i>strained</span><span><i style="background:var(--crit)"></i>failing</span><span><b style="color:var(--warn)">!</b> potential issue</span></div>
       <div class="toast" id="toast" role="status"></div>
       <div class="stressBanner" id="stressBanner" hidden></div>
     </div>
@@ -309,7 +329,7 @@ const fInt = v => Math.round(v).toLocaleString('en-US');
 const roleName = { agg: 'Aggregated', prefill: 'Prefill', decode: 'Decode' };
 
 // ---------- state ----------
-const S = { graph: null, sel: null, view: { x: 40, y: 20, k: 0.8 }, run: null, baseline: null, T: 0, playing: false, speed: 15, probs: { errors: [], warn: [] }, lint: [], nid: 1, tpl: 'burst' };
+const S = { lens: 'perf', scope: 'now', runId: 0, blast: null, graph: null, sel: null, view: { x: 40, y: 20, k: 0.8 }, run: null, baseline: null, T: 0, playing: false, speed: 15, probs: { errors: [], warn: [] }, lint: [], nid: 1, tpl: 'burst' };
 const traces = {};
 function traceLookup(key, scale) {
   let tr;
@@ -447,6 +467,7 @@ function buildNode(n, layer) {
   R.hb = el('g', { class: 'hbadge', transform: 'translate(' + (w - 8) + ' -11)', opacity: 0 }, g);
   R.hbr = el('rect', { x: 0, y: 0, width: 10, height: 18, rx: 9, fill: 'var(--crit)' }, R.hb);
   R.hbt = el('text', { x: 0, y: 12.5, 'font-size': 10.5, 'font-weight': 600, fill: '#fff', 'text-anchor': 'end' }, R.hb, '');
+  R.hbTitle = el('title', null, R.hb, '');
   R.lint = el('g', { class: 'lint', transform: 'translate(0 0)', opacity: 0 }, g);
   el('circle', { cx: 0, cy: 0, r: 9, fill: 'var(--warn)', stroke: 'var(--panel)', 'stroke-width': 2 }, R.lint);
   el('text', { x: 0, y: 4, 'font-size': 12, 'font-weight': 700, fill: '#fff', 'text-anchor': 'middle' }, R.lint, '!');
@@ -1040,7 +1061,10 @@ function renderOverview() {
   if (H) for (const id in H.lvl) if (H.lvl[id][s]) hot.push({ id, l: H.lvl[id][s], c: H.cause[id][s] });
   hot.sort((a, b) => b.l - a.l);
   const nm = id => { const n = nodeById(id); return n ? n.cfg.name : id; };
-  const healthHtml = '<h3 class="sec" style="margin-top:0">Health at ' + mmss(t) + '</h3><div class="health">' + (hot.length ? hot.slice(0, 6).map(h => '<div class="row"><span><span class="hdot" style="background:' + (h.l === 2 ? 'var(--crit)' : 'var(--warn)') + '"></span><button class="linkbtn" type="button" data-selnode="' + h.id + '">' + esc(nm(h.id)) + '</button></span><span>' + esc(E.HEALTH_LABEL[h.c] || h.c) + '</span></div>').join('') : '<div class="sub">Every node is healthy this second.</div>') + '</div>';
+  const LVo = S.lens !== 'perf' ? lensView(R, s) : null, Lz = lensOf(S.lens);
+  const lensHtml = LVo ? '<h3 class="sec" style="margin-top:0">' + Lz.label + (Lz.scoped ? (S.scope === 'run' ? ', whole run' : ', last 10 s') : S.lens === 'rel' ? ': if each failed for the whole run' : '') + '</h3><div class="sub">' + LVo.headline + '</div><div class="lrows">' +
+    (() => { const mx = LVo.rows.reduce((m, r) => Math.max(m, r.v), 0) || 1; return LVo.rows.map(r => '<div class="row" data-selnode="' + r.id + '" title="' + esc(r.sub || '') + '"><span>' + esc(r.name) + '</span><span>' + esc(r.text) + '</span></div><i class="lbar" style="width:' + (100 * Math.max(0, r.v) / mx).toFixed(1) + '%;background:' + Lz.hue + '"></i>').join(''); })() + '</div>' : '';
+  const healthHtml = LVo ? lensHtml : '<h3 class="sec" style="margin-top:0">Health at ' + mmss(t) + '</h3><div class="health">' + (hot.length ? hot.slice(0, 6).map(h => '<div class="row"><span><span class="hdot" style="background:' + (h.l === 2 ? 'var(--crit)' : 'var(--warn)') + '"></span><button class="linkbtn" type="button" data-selnode="' + h.id + '">' + esc(nm(h.id)) + '</button></span><span>' + esc(E.HEALTH_LABEL[h.c] || h.c) + '</span></div>').join('') : '<div class="sub">Every node is healthy this second.</div>') + '</div>';
   const rp = R.summary.replay;
   const rpHtml = rp ? '<h3 class="sec">Closed-loop replay</h3><div class="sub">' + fInt(rp.sessions) + ' recorded sessions, ' + fInt(rp.turns) + ' turns (' + fInt(rp.branches) + ' parallel calls). Turns ran a median ' + fS(rp.driftP50) + ' behind their recorded time (p90 ' + fS(rp.driftP90) + '): ' + (rp.driftP50 > 5 ? 'this fleet is slower than the one that recorded the log, so users would have sent less traffic than the timestamps say.' : 'close to the recorded pace.') + (rp.estimatedGaps ? ' ' + fInt(rp.estimatedGaps) + ' think times were estimated because the log has no latency for the turn before.' : '') + (rp.abandoned ? ' ' + fInt(rp.abandoned) + ' turns were never sent because their session gave up.' : '') + '</div>' : '';
   const bnHtml = bt && bt.top.length ? '<h3 class="sec" style="margin-top:0">Bottlenecks this run</h3>' + bt.top.slice(0, 3).map(b => '<div class="row"><span><button class="linkbtn" type="button" data-seekto="' + b.first + '">' + esc(b.name) + '</button>: ' + b.label + '</span><span>' + b.seconds + ' s</span></div>').join('') : '';
@@ -1071,7 +1095,8 @@ function doRun() {
   } catch (err) { $('#status').textContent = 'Simulation failed: ' + err.message; return; }
   prep(R);
   R.health = E.healthOf(R);
-  S.run = R;
+  S.run = R; S.runId++; S.lensKey = null;
+  if (S.lens === 'rel') ensureBlast();
   if (firstRun) {
     firstRun = false;
     const Sr = R.series;
@@ -1125,6 +1150,149 @@ function prep(R) {
   R.label = (tp ? tp.name + (S.dirty ? ' (edited)' : '') : 'custom graph') + (S.stress ? ' under ' + (S.stress.name || 'stress') : '');
 }
 
+// ---------- lenses ----------
+const LENSES = [
+  { id: 'perf', label: 'Performance', hue: 'var(--crit)', scoped: false, hint: 'Health of each node, second by second: strained or failing, and why' },
+  { id: 'lat', label: 'Latency', hue: 'var(--c-queue)', scoped: true, hint: 'Where time to first token is spent, node by node', metric: 'share of TTFT' },
+  { id: 'cost', label: 'Cost', hue: 'var(--train)', scoped: true, hint: 'Where the money goes: GPU spend, idle GPUs, egress', metric: 'spend' },
+  { id: 'rel', label: 'Reliability', hue: 'var(--crit)', scoped: false, hint: 'What losing each pool, link or site for the whole run would do to the SLO', metric: 'SLO lost if it fails' }
+];
+const lensOf = id => LENSES.find(x => x.id === id) || LENSES[0];
+const nodeName = id => { const n = nodeById(id); return n ? n.cfg.name : id; };
+let perfLegend = null;
+function renderLensBar() {
+  $('#ltabs').innerHTML = LENSES.map(L => '<button type="button" role="tab" data-lens="' + L.id + '" aria-selected="' + (S.lens === L.id) + '" title="' + L.hint + '"><i style="background:' + L.hue + '"></i>' + L.label + '</button>').join('');
+  $('#lscope').hidden = !lensOf(S.lens).scoped;
+  for (const b of $('#lscope').children) b.classList.toggle('on', b.dataset.scope === S.scope);
+  const lg = $('#legendHud');
+  if (perfLegend == null) perfLegend = lg.innerHTML;
+  const L = lensOf(S.lens);
+  lg.innerHTML = L.id === 'perf' ? perfLegend : '<span><i style="background:var(--onprem)"></i>request to on-prem</span><span><i style="background:var(--neo)"></i>request to neocloud</span><span><i style="background:var(--c-xfer)"></i>KV cache transfer</span><span>' + L.label + ': low<span class="lgrad" style="background:linear-gradient(90deg, var(--line), ' + L.hue + ')"></span>high ' + L.metric + '</span>';
+}
+function setLens(id) {
+  S.lens = id; S.lensKey = null;
+  renderLensBar();
+  if (id === 'rel') ensureBlast();
+  for (const k in views) { views[k].hl = -1; views[k].lk = null; }
+  render(true);
+  if (!S.sel) renderOverview();
+}
+$('#ltabs').addEventListener('click', e => { const b = e.target.closest('[data-lens]'); if (b) setLens(b.dataset.lens); });
+$('#ltabs').addEventListener('keydown', e => {
+  if (e.key !== 'ArrowRight' && e.key !== 'ArrowLeft') return;
+  const i = LENSES.findIndex(x => x.id === S.lens), j = (i + (e.key === 'ArrowRight' ? 1 : LENSES.length - 1)) % LENSES.length;
+  setLens(LENSES[j].id); $('#ltabs').children[j].focus(); e.preventDefault();
+});
+$('#lscope').addEventListener('click', e => { const b = e.target.closest('[data-scope]'); if (b) { S.scope = b.dataset.scope; S.lensKey = null; renderLensBar(); render(true); } });
+
+function lensView(R, s) {
+  const key = S.lens + '|' + (lensOf(S.lens).scoped && S.scope === 'now' ? s : 'run') + '|' + S.scope + '|' + S.runId + '|' + (S.blast ? S.blast.done + (S.blast.res ? 'r' : '') : '');
+  if (S.lensKey === key && S.lensCache) return S.lensCache;
+  const v = S.lens === 'lat' ? lensLatency(R, s) : S.lens === 'cost' ? lensCost(R, s) : S.lens === 'rel' ? lensRel(R) : LENS_EXTRA[S.lens] ? LENS_EXTRA[S.lens](R, s) : { nodes: {}, rows: [], headline: '' };
+  v.rows.sort((a, b) => b.v - a.v);
+  S.lensKey = key; S.lensCache = v;
+  return v;
+}
+const LENS_EXTRA = {};
+function lensWindow(R, s) { const run = S.scope === 'run'; return { run, s0: run ? 0 : Math.max(0, s - 9), s1: run ? R.D : s + 1 }; }
+function lensLatency(R, s) {
+  const W = lensWindow(R, s), L = E.latencyBreakdown(R, W.s0, W.s1), out = { nodes: {}, rows: [] };
+  let mx = 0;
+  for (const id in L.nodes) if (views[id] && L.nodes[id].kind !== 'source') mx = Math.max(mx, L.nodes[id].share);
+  for (const id in L.nodes) {
+    if (!views[id]) continue;
+    const x = L.nodes[id];
+    if (x.kind === 'source') { out.nodes[id] = { i: Math.min(1, x.miss * 2), text: 'TTFT mean ' + fS(x.perReq) + ' · p99 ' + fS(x.p99), title: fPct(x.miss) + ' of its requests missed the TTFT target' }; continue; }
+    const parts = Object.entries(x.parts).sort((a, b) => b[1] - a[1]).map(([k, v]) => k + ' ' + fS(v / L.n)).join(', ');
+    out.nodes[id] = { i: mx ? x.share / mx : 0, text: fS(x.perReq) + ' · ' + fPct(x.share) + ' of TTFT', title: 'Per request: ' + parts };
+    out.rows.push({ id, name: nodeName(id), v: x.share, text: fS(x.perReq) + ' (' + fPct(x.share) + ')', sub: parts });
+  }
+  out.rows.sort((a, b) => b.v - a.v);
+  const top = out.rows[0];
+  out.headline = L.n ? (W.run ? 'Over the whole run' : 'For the <b>' + fInt(L.n) + '</b> requests that arrived in the last 10 s') + ', time to first token averaged <b>' + fS(L.meanTtft) + '</b>' + (top ? ': <b>' + fPct(top.v) + '</b> of it at <b>' + esc(top.name) + '</b> (' + esc(top.sub) + ')' : '') + '.' : 'No requests arrived in this window.';
+  return out;
+}
+function lensCost(R, s) {
+  const W = lensWindow(R, s), C = E.costBreakdown(R, W.s0, W.s1), hrs = C.seconds / 3600, out = { nodes: {}, rows: [] };
+  const money = v => W.run ? fUsd(v) : fUsd(hrs ? v / hrs : 0) + '/h';
+  let mx = 0;
+  for (const id in C.nodes) if (views[id]) mx = Math.max(mx, C.nodes[id].spend);
+  for (const id in C.nodes) {
+    if (!views[id]) continue;
+    const x = C.nodes[id], n = nodeById(id);
+    let text, title;
+    if (x.kind === 'pool') { text = money(x.spend) + (x.spend ? ' · ' + fPct(x.idle / x.spend) + ' idle' : ''); title = fK(x.gpuHours) + ' GPU-hours · ' + (isFinite(x.perMTok) ? fUsd(x.perMTok) + ' per M tokens' : 'no tokens') + (n && n.cfg.siteKind === 'neo' ? ' · rented' : ' · amortized on-prem price'); }
+    else if (x.kind === 'link') { text = money(x.spend) + ' egress'; title = 'Serving responses ' + fUsd(x.egress) + ', training sync ' + fUsd(x.trainEgress) + (W.run ? '' : ' in the last 10 s'); }
+    else { text = money(x.spend) + ' training'; title = 'Training GPUs'; }
+    out.nodes[id] = { i: mx ? x.spend / mx : 0, text, title };
+    out.rows.push({ id, name: nodeName(id), v: x.spend, text, sub: title });
+  }
+  const share = (v) => C.total ? fPct(v / C.total) : '0%';
+  out.headline = (W.run ? 'This run cost <b>' + fUsd(C.total) + '</b> (' + fUsd(C.perHour) + '/h)' : 'Spending <b>' + fUsd(C.perHour) + '/h</b> at the playhead') +
+    ': on-prem ' + share(C.bySite.onprem) + ', neocloud ' + share(C.bySite.neo) + ', egress ' + share(C.egress) + (C.nodes[R.spec.train && R.spec.train.id] ? ', training ' + share(C.nodes[R.spec.train.id].spend) : '') + '. ' +
+    (C.idle > 0 ? '<b>' + share(C.idle) + '</b> of it pays for idle GPUs.' : '');
+  return out;
+}
+function lensRel(R) {
+  const B = S.blast && S.blast.runId === S.runId ? S.blast : null, out = { nodes: {}, rows: [] };
+  if (!B || !B.res) { out.headline = B && B.error ? 'Failure test stopped: ' + esc(B.error) : 'Testing what each failure would do… ' + (B ? B.done + ' of ' + B.total : ''); return out; }
+  const { base, rows } = B.res;
+  let mx = 0; for (const r of rows) mx = Math.max(mx, -r.dSlo);
+  for (const r of rows) {
+    const lost = -r.dSlo, text = lost >= 0.005 ? '−' + Math.round(lost * 100) + ' pt SLO if lost' : 'safe to lose', sub = 'SLO ' + fPct(r.slo) + (r.failedShare >= 0.005 ? ' · ' + fPct(r.failedShare) + ' unserved' : '') + (r.bottleneck ? ' · breaks on ' + r.bottleneck.name + ': ' + r.bottleneck.label : '');
+    if (r.id && views[r.id]) out.nodes[r.id] = { i: mx ? lost / mx : 0, text, title: sub };
+    out.rows.push({ id: r.id || (r.ids && r.ids[0]), name: (r.kind === 'site' ? 'Site ' : '') + r.name, v: lost + r.failedShare * 0.01, text, sub });
+  }
+  for (const rt of R.spec.routers) {
+    const L = rt.targets.map(x => out.nodes[x.pool]).filter(Boolean);
+    if (L.length && views[rt.id]) { const w = Math.max(...L.map(x => x.i)); out.nodes[rt.id] = { i: rt.targets.length === 1 ? w : w * 0.3, text: rt.targets.length === 1 ? 'single route' : rt.targets.length + ' routes', title: 'Routers fail only with what is behind them' }; }
+  }
+  const sorted = rows.slice().sort((a, b) => a.dSlo - b.dSlo), worst = sorted[0], safe = sorted.filter(r => -r.dSlo < 0.005 && r.failedShare < 0.005);
+  out.headline = worst && -worst.dSlo >= 0.005 ? 'If <b>' + esc(worst.name) + '</b> failed for the whole run, SLO would fall from <b>' + fPct(base.slo) + '</b> to <b>' + fPct(worst.slo) + '</b>' + (worst.failedShare >= 0.01 ? ' and <b>' + fPct(worst.failedShare) + '</b> of requests would go unserved' : '') + '.' + (safe.length ? ' Losing ' + safe.slice(0, 3).map(r => esc(r.name)).join(', ') + ' costs almost nothing.' : '')
+    : 'No single failure moves the SLO by more than half a point.';
+  return out;
+}
+function ensureBlast() {
+  if (!S.run || (S.blast && S.blast.runId === S.runId)) return;
+  if (S.blast) S.blast.cancel = true;
+  const c = E.compileGraph(S.graph, traceLookup);
+  if (c.errors.length) return;
+  const it = E.blastIter(c.spec, S.stress), job = { runId: S.runId, done: 0, total: 1, res: null, cancel: false };
+  S.blast = job;
+  const step = () => {
+    if (job.cancel) return;
+    let x;
+    try { x = it.next(); } catch (err) { job.error = err.message; S.lensKey = null; render(true); return; }
+    if (x.done) job.res = x.value; else { job.done = x.value.done; job.total = x.value.total; }
+    if (S.lens === 'rel') { S.lensKey = null; render(true); if (!S.sel && x.done) renderOverview(); }
+    if (!x.done) setTimeout(step, 0);
+  };
+  setTimeout(step, 20);
+}
+function perfHeadline(R, s) {
+  const H = R.health; if (!H) return '';
+  const hot = Object.keys(H.lvl).filter(id => H.lvl[id][s] && views[id]).sort((a, b) => H.lvl[b][s] - H.lvl[a][s]);
+  const bad = Object.keys(H.sum).filter(id => H.sum[id].level === 2 && views[id]);
+  return (hot.length ? 'At ' + mmss(s) + ': <b>' + esc(nodeName(hot[0])) + '</b> ' + esc(E.HEALTH_LABEL[H.cause[hot[0]][s]] || '') + (hot.length > 1 ? ', ' + (hot.length - 1) + ' more node' + (hot.length > 2 ? 's' : '') + ' strained or failing' : '') + '.' : 'At ' + mmss(s) + ' every node is healthy.') +
+    (bad.length ? ' Over the run, ' + bad.slice(0, 3).map(id => '<b>' + esc(nodeName(id)) + '</b> (' + esc(E.HEALTH_LABEL[H.sum[id].cause] || '') + ')').join(', ') + ' failed most often.' : '');
+}
+function applyLook(v, x, hue) {
+  const X = v.refs, fr = v.g.querySelector('.frame');
+  const key = x ? x.i.toFixed(2) + '|' + x.text + '|' + hue : '';
+  if (v.lk === key) return;
+  v.lk = key; v.hl = -1;
+  v.g.classList.remove('h1', 'h2');
+  if (!x) { fr.removeAttribute('style'); X.hb.setAttribute('opacity', 0); return; }
+  fr.setAttribute('style', 'stroke:color-mix(in srgb, ' + hue + ' ' + Math.round(15 + 85 * x.i) + '%, var(--line));stroke-width:' + (1.2 + 2.6 * x.i).toFixed(2) + 'px' + (x.i >= 0.75 ? ';filter:drop-shadow(0 0 6px color-mix(in srgb, ' + hue + ' 50%, transparent))' : ''));
+  const strong = x.i >= 0.5;
+  X.hbt.textContent = x.text;
+  const tw = x.text.length * 5.7 + 14;
+  X.hbr.setAttribute('x', -tw); X.hbr.setAttribute('width', tw); X.hbt.setAttribute('x', -7);
+  X.hbr.setAttribute('fill', strong ? hue : 'var(--panel)'); X.hbr.setAttribute('stroke', hue); X.hbt.setAttribute('fill', strong ? '#fff' : 'var(--ink)');
+  X.hbTitle.textContent = x.title || '';
+  X.hb.setAttribute('opacity', 1);
+}
+
 // ---------- live canvas ----------
 const dotsLayer = $('#dots');
 const dots = [];
@@ -1144,10 +1312,15 @@ function updateLive(t) {
   if (!R) return;
   const s = clamp(Math.floor(t), 0, R.D - 1), fr = R.frames[s];
   const slo = R.spec.slo, H = R.health;
+  const LV = S.lens !== 'perf' ? lensView(R, s) : null, hue = lensOf(S.lens).hue;
+  $('#linfo').innerHTML = LV ? LV.headline : perfHeadline(R, s);
   for (const id in views) {
     const v = views[id], n = v.n, X = v.refs;
     const hl = H && H.lvl[id] ? H.lvl[id][s] : 0, hc = hl ? H.cause[id][s] : null;
-    if (v.hl !== hl || v.hc !== hc) {
+    if (LV) applyLook(v, LV.nodes[id], hue);
+    else if (v.lk) { applyLook(v, null, hue); v.lk = null; v.hl = -1; }
+    if (!LV && (v.hl !== hl || v.hc !== hc)) {
+      X.hbr.setAttribute('stroke', 'none'); X.hbt.setAttribute('fill', '#fff'); X.hbTitle.textContent = '';
       v.hl = hl; v.hc = hc;
       v.g.classList.toggle('h1', hl === 1); v.g.classList.toggle('h2', hl === 2);
       if (hl) {
@@ -1216,8 +1389,10 @@ function updateLive(t) {
     const v = fl ? fl[s] / R.flowMax[id] : 0;
     ev.wire.setAttribute('stroke-width', (1.6 + 4 * v).toFixed(2));
     const lk = [ev.e.from, ev.e.to].map(id => fr.links[id]).find(x => x && x.factor < 1);
-    const th = H && H.lvl[ev.e.to] ? H.lvl[ev.e.to][s] : 0;
+    const th = !LV && H && H.lvl[ev.e.to] ? H.lvl[ev.e.to][s] : 0;
     ev.wire.setAttribute('stroke', lk || th === 2 ? 'var(--crit)' : th === 1 ? 'var(--warn)' : edgeColor(ev.e));
+    const lx = LV && (LV.nodes[ev.e.to] || LV.nodes[ev.e.from]);
+    if (lx && lx.i > 0.05) { ev.wire.style.stroke = 'color-mix(in srgb, ' + hue + ' ' + Math.round(25 + 75 * lx.i) + '%, ' + edgeColor(ev.e) + ')'; } else ev.wire.style.stroke = '';
     if (lk) ev.wire.setAttribute('stroke-dasharray', '6 4'); else ev.wire.removeAttribute('stroke-dasharray');
     ev.flow.setAttribute('opacity', v > 0.01 ? 0.9 : 0);
     ev.flow.style.strokeDashoffset = String(-(t * 30) % 120);
@@ -1779,6 +1954,7 @@ function loadTemplate(id) {
   S.nid = 100; S.needFit = true;
   renderPalette(); renderGraph(); requestAnimationFrame(fit); renderDetails(); scheduleRun(0);
 }
+renderLensBar();
 loadTemplate('burst');
 requestAnimationFrame(loop);
 window.addEventListener('resize', () => {});
