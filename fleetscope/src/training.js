@@ -14,8 +14,11 @@
     ],
     switchMixAtH: 4,
     ckptMin: 45, ckptGBs: 20, asyncCkpt: false, restartMin: 12, faultPerGpuDay: 0.03, repairH: 4, spares: 1,
-    stragglerShare: 0.01, stragglerSlow: 0.12, queueWaitS: 0, faultLog: null
+    stragglerShare: 0.01, stragglerSlow: 0.12, queueWaitS: 0, faultLog: null,
+    elastic: false, powerCapPct: 100, sites: 1, wanGbps: 400
   };
+  // Board power per GPU (W), for power caps and energy.
+  const TDP = { A100: 400, L40S: 350, H100: 700, H200: 700, MI300X: 750, B200: 1000 };
   const PHASES = ['queue', 'data', 'compute', 'straggler', 'sync', 'optimizer', 'checkpoint', 'restart', 'lost'];
   const PHASE_LABEL = { queue: 'waiting to be scheduled', data: 'waiting on data loading', compute: 'computing', straggler: 'waiting on slow GPUs', sync: 'waiting on gradient sync', optimizer: 'optimizer step', checkpoint: 'writing checkpoints', restart: 'restarting after faults', lost: 'redoing work lost to faults' };
 
@@ -31,13 +34,17 @@
   function stepModel(s, mix) {
     const M = E.MODELS[s.model] || E.MODELS['llama-70b'], G = E.GPUS[s.gpu] || E.GPUS.H100;
     const N = s.gpus, tokens = s.batchMTokens * 1e6, dp = Math.max(1, Math.floor(N / (s.tp * s.pp)));
-    const compute = 6 * M.active * 1e9 * tokens / (N * G.bf16 * 1e12 * s.kernelEff);
+    // a power cap below board power costs throughput sub-linearly (clocks drop less than power)
+    const powerFactor = s.powerCapPct < 100 ? Math.pow(Math.max(0.3, s.powerCapPct / 100), 0.35) : 1;
+    const compute = 6 * M.active * 1e9 * tokens / (N * G.bf16 * 1e12 * s.kernelEff * powerFactor);
     const tpOver = s.tp > 1 ? compute * 0.06 * Math.log2(s.tp) : 0;
     const bubble = s.pp > 1 ? compute * (s.pp - 1) / (s.microbatches + s.pp - 1) : 0;
     const gradBytes = 2 * M.params * 1e9 / (s.tp * s.pp);
     const multiNode = N > s.gpusPerNode;
     const bw = (multiNode ? s.ibGbpsPerGpu / 8 : s.nvlinkGBs) * 1e9;
-    const comm = dp > 1 ? 2 * (dp - 1) / dp * gradBytes / bw : 0;
+    // split across two sites, the reduced gradients also cross the WAN once per step (hierarchical all-reduce)
+    const cross = s.sites > 1 ? 2 * M.params * 1e9 / (s.wanGbps * 1e9 / 8) : 0;
+    const comm = (dp > 1 ? 2 * (dp - 1) / dp * gradBytes / bw : 0) + cross;
     const sync = comm * (1 - s.overlap);
     const optimizer = 16 * M.params * 1e9 / N / (G.bw * 1e12 * 0.5);
     const bytes = tokens * mix.bytesPerToken, miss = 1 - s.cacheHit;
@@ -49,7 +56,7 @@
     const ckptBytes = 14 * M.params * 1e9;
     const ckptWrite = ckptBytes / (s.ckptGBs * 1e9);
     const minGpus = Math.ceil(16 * M.params * 1e9 / (0.75 * G.hbm * 1e9));
-    return { compute, tpOver, bubble, busy, comm, sync, optimizer, dataRaw, io, cpu, data, dataBound: cpu >= io ? 'cpu' : 'io', bytes, tokens, dp, ckptWrite, ckptBytes, minGpus, multiNode, flops: 6 * M.active * 1e9 * tokens };
+    return { compute, tpOver, bubble, busy, comm, cross, powerFactor, sync, optimizer, dataRaw, io, cpu, data, dataBound: cpu >= io ? 'cpu' : 'io', bytes, tokens, dp, ckptWrite, ckptBytes, minGpus, multiNode, flops: 6 * M.active * 1e9 * tokens };
   }
 
   // Parses a GPU fault log: CSV or JSON lines with a node/host, a GPU index and optionally a time and Xid.
@@ -110,10 +117,14 @@
     const models = s.mixes.map(m => stepModel(s, m));
     const mixAt = tt => (s.mixes.length > 1 && tt >= s.switchMixAtH * 3600 ? 1 : 0);
     let stepsSinceCkpt = [];
+    const shrunk = [];
+    let shrunkS = 0;
     while (t < H) {
       const mi = mixAt(t), m = models[mi];
       const jitter = 1 + 0.01 * rng.normal();
-      const compute = (m.compute + m.tpOver + m.bubble) * jitter;
+      for (let i = shrunk.length - 1; i >= 0; i--) if (shrunk[i].until <= t) shrunk.splice(i, 1);
+      const lost = shrunk.reduce((a, x) => a + x.gpus, 0), scale = lost ? N / Math.max(1, N - lost) : 1;
+      const compute = (m.compute + m.tpOver + m.bubble) * jitter * scale;
       const strag = compute * (maxSlow - 1);
       const total = m.data + compute + strag + m.sync + m.optimizer;
       // a fault during this step?
@@ -128,6 +139,7 @@
         tokens = ckptTokens; stepsSinceCkpt = [];
         let down = s.restartMin * 60;
         if (sparesLeft > 0) { sparesLeft--; sparesBack.push(tf + s.repairH * 3600); sparesBack.sort((a, b) => a - b); }
+        else if (s.elastic) { shrunk.push({ until: tf + s.repairH * 3600, gpus: s.gpusPerNode }); f.elastic = true; }   // elastic: carry on without the node
         else down += s.repairH * 3600;   // no spare: wait for the node to be repaired
         f.lostS = lostS; f.down = down; f.spare = sparesLeft >= 0 && down === s.restartMin * 60;
         const t1 = Math.min(H, tf + down);
@@ -139,7 +151,8 @@
         continue;
       }
       if (t + total > H) break;
-      const st = { t, mix: mi, data: m.data, compute, straggler: strag, sync: m.sync, optimizer: m.optimizer, total, tokens: m.tokens, bytes: m.bytes, lost: false };
+      const st = { t, mix: mi, data: m.data, compute, straggler: strag, sync: m.sync, optimizer: m.optimizer, total, tokens: m.tokens, bytes: m.bytes, lost: false, shrunk: lost };
+      if (lost) shrunkS += total;
       steps.push(st); stepsSinceCkpt.push(st);
       per.data += m.data; per.compute += compute; per.straggler += strag; per.sync += m.sync; per.optimizer += m.optimizer;
       for (let g = 0; g < N; g++) { gpuS.compute[g] += compute * slow[g]; gpuS.straggler[g] += compute * (maxSlow - slow[g]); gpuS.data[g] += m.data; gpuS.sync[g] += m.sync; gpuS.optimizer[g] += m.optimizer; }
@@ -174,11 +187,13 @@
       wallH: wall / 3600, steps: steps.length, keptSteps: kept.length, tokensB: keptTokens / 1e9, tokensPerS: wall ? keptTokens / wall : 0,
       goodput: shares.compute + shares.optimizer, mfu: wall ? usefulFlops / (wall * N * G.bf16 * 1e12) : 0,
       faults: faults.filter(f => f.lostS != null).length, lostH: per.lost / 3600, restartH: per.restart / 3600,
+      shrunkH: shrunkS / 3600, elasticFaults: faults.filter(f => f.elastic).length,
+      energyMWh: N * (TDP[s.gpu] || 700) * (s.powerCapPct / 100) * wall * (0.35 + 0.65 * Math.min(1, shares.compute + shares.optimizer + shares.straggler)) / 3.6e9,
       dataGBs: steps.length ? steps.reduce((a, x) => a + x.bytes, 0) / steps.reduce((a, x) => a + x.total, 0) / 1e9 : 0,
       bottleneck: losses[0] && losses[0][1] > 0.02 ? { phase: losses[0][0], share: losses[0][1], label: PHASE_LABEL[losses[0][0]] } : null,
       losses, shares, minGpus: models[0].minGpus, nodes, dp: models[0].dp, maxSlow, stragglers: slowRank.filter(x => x.slow > 1.03).length
     };
-    return { spec: s, N, nodes, slow, steps, segs, faults: faults.filter(f => f.lostS != null), shares, per, byMix, gpuS, idleGpuH, nodeFaults, gpuFaultN, slowRank, models, summary, PHASE_LABEL };
+    return { spec: s, N, nodes, slow, steps, TDP: TDP[s.gpu] || 700, segs, faults: faults.filter(f => f.lostS != null), shares, per, byMix, gpuS, idleGpuH, nodeFaults, gpuFaultN, slowRank, models, summary, PHASE_LABEL };
   }
 
   // Training job state at time t: which phase each GPU is in (for the GPU-centric view).

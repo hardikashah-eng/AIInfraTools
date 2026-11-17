@@ -78,6 +78,7 @@
       (s.mixes.length > 1 ? row('Switch mix at hour', 'switchMixAtH', s.switchMixAtH, 0, 168, 0.5) : '');
     h += '<h3>Checkpoints and faults</h3>' + row('Checkpoint every (min)', 'ckptMin', s.ckptMin, 0, 600, 1) + row('Checkpoint write GB/s', 'ckptGBs', s.ckptGBs, 0.5, 1000, 0.5) + chk('Asynchronous checkpoints', 'asyncCkpt', s.asyncCkpt) +
       row('Faults per GPU-day', 'faultPerGpuDay', s.faultPerGpuDay, 0, 2, 0.005) + row('Restart + reload (min)', 'restartMin', s.restartMin, 0, 240, 1) + row('Node repair (h)', 'repairH', s.repairH, 0, 72, 0.5) + row('Hot spare nodes', 'spares', s.spares, 0, 64, 1) +
+      chk('Elastic: carry on with fewer nodes instead of waiting for repair', 'elasticFlag', s.elastic) + row('GPU power cap (% of board power)', 'powerCapPct', s.powerCapPct, 30, 100, 5) + row('Sites the job spans', 'sites', s.sites, 1, 2, 1) + (s.sites > 1 ? row('WAN between sites (Gb/s)', 'wanGbps', s.wanGbps, 10, 3200, 10) : '') +
       row('Slow-GPU share', 'stragglerShare', s.stragglerShare, 0, 0.5, 0.005, 'Share of GPUs running slow (thermal throttling, ECC retries, a weak link)') + row('Slowdown of slow GPUs', 'stragglerSlow', s.stragglerSlow, 0, 1, 0.01) + row('Seed', 'seed', s.seed, 1, 9999, 1);
     h += '<h3>Scheduling</h3>' + '<label class="chk"><input type="checkbox" id="tUseCluster"' + (TS.useCluster ? ' checked' : '') + '> Start when the Cluster view’s scheduler admits it</label><div class="note">Runs this job through the cluster from the Cluster tab, as its pre-training workload, to get the admission wait.</div>';
     $('#tCfg').innerHTML = h;
@@ -87,7 +88,9 @@
     const t = e.target;
     if (t.id === 'tUseCluster') { TS.useCluster = t.checked; schedule(); return; }
     if (!t.dataset.path) return;
+    if (t.dataset.path === 'elasticFlag') { TS.spec.elastic = t.checked; schedule(); return; }
     setPath(t.dataset.path, t.type === 'checkbox' ? t.checked : t.tagName === 'SELECT' ? t.value : +t.value);
+    if (t.dataset.path === 'sites') renderCfg();
     schedule();
   });
   let timer = 0;
@@ -151,7 +154,8 @@
       tile('Data throughput', s.dataGBs.toFixed(2) + ' GB/s', '', s.dataGBs, bb.dataGBs, false, v => v.toFixed(2) + ' GB/s'),
       tile('GPU faults (restarts)', fInt(s.faults), s.faults ? 'warn' : '', s.faults, bb.faults, true, fInt),
       tile('Work lost + restart', fS((s.lostH + s.restartH) * 3600), s.lostH + s.restartH > 0.5 ? 'crit' : '', s.lostH + s.restartH, b ? bb.lostH + bb.restartH : NaN, true, v => fS(v * 3600)),
-      tile('Waited to start', fS(TS.run.spec.queueWaitS), TS.run.spec.queueWaitS > 1800 ? 'crit' : '', TS.run.spec.queueWaitS, b ? TS.baseline.queueWaitS : NaN, true, fS)
+      tile('Energy', s.energyMWh.toFixed(2) + ' MWh', '', s.energyMWh, bb.energyMWh, true, v => v.toFixed(2) + ' MWh'),
+            tile('Waited to start', fS(TS.run.spec.queueWaitS), TS.run.spec.queueWaitS > 1800 ? 'crit' : '', TS.run.spec.queueWaitS, b ? TS.baseline.queueWaitS : NaN, true, fS)
     ].join('');
   }
   function bottleneckText() {
