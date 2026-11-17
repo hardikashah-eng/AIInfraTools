@@ -1,0 +1,1332 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>FleetScope</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans+Condensed:wght@500;600&family=IBM+Plex+Sans:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+/* Layout: editor shell. Toolbar on top; node palette left; graph canvas centre with timeline and charts dock under it; details panel right. */
+:root {
+  --bg: #e9edf1; --panel: #ffffff; --panel-2: #f4f6f8; --canvas: #e3e8ee; --grid: rgba(40, 60, 80, .09);
+  --ink: #16212b; --muted: #5a6876; --line: #d3dae1;
+  --accent: #1f5fd1; --onprem: #1f5fd1; --neo: #b45f12; --train: #148a8a;
+  --n-src: #2d8a57; --n-route: #56677a; --n-link: #8a5cd6; --n-set: #6b7785;
+  --good: #1f8a4c; --warn: #b98000; --crit: #c8372d;
+  --c-queue: #d9653b; --c-prefill: #1f5fd1; --c-xfer: #8a5cd6; --c-dwait: #8d99a6;
+  --font-ui: 'IBM Plex Sans', system-ui, -apple-system, 'Segoe UI', sans-serif;
+  --font-display: 'IBM Plex Sans Condensed', 'IBM Plex Sans', system-ui, sans-serif;
+  --font-mono: 'IBM Plex Mono', ui-monospace, 'SFMono-Regular', Menlo, monospace;
+  color-scheme: light;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #0b1015; --panel: #131a21; --panel-2: #18212a; --canvas: #0e141a; --grid: rgba(160, 190, 220, .07);
+    --ink: #e2e8ed; --muted: #94a3b0; --line: #2a3640;
+    --accent: #6f9dff; --onprem: #6f9dff; --neo: #e59a4f; --train: #3cc2bd;
+    --n-src: #4cc38a; --n-route: #8fa1b3; --n-link: #b08cf2; --n-set: #8c98a4;
+    --good: #45c181; --warn: #e2b440; --crit: #f0685c;
+    --c-queue: #f0875e; --c-prefill: #6f9dff; --c-xfer: #b08cf2; --c-dwait: #7d8a96;
+    color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #0b1015; --panel: #131a21; --panel-2: #18212a; --canvas: #0e141a; --grid: rgba(160, 190, 220, .07);
+  --ink: #e2e8ed; --muted: #94a3b0; --line: #2a3640;
+  --accent: #6f9dff; --onprem: #6f9dff; --neo: #e59a4f; --train: #3cc2bd;
+  --n-src: #4cc38a; --n-route: #8fa1b3; --n-link: #b08cf2; --n-set: #8c98a4;
+  --good: #45c181; --warn: #e2b440; --crit: #f0685c;
+  --c-queue: #f0875e; --c-prefill: #6f9dff; --c-xfer: #b08cf2; --c-dwait: #7d8a96;
+  color-scheme: dark;
+}
+* { box-sizing: border-box; }
+html, body { height: 100%; margin: 0; }
+body { background: var(--bg); color: var(--ink); font: 13px/1.45 var(--font-ui); }
+button, select, input { font: inherit; color: inherit; }
+.shell { display: grid; grid-template-columns: 210px minmax(0, 1fr) 340px; grid-template-rows: auto minmax(0, 1fr); height: 100%; }
+/* toolbar */
+.toolbar { grid-column: 1 / -1; display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; padding: 8px 12px; background: var(--panel); border-bottom: 1px solid var(--line); }
+.brand { display: flex; align-items: baseline; gap: 6px; margin-right: 4px; }
+.brand b { font: 600 19px/1 var(--font-display); }
+.brand span { font-size: 11px; color: var(--muted); border: 1px solid var(--line); border-radius: 99px; padding: 0 7px; }
+.tb { display: flex; align-items: center; gap: 6px; }
+.tb select, .tb button { border: 1px solid var(--line); background: var(--panel-2); border-radius: 7px; padding: 4px 9px; cursor: pointer; }
+.tb button:hover, .tb select:hover { border-color: var(--accent); }
+.tb .play { background: var(--accent); border-color: var(--accent); color: #fff; min-width: 84px; font-weight: 600; }
+.clock { font: 500 13px var(--font-mono); font-variant-numeric: tabular-nums; min-width: 104px; text-align: center; }
+.status { font-size: 12px; color: var(--muted); margin-left: auto; }
+.status b { color: var(--ink); font-weight: 500; }
+.status .bad { color: var(--crit); }
+/* palette */
+.palette { background: var(--panel); border-right: 1px solid var(--line); overflow-y: auto; padding: 10px; }
+.palette h3, .details h3.sec { font: 600 12px var(--font-display); text-transform: uppercase; letter-spacing: .7px; color: var(--muted); margin: 12px 0 6px; }
+.palette h3:first-child { margin-top: 0; }
+.pitem { display: flex; gap: 8px; align-items: flex-start; border: 1px solid var(--line); background: var(--panel-2); border-radius: 8px; padding: 6px 8px; margin-bottom: 6px; cursor: grab; user-select: none; }
+.pitem:hover { border-color: var(--accent); }
+.pitem:active { cursor: grabbing; }
+.pitem i { flex: 0 0 4px; align-self: stretch; border-radius: 2px; }
+.pitem b { display: block; font-size: 12.5px; font-weight: 600; }
+.pitem span { display: block; font-size: 11px; color: var(--muted); line-height: 1.3; }
+.pitem.off { opacity: .45; cursor: not-allowed; }
+.probs { list-style: none; margin: 0; padding: 0; font-size: 11.5px; }
+.probs li { padding: 5px 6px; border-radius: 6px; margin-bottom: 4px; cursor: pointer; border-left: 3px solid var(--warn); background: var(--panel-2); }
+.probs li.err { border-left-color: var(--crit); }
+.probs li:hover { outline: 1px solid var(--accent); }
+.help { font-size: 11px; color: var(--muted); line-height: 1.5; }
+.help kbd { font: 10.5px var(--font-mono); border: 1px solid var(--line); border-radius: 4px; padding: 0 4px; background: var(--panel-2); }
+/* centre */
+.center { display: block; overflow-y: auto; min-height: 0; min-width: 0; }
+.kpis { display: grid; grid-template-columns: repeat(auto-fit, minmax(100px, 1fr)); gap: 6px; padding: 8px 10px 0; }
+.kpi { background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 5px 9px; position: relative; overflow: hidden; }
+.kpi::before { content: ''; position: absolute; left: 0; top: 0; bottom: 0; width: 3px; background: var(--line); }
+.kpi.good::before { background: var(--good); } .kpi.warn::before { background: var(--warn); } .kpi.crit::before { background: var(--crit); }
+.kpi.train::before { background: var(--train); }
+.kpi .k { font-size: 10.5px; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.kpi .v { font: 500 16px/1.2 var(--font-mono); font-variant-numeric: tabular-nums; }
+.kpi .d { font: 10.5px var(--font-mono); color: var(--muted); min-height: 14px; white-space: nowrap; }
+.kpi .d.better { color: var(--good); } .kpi .d.worse { color: var(--crit); }
+.canvasWrap { position: relative; margin: 8px 10px 0; border: 1px solid var(--line); border-radius: 10px; overflow: hidden; background: var(--canvas); height: clamp(420px, 64vh, 900px); }
+#graph { width: 100%; height: 100%; display: block; touch-action: none; user-select: none; }
+#graph text { font-family: var(--font-ui); }
+#graph .mono { font-family: var(--font-mono); }
+#graph .node { cursor: move; }
+#graph .node .frame { fill: var(--panel); stroke: var(--line); stroke-width: 1.2; }
+#graph .node.sel .frame { stroke: var(--accent); stroke-width: 2.4; }
+#graph .node.err .frame { stroke: var(--crit); stroke-width: 2; }
+#graph .pin { cursor: crosshair; }
+#graph .pin:hover { stroke-width: 3; }
+#graph .ehit { cursor: pointer; }
+#graph .edge.sel .wire { stroke: var(--accent) !important; }
+.hud { position: absolute; right: 8px; top: 8px; display: flex; gap: 4px; }
+.hud button { border: 1px solid var(--line); background: var(--panel); border-radius: 6px; padding: 2px 8px; cursor: pointer; font-family: var(--font-mono); }
+.toast { position: absolute; left: 50%; bottom: 12px; transform: translateX(-50%); background: var(--ink); color: var(--panel); padding: 6px 12px; border-radius: 8px; font-size: 12px; opacity: 0; pointer-events: none; transition: opacity .2s; }
+.toast.on { opacity: .92; }
+.legendHud { position: absolute; left: 10px; bottom: 8px; display: flex; gap: 10px; font-size: 11px; color: var(--muted); background: color-mix(in srgb, var(--panel) 80%, transparent); padding: 3px 8px; border-radius: 6px; }
+.legendHud i { display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-right: 4px; vertical-align: 0; }
+.timeline { margin: 6px 10px 0; display: grid; gap: 3px; }
+#vstrip { width: 100%; height: 12px; display: block; cursor: pointer; border-radius: 3px; }
+#scrub { width: 100%; accent-color: var(--accent); margin: 0; }
+.dock { margin: 8px 10px 10px; }
+.dock > summary { cursor: pointer; font: 600 12px var(--font-display); text-transform: uppercase; letter-spacing: .7px; color: var(--muted); }
+.charts { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 8px; margin-top: 6px; }
+.chart { background: var(--panel); border: 1px solid var(--line); border-radius: 9px; padding: 6px 8px; min-width: 0; }
+.chart h4 { font: 600 12px var(--font-display); margin: 0; color: var(--ink); }
+.chart h4 small { font: 400 10.5px var(--font-ui); color: var(--muted); margin-left: 4px; }
+.legend { display: flex; flex-wrap: wrap; gap: 2px 9px; font-size: 10.5px; color: var(--muted); margin: 2px 0; }
+.legend i { display: inline-block; width: 9px; height: 9px; border-radius: 2px; margin-right: 4px; vertical-align: -1px; }
+.legend i.dash { height: 0; border-top: 2px dashed; border-radius: 0; width: 12px; vertical-align: 3px; }
+.chart svg { width: 100%; height: auto; display: block; cursor: crosshair; }
+.chart svg text { font: 10px var(--font-mono); fill: var(--muted); }
+.chart.wide { grid-column: 1 / -1; }
+/* details */
+.details { background: var(--panel); border-left: 1px solid var(--line); overflow-y: auto; padding: 10px 12px 30px; font-size: 12.5px; }
+.details h2 { font: 600 16px var(--font-display); margin: 0; }
+.details .sub { color: var(--muted); font-size: 11.5px; margin: 2px 0 6px; }
+.typetag { display: inline-block; font-size: 10.5px; color: #fff; border-radius: 4px; padding: 0 6px; margin-bottom: 4px; }
+.ctl { margin: 8px 0 0; }
+.ctl label { display: flex; justify-content: space-between; gap: 8px; font-size: 12px; }
+.ctl label output { font: 11.5px var(--font-mono); color: var(--muted); white-space: nowrap; }
+.ctl input[type=range] { width: 100%; accent-color: var(--accent); margin: 3px 0 0; }
+.ctl select, .ctl input[type=number], .ctl input[type=text] { width: 100%; margin-top: 3px; padding: 4px 6px; border: 1px solid var(--line); border-radius: 6px; background: var(--panel-2); }
+.ctl.check label { justify-content: flex-start; align-items: center; gap: 8px; cursor: pointer; }
+.ctl .hint { font-size: 11px; color: var(--muted); margin-top: 2px; }
+.seg { display: flex; border: 1px solid var(--line); border-radius: 7px; overflow: hidden; margin-top: 4px; }
+.seg button { flex: 1; border: 0; background: var(--panel-2); padding: 4px; font-size: 11.5px; cursor: pointer; border-right: 1px solid var(--line); }
+.seg button:last-child { border-right: 0; }
+.seg button.on { background: var(--accent); color: #fff; }
+.grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 0 10px; }
+.readout { margin-top: 10px; background: var(--panel-2); border: 1px solid var(--line); border-radius: 8px; padding: 6px 9px; font-size: 11.5px; }
+.readout table { width: 100%; border-collapse: collapse; font-variant-numeric: tabular-nums; }
+.readout td:last-child { text-align: right; font-family: var(--font-mono); }
+.warnline { color: var(--crit); margin-top: 4px; font-size: 11.5px; }
+.row { display: flex; justify-content: space-between; gap: 8px; padding: 3px 0; border-bottom: 1px solid var(--line); }
+.row span:last-child { font-family: var(--font-mono); font-variant-numeric: tabular-nums; text-align: right; }
+.spark { width: 100%; height: 40px; display: block; margin: 2px 0 6px; }
+.sparklabel { font-size: 11px; color: var(--muted); margin-top: 6px; }
+.blind { margin: 8px 0; padding: 6px 8px; border-radius: 7px; font-size: 11.5px; background: repeating-linear-gradient(135deg, color-mix(in srgb, var(--neo) 14%, transparent) 0 6px, transparent 6px 12px); border: 1px solid color-mix(in srgb, var(--neo) 50%, var(--line)); }
+.btnrow { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 10px; }
+.btn { border: 1px solid var(--line); background: var(--panel-2); border-radius: 7px; padding: 4px 10px; cursor: pointer; font-size: 12px; }
+.btn:hover { border-color: var(--accent); }
+.btn.danger { color: var(--crit); }
+.targets { list-style: none; padding: 0; margin: 4px 0 0; }
+.targets li { display: flex; justify-content: space-between; align-items: center; gap: 6px; padding: 3px 0; border-bottom: 1px solid var(--line); font-size: 12px; }
+.reqlist { list-style: none; margin: 4px 0 0; padding: 0; }
+.reqlist li { padding: 5px 4px; border-bottom: 1px solid var(--line); cursor: pointer; display: grid; grid-template-columns: 1fr auto; gap: 2px 8px; border-radius: 6px; }
+.reqlist li:hover { background: var(--panel-2); }
+.reqlist .bar { grid-column: 1 / -1; display: flex; height: 6px; border-radius: 3px; overflow: hidden; background: var(--line); }
+.reqlist .meta { color: var(--muted); font-size: 10.5px; font-family: var(--font-mono); }
+.reqlist .ttft { font-family: var(--font-mono); }
+.wf .wrow { display: grid; grid-template-columns: 86px 1fr 60px; gap: 6px; align-items: center; font-size: 11.5px; margin: 3px 0; }
+.wf .track { position: relative; height: 10px; background: var(--panel-2); border-radius: 3px; }
+.wf .track i { position: absolute; top: 0; bottom: 0; border-radius: 3px; }
+.wf .wrow span:last-child { font-family: var(--font-mono); text-align: right; }
+.linkbtn { background: none; border: 0; color: var(--accent); cursor: pointer; padding: 0; text-decoration: underline; font-size: 12px; }
+.pill { display: inline-block; font-size: 11px; padding: 0 7px; border-radius: 99px; border: 1px solid var(--line); }
+.pill.ok { color: var(--good); border-color: var(--good); } .pill.bad { color: var(--crit); border-color: var(--crit); }
+.upload { display: block; margin-top: 8px; border: 1px dashed var(--line); border-radius: 8px; padding: 8px; text-align: center; cursor: pointer; font-size: 11.5px; color: var(--muted); }
+.upload:hover, .upload.drag { border-color: var(--accent); color: var(--ink); }
+.upload input { display: none; }
+.note { font-size: 11px; color: var(--muted); margin-top: 4px; }
+.note.err { color: var(--crit); }
+:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+@media (max-width: 1300px) { .charts { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+@media (max-width: 1000px) {
+  .shell { grid-template-columns: 1fr; grid-template-rows: auto auto 70vh auto; height: auto; }
+  .palette { border-right: 0; border-bottom: 1px solid var(--line); max-height: 220px; }
+  .details { border-left: 0; border-top: 1px solid var(--line); }
+}
+@media (prefers-reduced-motion: reduce) { * { transition: none !important; } }
+</style>
+</head>
+<body>
+<div class="shell">
+  <header class="toolbar">
+    <div class="brand"><b>FleetScope</b><span title="Performance comes from spec-sheet figures and fixed efficiency factors, not measurements">uncalibrated prototype</span></div>
+    <div class="tb">
+      <select id="tpl" aria-label="Load a template" title="Loading a template replaces the canvas"></select>
+    </div>
+    <div class="tb">
+      <button type="button" id="bPlay" class="play" title="Play or pause (Space)">&#9654; Play</button>
+      <button type="button" id="bBack" title="Back 1 s (Left arrow)" aria-label="Back one second">&#9664;1s</button>
+      <button type="button" id="bFwd" title="Forward 1 s (Right arrow)" aria-label="Forward one second">1s&#9654;</button>
+      <select id="speed" aria-label="Playback speed" title="Speed (keys 1 to 6)">
+        <option value="1">1×</option><option value="5">5×</option><option value="15" selected>15×</option><option value="30">30×</option><option value="60">60×</option><option value="120">120×</option>
+      </select>
+      <span class="clock" id="clock">00:00 / 00:00</span>
+      <button type="button" id="bNext" title="Next second with TTFT breaches (N)">Next breach</button>
+    </div>
+    <div class="tb">
+      <button type="button" id="pinBtn">Pin as baseline</button>
+      <button type="button" id="clearBtn" hidden>Clear baseline</button>
+      <button type="button" id="copyBtn" title="Copy this graph as JSON">Copy graph JSON</button>
+    </div>
+    <div class="status" id="status">Simulating…</div>
+  </header>
+  <aside class="palette" id="palette"></aside>
+  <section class="center">
+    <div class="kpis" id="kpis"></div>
+    <div class="canvasWrap" id="cwrap">
+      <svg id="graph" aria-label="Fleet graph editor">
+        <defs>
+          <pattern id="gridp" width="24" height="24" patternUnits="userSpaceOnUse"><path d="M24 0H0V24" fill="none" stroke="var(--grid)" stroke-width="1"/></pattern>
+          <pattern id="hatch" width="6" height="6" patternUnits="userSpaceOnUse" patternTransform="rotate(45)"><line x1="0" y1="0" x2="0" y2="6" stroke="var(--line)" stroke-width="3"/></pattern>
+        </defs>
+        <g id="vp"><rect x="-20000" y="-20000" width="40000" height="40000" fill="url(#gridp)" id="bg"/><g id="edges"></g><g id="nodes"></g><g id="dots"></g><path id="tempWire" fill="none" stroke="var(--accent)" stroke-width="2" stroke-dasharray="5 4" d=""/></g>
+      </svg>
+      <div class="hud"><button type="button" id="zIn" aria-label="Zoom in">+</button><button type="button" id="zOut" aria-label="Zoom out">&minus;</button><button type="button" id="zFit">Fit</button></div>
+      <div class="legendHud"><span><i style="background:var(--onprem)"></i>request to on-prem</span><span><i style="background:var(--neo)"></i>request to neocloud</span><span><i style="background:var(--c-xfer)"></i>KV cache transfer</span><span><i style="background:var(--train)"></i>gradient sync</span></div>
+      <div class="toast" id="toast" role="status"></div>
+    </div>
+    <div class="timeline">
+      <svg id="vstrip" viewBox="0 0 1000 12" preserveAspectRatio="none" aria-label="Seconds with TTFT breaches; click to jump"></svg>
+      <input type="range" id="scrub" min="0" max="600" step="0.1" value="0" aria-label="Playhead">
+    </div>
+    <details class="dock" open><summary>Charts</summary><div class="charts" id="charts"></div></details>
+  </section>
+  <aside class="details" id="details" aria-live="polite"></aside>
+</div>
+<script>
+/*ENGINE*/
+</script>
+<script>
+/*TEMPLATES*/
+</script>
+<script>
+(function () {
+'use strict';
+const E = window.FleetEngine, TP = window.FleetTemplates, NT = TP.NODE_TYPES;
+const $ = s => document.querySelector(s);
+const NS = 'http://www.w3.org/2000/svg';
+function el(tag, attrs, parent, text) {
+  const n = document.createElementNS(NS, tag);
+  if (attrs) for (const k in attrs) if (attrs[k] != null) n.setAttribute(k, attrs[k]);
+  if (text != null) n.textContent = text;
+  if (parent) parent.appendChild(n);
+  return n;
+}
+const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
+const esc = s => String(s).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c]);
+const mmss = s => { s = Math.max(0, Math.floor(s)); return String(Math.floor(s / 60)).padStart(2, '0') + ':' + String(s % 60).padStart(2, '0'); };
+const fS = s => !isFinite(s) ? '–' : s < 1 ? Math.round(s * 1000) + ' ms' : s < 100 ? s.toFixed(s < 10 ? 2 : 1) + ' s' : Math.round(s) + ' s';
+const fMs = s => !isFinite(s) ? '–' : (s < 0.01 ? (s * 1000).toFixed(1) : Math.round(s * 1000)) + ' ms';
+const fPct = v => !isFinite(v) ? '–' : (v * 100).toFixed(v >= 0.995 && v < 1 ? 1 : 0) + '%';
+const fK = v => !isFinite(v) ? '–' : v >= 1e6 ? (v / 1e6).toFixed(1) + 'M' : v >= 1e4 ? Math.round(v / 1e3) + 'k' : v >= 1e3 ? (v / 1e3).toFixed(1) + 'k' : String(Math.round(v));
+const fUsd = v => !isFinite(v) ? '–' : v >= 1000 ? '$' + Math.round(v).toLocaleString('en-US') : '$' + v.toFixed(v < 10 ? 2 : 0);
+const fInt = v => Math.round(v).toLocaleString('en-US');
+const roleName = { agg: 'Aggregated', prefill: 'Prefill', decode: 'Decode' };
+
+// ---------- state ----------
+const S = { graph: null, sel: null, view: { x: 40, y: 20, k: 0.8 }, run: null, baseline: null, T: 0, playing: false, speed: 15, probs: { errors: [], warn: [] }, nid: 1, tpl: 'burst' };
+const traces = {};
+function traceLookup(key, scale) {
+  let tr;
+  if (key === 'uploaded') tr = traces.uploaded ? traces.uploaded.trace : [];
+  else tr = traces[key] || (traces[key] = E.genTrace(key, 7));
+  return E.scaleTrace(tr, scale || 1, 7);
+}
+const nodeById = id => S.graph.nodes.find(n => n.id === id);
+const typeColor = n => n.type === 'pool' ? (n.cfg.siteKind === 'neo' ? 'var(--neo)' : 'var(--onprem)') : n.type === 'train' ? 'var(--train)' : n.type === 'link' ? 'var(--n-link)' : n.type === 'router' ? 'var(--n-route)' : (n.type === 'model' || n.type === 'slo') ? 'var(--n-set)' : 'var(--n-src)';
+
+// ---------- palette ----------
+function renderPalette() {
+  const p = $('#palette');
+  let html = '', grp = '';
+  TP.PALETTE.forEach((it, i) => {
+    const g = NT[it.type].group;
+    if (g !== grp) { html += '<h3>' + g + '</h3>'; grp = g; }
+    const off = NT[it.type].singleton && S.graph && S.graph.nodes.some(n => n.type === it.type);
+    const col = it.type === 'pool' ? (it.cfg && it.cfg.siteKind === 'neo' ? 'var(--neo)' : 'var(--onprem)') : typeColor({ type: it.type, cfg: {} });
+    html += '<div class="pitem' + (off ? ' off' : '') + '" draggable="' + (!off) + '" data-i="' + i + '" tabindex="0" role="button" title="' + (off ? 'Only one per canvas' : 'Drag onto the canvas, or click to add') + '"><i style="background:' + col + '"></i><div><b>' + it.label + '</b><span>' + it.hint + '</span></div></div>';
+  });
+  html += '<h3>Problems</h3><ul class="probs" id="probs"></ul>';
+  html += '<h3>How to use</h3><div class="help">Drag nodes in, then wire an <b>output pin</b> (right) to an <b>input pin</b> (left). Click a node to edit it. Changes re-simulate and keep the playhead.<br><kbd>Space</kbd> play · <kbd>&larr;</kbd><kbd>&rarr;</kbd> step · <kbd>N</kbd> next breach · <kbd>Del</kbd> remove · <kbd>F</kbd> fit · scroll to zoom, drag the background to pan.</div>';
+  p.innerHTML = html;
+  renderProblems();
+}
+$('#palette').addEventListener('dragstart', e => { const it = e.target.closest('.pitem'); if (!it || it.classList.contains('off')) { e.preventDefault(); return; } e.dataTransfer.setData('text/plain', 'pal:' + it.dataset.i); e.dataTransfer.effectAllowed = 'copy'; });
+$('#palette').addEventListener('click', e => {
+  const it = e.target.closest('.pitem');
+  if (it && !it.classList.contains('off')) { const b = $('#graph').getBoundingClientRect(); addFromPalette(+it.dataset.i, toWorld(b.left + b.width / 2 - 120, b.top + b.height / 2 - 60)); return; }
+  const pr = e.target.closest('[data-node]');
+  if (pr) select({ type: 'node', id: pr.dataset.node });
+});
+$('#palette').addEventListener('keydown', e => { if (e.key === 'Enter') { const it = e.target.closest('.pitem'); if (it) it.click(); } });
+function addFromPalette(i, pt) {
+  const it = TP.PALETTE[i];
+  if (NT[it.type].singleton && S.graph.nodes.some(n => n.type === it.type)) return toast('Only one ' + NT[it.type].title + ' node per canvas.');
+  const id = it.type + (S.nid++);
+  const n = TP.node(id, it.type, Math.round(pt.x / 8) * 8, Math.round(pt.y / 8) * 8, it.cfg);
+  if (it.type === 'pool' && it.cfg && it.cfg.siteKind !== 'neo') {
+    const existing = S.graph.nodes.filter(m => m.type === 'pool' && m.cfg.siteKind === 'onprem').length;
+    if (existing) n.cfg.name = n.cfg.name + ' ' + (existing + 1);
+  }
+  S.graph.nodes.push(n);
+  renderGraph(); renderPalette(); select({ type: 'node', id }); scheduleRun();
+}
+function renderProblems() {
+  const ul = $('#probs');
+  if (!ul) return;
+  const items = S.probs.errors.map(e => ({ e, err: true })).concat(S.probs.warn.map(e => ({ e, err: false })));
+  ul.innerHTML = items.length ? items.map(x => '<li class="' + (x.err ? 'err' : '') + '"' + (x.e.node ? ' data-node="' + x.e.node + '"' : '') + '>' + esc(x.e.msg) + '</li>').join('') : '<li style="border-left-color:var(--good)">No problems. The graph compiles.</li>';
+}
+
+// ---------- view ----------
+const vp = $('#vp'), svg = $('#graph');
+function applyView() { vp.setAttribute('transform', 'translate(' + S.view.x + ' ' + S.view.y + ') scale(' + S.view.k + ')'); }
+function toWorld(cx, cy) { const b = svg.getBoundingClientRect(); return { x: (cx - b.left - S.view.x) / S.view.k, y: (cy - b.top - S.view.y) / S.view.k }; }
+function fit() {
+  const ns = S.graph.nodes;
+  if (!ns.length) return;
+  let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
+  for (const n of ns) { const v = views[n.id]; const w = NT[n.type].w, h = v ? v.h : 100; x0 = Math.min(x0, n.x); y0 = Math.min(y0, n.y); x1 = Math.max(x1, n.x + w); y1 = Math.max(y1, n.y + h); }
+  const b = svg.getBoundingClientRect();
+  const k = clamp(Math.min((b.width - 40) / (x1 - x0), (b.height - 50) / (y1 - y0)), 0.3, 1.2);
+  S.view = { k, x: (b.width - (x1 - x0) * k) / 2 - x0 * k, y: (b.height - 26 - (y1 - y0) * k) / 2 - y0 * k };
+  applyView();
+}
+function zoomAt(f, cx, cy) {
+  const b = svg.getBoundingClientRect();
+  const k = clamp(S.view.k * f, 0.25, 2);
+  const px = cx - b.left, py = cy - b.top;
+  S.view.x = px - (px - S.view.x) * k / S.view.k; S.view.y = py - (py - S.view.y) * k / S.view.k; S.view.k = k;
+  applyView();
+}
+svg.addEventListener('wheel', e => { e.preventDefault(); zoomAt(Math.exp(-e.deltaY * 0.0015), e.clientX, e.clientY); }, { passive: false });
+$('#zIn').onclick = () => { const b = svg.getBoundingClientRect(); zoomAt(1.2, b.left + b.width / 2, b.top + b.height / 2); };
+$('#zOut').onclick = () => { const b = svg.getBoundingClientRect(); zoomAt(1 / 1.2, b.left + b.width / 2, b.top + b.height / 2); };
+$('#zFit').onclick = fit;
+let toastT = 0;
+function toast(msg) { const t = $('#toast'); t.textContent = msg; t.classList.add('on'); clearTimeout(toastT); toastT = setTimeout(() => t.classList.remove('on'), 2600); }
+
+// ---------- graph rendering ----------
+const PIN_Y = 46;
+let views = {}, edgeViews = {};
+function nodeHeight(n) {
+  if (n.type === 'pool') { const g = poolGrid(n); return 74 + g.rows * (g.sz + 5) + 34; }
+  return { agent: 104, chat: 104, trace: 96, router: 104, link: 100, train: 110, model: 96, slo: 76 }[n.type] || 90;
+}
+function poolGrid(n) {
+  const c = n.cfg;
+  const maxN = Math.max(1, c.autoscale ? Math.max(c.min, c.max) : c.instances);
+  const w = NT.pool.w - 24;
+  const cols = Math.min(maxN, 8);
+  const sz = Math.max(14, Math.min(26, Math.floor((w - (cols - 1) * 5) / cols)));
+  return { maxN, cols, rows: Math.ceil(maxN / cols), sz };
+}
+function cfgLine(n) {
+  const c = n.cfg;
+  const prof = () => S.graph.nodes.find(m => m.type === 'model');
+  switch (n.type) {
+    case 'agent': return fInt(c.users) + ' agents · ' + c.turns + ' turns · ' + fK(c.contextTokens) + ' ctx';
+    case 'chat': return fInt(c.users) + ' users · ' + c.turns + ' turns · ' + c.thinkS + ' s think';
+    case 'trace': return (c.trace === 'uploaded' ? (traces.uploaded ? traces.uploaded.name : 'upload a CSV') : E.TRACES[c.trace].label.replace('Sample: ', '')) + ' · ' + c.scale + '×';
+    case 'router': return ({ 'primary-first': 'Primary first, burst at ' + c.burstWait + ' s', 'least-wait': 'Least estimated wait', 'round-robin': 'Round robin' })[c.policy];
+    case 'pool': { const m = prof(); const tp = m ? E.profile(c.gpu, m.cfg).tp : 1; return roleName[c.role] + ' · ' + c.gpu + (tp > 1 ? ' ×' + tp : '') + ' · ' + (c.autoscale ? c.min + '–' + c.max + ' inst, ' + c.coldStart + ' s cold' : c.instances + ' inst'); }
+    case 'link': return c.gbps + ' Gbps · ' + c.rttMs + ' ms RTT · $' + c.egressPerGB + '/GB';
+    case 'train': return E.MODELS[c.model].label.replace(/ \(.*\)/, '') + ' · ' + fInt(c.gpus) + ' × ' + c.gpu;
+    case 'model': return c.params + 'B params' + (c.active !== c.params ? ' (' + c.active + 'B active)' : '') + ' · ' + c.wPrec.toUpperCase();
+    case 'slo': return 'TTFT ≤ ' + c.ttft + ' s · TPOT ≤ ' + c.tpotMs + ' ms';
+  }
+  return '';
+}
+function renderGraph() {
+  const NL = $('#nodes'), EL = $('#edges');
+  NL.innerHTML = ''; EL.innerHTML = '';
+  views = {}; edgeViews = {};
+  for (const n of S.graph.nodes) buildNode(n, NL);
+  for (const e of S.graph.edges) buildEdge(e, EL);
+  markSelection(); markProblems();
+  if (S.run) updateLive(S.T);
+}
+function buildNode(n, layer) {
+  const w = NT[n.type].w, h = nodeHeight(n), col = typeColor(n);
+  const g = el('g', { class: 'node', 'data-node': n.id, transform: 'translate(' + n.x + ' ' + n.y + ')' }, layer);
+  el('rect', { class: 'frame', x: 0, y: 0, width: w, height: h, rx: 10 }, g);
+  el('path', { d: 'M0 10a10 10 0 0 1 10-10H' + (w - 10) + 'a10 10 0 0 1 10 10V30H0Z', fill: col, 'fill-opacity': 0.9 }, g);
+  el('text', { x: 12, y: 20, 'font-size': 12.5, 'font-weight': 600, fill: '#fff' }, g, n.cfg.name.length > 28 ? n.cfg.name.slice(0, 27) + '…' : n.cfg.name);
+  el('text', { x: w - 10, y: 20, 'font-size': 10, 'text-anchor': 'end', fill: '#fff', 'fill-opacity': 0.8 }, g, n.type === 'pool' ? n.cfg.site : NT[n.type].title);
+  el('text', { x: 12, y: 46, 'font-size': 11, fill: 'var(--muted)' }, g, cfgLine(n));
+  const v = { g, n, w, h, refs: {} };
+  const R = v.refs;
+  if (NT[n.type].inputs) el('circle', { class: 'pin in', 'data-pin': 'in', cx: 0, cy: PIN_Y, r: 6, fill: 'var(--panel)', stroke: col, 'stroke-width': 2 }, g);
+  if (NT[n.type].outputs) el('circle', { class: 'pin out', 'data-pin': 'out', cx: w, cy: PIN_Y, r: 6, fill: col, stroke: 'var(--panel)', 'stroke-width': 2 }, g);
+  const live = (y, size) => el('text', { x: 12, y, 'font-size': size || 11, fill: 'var(--ink)', class: 'mono' }, g, '');
+  if (n.type === 'pool') {
+    R.stats = live(64);
+    const G = poolGrid(n);
+    R.cells = [];
+    for (let i = 0; i < G.maxN; i++) {
+      const cx = 12 + (i % G.cols) * (G.sz + 5), cy = 74 + Math.floor(i / G.cols) * (G.sz + 5);
+      const c = el('rect', { x: cx, y: cy, width: G.sz, height: G.sz, rx: 4, fill: 'none', stroke: 'var(--line)', 'stroke-dasharray': '3 3' }, g);
+      const kv = el('rect', { x: cx + 2, y: cy + G.sz - 4, width: 0, height: 2, fill: 'var(--ink)', opacity: 0.55 }, g);
+      R.cells.push({ c, kv, sz: G.sz, tt: el('title', null, c, '') });
+    }
+    const qy = h - 18;
+    R.q = el('text', { x: 12, y: qy + 4, 'font-size': 10.5, fill: 'var(--muted)', class: 'mono' }, g, '');
+    el('rect', { x: 150, y: qy - 5, width: w - 162, height: 10, rx: 5, fill: 'var(--panel-2)', stroke: 'var(--line)' }, g);
+    R.qbar = el('rect', { x: 150, y: qy - 5, width: 0, height: 10, rx: 5, fill: 'var(--good)' }, g);
+    R.qw = w - 162;
+  } else if (n.type === 'link') {
+    R.t1 = live(66);
+    el('rect', { x: 12, y: 76, width: w - 24, height: 10, rx: 5, fill: 'var(--panel-2)', stroke: 'var(--line)' }, g);
+    R.bar = el('rect', { x: 12, y: 76, width: 0, height: 10, rx: 5, fill: 'var(--good)' }, g);
+    R.tbar = el('rect', { x: 12, y: 88, width: 0, height: 4, rx: 2, fill: 'var(--train)' }, g);
+    R.bw = w - 24;
+  } else if (n.type === 'train') {
+    R.t1 = live(66); R.t2 = live(84, 10.5);
+    el('rect', { x: 12, y: 94, width: w - 24, height: 6, rx: 3, fill: 'var(--panel-2)' }, g);
+    R.bar = el('rect', { x: 12, y: 94, width: 0, height: 6, rx: 3, fill: 'var(--train)' }, g);
+    R.bw = w - 24;
+  } else if (n.type === 'model') {
+    const m = E.profile('H100', n.cfg);
+    el('text', { x: 12, y: 66, 'font-size': 11, fill: 'var(--ink)', class: 'mono' }, g, 'KV ' + fK(m.kvBytesPerToken / 1024) + ' KB/token · ' + (m.wBytes / 1e9).toFixed(0) + ' GB weights');
+    el('text', { x: 12, y: 84, 'font-size': 10.5, fill: 'var(--muted)' }, g, 'Layers ' + n.cfg.layers + (n.cfg.mla ? ' · MLA ' + n.cfg.mla : ' · KV heads ' + n.cfg.kvHeads + ' × ' + n.cfg.headDim));
+  } else if (n.type === 'slo') {
+    R.t1 = live(64);
+  } else {
+    R.t1 = live(66); R.t2 = live(84, 10.5);
+  }
+  v.h = h;
+  views[n.id] = v;
+}
+function pinPos(n, side) { return { x: n.x + (side === 'out' ? NT[n.type].w : 0), y: n.y + PIN_Y }; }
+function bez(a, b) { const dx = Math.max(50, Math.abs(b.x - a.x) * 0.5); return [a, { x: a.x + dx, y: a.y }, { x: b.x - dx, y: b.y }, b]; }
+function bezPt(c, t) { const u = 1 - t; return { x: u * u * u * c[0].x + 3 * u * u * t * c[1].x + 3 * u * t * t * c[2].x + t * t * t * c[3].x, y: u * u * u * c[0].y + 3 * u * u * t * c[1].y + 3 * u * t * t * c[2].y + t * t * t * c[3].y }; }
+function edgeKind(e) {
+  const a = nodeById(e.from), b = nodeById(e.to);
+  if (!a || !b) return 'req';
+  if (a.type === 'train') return 'train';
+  if (a.type === 'pool' && a.cfg.role === 'prefill') return 'kv';
+  if (a.type === 'link') { const fromPre = S.graph.edges.some(x => x.to === a.id && nodeById(x.from) && nodeById(x.from).type === 'pool'); if (fromPre && b.type === 'pool' && b.cfg.role === 'decode') return 'kv'; }
+  return 'req';
+}
+function edgeColor(e) {
+  const k = edgeKind(e);
+  if (k === 'kv') return 'var(--c-xfer)';
+  if (k === 'train') return 'var(--train)';
+  const b = nodeById(e.to);
+  if (b && b.type === 'pool' && b.cfg.siteKind === 'neo') return 'var(--neo)';
+  if (b && b.type === 'link') return 'var(--neo)';
+  return 'var(--muted)';
+}
+function edgeD(c) { return 'M' + c[0].x + ' ' + c[0].y + 'C' + c[1].x + ' ' + c[1].y + ' ' + c[2].x + ' ' + c[2].y + ' ' + c[3].x + ' ' + c[3].y; }
+function buildEdge(e, layer) {
+  const a = nodeById(e.from), b = nodeById(e.to);
+  if (!a || !b) return;
+  const c = bez(pinPos(a, 'out'), pinPos(b, 'in'));
+  const g = el('g', { class: 'edge', 'data-edge': e.id }, layer);
+  const d = edgeD(c);
+  const hit = el('path', { class: 'ehit', d, stroke: 'transparent', 'stroke-width': 14, fill: 'none' }, g);
+  const wire = el('path', { class: 'wire', d, stroke: edgeColor(e), 'stroke-width': 2, fill: 'none', 'stroke-opacity': 0.75 }, g);
+  const flow = el('path', { d, stroke: edgeColor(e), 'stroke-width': 2, fill: 'none', 'stroke-dasharray': '2 10', 'stroke-linecap': 'round', opacity: 0 }, g);
+  const pts = []; for (let i = 0; i <= 24; i++) pts.push(bezPt(c, i / 24));
+  edgeViews[e.id] = { g, hit, wire, flow, pts, e };
+}
+function refreshEdges(nodeId) {
+  for (const id in edgeViews) {
+    const ev = edgeViews[id], e = ev.e;
+    if (nodeId && e.from !== nodeId && e.to !== nodeId) continue;
+    const c = bez(pinPos(nodeById(e.from), 'out'), pinPos(nodeById(e.to), 'in'));
+    const d = edgeD(c);
+    ev.hit.setAttribute('d', d); ev.wire.setAttribute('d', d); ev.flow.setAttribute('d', d);
+    ev.pts = []; for (let i = 0; i <= 24; i++) ev.pts.push(bezPt(c, i / 24));
+  }
+}
+function markSelection() {
+  for (const id in views) views[id].g.classList.toggle('sel', !!(S.sel && S.sel.type === 'node' && S.sel.id === id));
+  for (const id in edgeViews) edgeViews[id].g.classList.toggle('sel', !!(S.sel && S.sel.type === 'edge' && S.sel.id === id));
+}
+function markProblems() {
+  const bad = new Set(S.probs.errors.filter(e => e.node).map(e => e.node));
+  for (const id in views) views[id].g.classList.toggle('err', bad.has(id));
+}
+
+// ---------- pointer interaction ----------
+let drag = null;
+svg.addEventListener('pointerdown', e => {
+  if (e.button !== 0) return;
+  const pin = e.target.closest('.pin'), ng = e.target.closest('.node'), eg = e.target.closest('.edge');
+  svg.setPointerCapture(e.pointerId);
+  if (pin && pin.dataset.pin === 'out') {
+    const n = nodeById(ng.dataset.node);
+    drag = { kind: 'wire', from: n.id, start: pinPos(n, 'out') };
+  } else if (ng) {
+    const n = nodeById(ng.dataset.node);
+    const p = toWorld(e.clientX, e.clientY);
+    drag = { kind: 'node', id: n.id, dx: p.x - n.x, dy: p.y - n.y, moved: false };
+    select({ type: 'node', id: n.id });
+  } else if (eg) {
+    select({ type: 'edge', id: eg.dataset.edge });
+    drag = null;
+  } else {
+    drag = { kind: 'pan', x: e.clientX, y: e.clientY, vx: S.view.x, vy: S.view.y, moved: false };
+  }
+});
+svg.addEventListener('pointermove', e => {
+  if (!drag) return;
+  if (drag.kind === 'pan') { S.view.x = drag.vx + e.clientX - drag.x; S.view.y = drag.vy + e.clientY - drag.y; if (Math.abs(e.clientX - drag.x) + Math.abs(e.clientY - drag.y) > 3) drag.moved = true; applyView(); }
+  else if (drag.kind === 'node') {
+    const n = nodeById(drag.id), p = toWorld(e.clientX, e.clientY);
+    n.x = Math.round((p.x - drag.dx) / 8) * 8; n.y = Math.round((p.y - drag.dy) / 8) * 8; drag.moved = true;
+    views[n.id].g.setAttribute('transform', 'translate(' + n.x + ' ' + n.y + ')');
+    refreshEdges(n.id);
+  } else if (drag.kind === 'wire') {
+    const p = toWorld(e.clientX, e.clientY);
+    $('#tempWire').setAttribute('d', edgeD(bez(drag.start, p)));
+  }
+});
+svg.addEventListener('pointerup', e => {
+  if (!drag) return;
+  if (drag.kind === 'wire') {
+    $('#tempWire').setAttribute('d', '');
+    const t = document.elementFromPoint(e.clientX, e.clientY);
+    const ng = t && t.closest && t.closest('.node');
+    if (ng) connect(drag.from, ng.dataset.node);
+  } else if (drag.kind === 'pan' && !drag.moved) select(null);
+  drag = null;
+});
+function connect(from, to) {
+  if (from === to) return;
+  const a = nodeById(from), b = nodeById(to);
+  if (!NT[b.type].inputs) return toast(NT[b.type].title + ' has no input pin.');
+  if (!E.NODE_RULES[a.type].includes(b.type)) return toast(NT[a.type].title + ' cannot feed a ' + NT[b.type].title + '. ' + ({ agent: 'Traffic goes into a Router.', chat: 'Traffic goes into a Router.', trace: 'Traffic goes into a Router.', router: 'Routers feed pools or links.', link: 'Links feed pools.', pool: 'Prefill pools feed decode pools or links.', train: 'Wire a training job to a link to split it across sites.' })[a.type]);
+  if (S.graph.edges.some(x => x.from === from && x.to === to)) return toast('Already connected.');
+  if (['agent', 'chat', 'trace', 'train'].includes(a.type)) S.graph.edges = S.graph.edges.filter(x => x.from !== from);
+  const e = TP.edge(from, to);
+  S.graph.edges.push(e);
+  renderGraph(); select({ type: 'edge', id: e.id }); scheduleRun();
+}
+svg.addEventListener('dragover', e => { e.preventDefault(); e.dataTransfer.dropEffect = 'copy'; });
+svg.addEventListener('drop', e => {
+  e.preventDefault();
+  const d = e.dataTransfer.getData('text/plain');
+  if (d && d.startsWith('pal:')) { const p = toWorld(e.clientX, e.clientY); addFromPalette(+d.slice(4), { x: p.x - 40, y: p.y - 20 }); }
+});
+function deleteSelection() {
+  if (!S.sel) return;
+  if (S.sel.type === 'node') {
+    const n = nodeById(S.sel.id);
+    if (!n) return;
+    if (NT[n.type].fixed) return toast('The ' + NT[n.type].title + ' node is required; edit it instead.');
+    S.graph.nodes = S.graph.nodes.filter(x => x.id !== n.id);
+    S.graph.edges = S.graph.edges.filter(x => x.from !== n.id && x.to !== n.id);
+  } else if (S.sel.type === 'edge') S.graph.edges = S.graph.edges.filter(x => x.id !== S.sel.id);
+  else return;
+  S.sel = null; renderGraph(); renderPalette(); renderDetails(); scheduleRun();
+}
+
+// ---------- details panel ----------
+const gpuOpts = Object.keys(E.GPUS).map(k => [k, E.GPUS[k].label]);
+const modelOpts = Object.keys(E.MODELS).map(k => [k, E.MODELS[k].label]);
+const FIELDS = {
+  agent: [
+    { p: 'users', k: 'range', label: 'Concurrent users', min: 5, max: 1500, step: 5, f: fInt },
+    { p: 'turns', k: 'range', label: 'Session length (turns, median)', min: 1, max: 60, step: 1, f: v => v + ' turns' },
+    { p: 'contextTokens', k: 'range', label: 'Starting context (repo, files)', min: 0, max: 100000, step: 1000, f: v => fK(v) + ' tok' },
+    { p: 'systemTokens', k: 'range', label: 'System prompt + tool schemas', min: 0, max: 20000, step: 100, f: v => fK(v) + ' tok' },
+    { p: 'turnTokens', k: 'range', label: 'Tool output added per turn', min: 20, max: 20000, step: 20, f: v => fK(v) + ' tok' },
+    { p: 'outTokens', k: 'range', label: 'Output per turn', min: 10, max: 4000, step: 10, f: v => fK(v) + ' tok' },
+    { p: 'thinkS', k: 'range', label: 'Tool run time between turns', min: 0.5, max: 120, step: 0.5, f: v => v + ' s' },
+    { p: 'gapS', k: 'range', label: 'Idle gap between sessions', min: 1, max: 600, step: 1, f: v => v + ' s' },
+    { p: 'prefixHit', k: 'range', label: 'Prefix cache hit', min: 0, max: 95, step: 5, f: v => v + '%', hint: 'Share of each prompt already cached, so prefill skips it.' },
+    { p: 'durationMin', k: 'range', label: 'Simulated duration', min: 5, max: 30, step: 5, f: v => v + ' min' }
+  ],
+  trace: [
+    { p: 'trace', k: 'select', label: 'Trace', opts: () => Object.keys(E.TRACES).map(k => [k, E.TRACES[k].label]).concat(traces.uploaded ? [['uploaded', 'Uploaded: ' + traces.uploaded.name]] : []) },
+    { k: 'upload' },
+    { p: 'scale', k: 'range', label: 'Load multiplier', min: 0.25, max: 3, step: 0.05, f: v => v.toFixed(2) + '×' },
+    { p: 'prefixHit', k: 'range', label: 'Prefix cache hit', min: 0, max: 95, step: 5, f: v => v + '%' }
+  ],
+  router: [
+    { p: 'policy', k: 'select', label: 'Policy', opts: [['primary-first', 'Primary first, burst when queued'], ['least-wait', 'Least estimated wait'], ['round-robin', 'Round robin (naive)']] },
+    { p: 'burstWait', k: 'range', label: 'Burst when primary wait exceeds', min: 0.1, max: 10, step: 0.1, f: v => v.toFixed(1) + ' s', show: c => c.policy === 'primary-first' },
+    { k: 'targets' }
+  ],
+  pool: [
+    { p: 'role', k: 'seg', label: 'Role', opts: [['agg', 'Aggregated'], ['prefill', 'Prefill'], ['decode', 'Decode']] },
+    { p: 'siteKind', k: 'seg', label: 'Site type', opts: [['onprem', 'On-prem'], ['neo', 'Neocloud']] },
+    { p: 'site', k: 'text', label: 'Site name', list: true, hint: 'Pools with the same site name share a fabric; across sites, wire through a link.' },
+    { p: 'gpu', k: 'select', label: 'GPU type', opts: gpuOpts },
+    { p: 'autoscale', k: 'check', label: 'Autoscale' },
+    { p: 'instances', k: 'range', label: 'Instances', min: 1, max: 32, step: 1, f: v => v + ' inst', show: c => !c.autoscale },
+    { p: 'min', k: 'range', label: 'Min instances (always on)', min: 0, max: 16, step: 1, f: v => v + ' inst', show: c => c.autoscale },
+    { p: 'max', k: 'range', label: 'Max instances', min: 1, max: 32, step: 1, f: v => v + ' inst', show: c => c.autoscale },
+    { p: 'coldStart', k: 'range', label: 'Cold start (boot + weights)', min: 0, max: 600, step: 5, f: v => v + ' s', show: c => c.autoscale },
+    { p: 'upWait', k: 'range', label: 'Scale up when queue waits', min: 0.1, max: 10, step: 0.1, f: v => v.toFixed(1) + ' s', show: c => c.autoscale },
+    { p: 'downUtil', k: 'range', label: 'Scale down below load', min: 5, max: 80, step: 5, f: v => v + '%', show: c => c.autoscale },
+    { p: 'maxBatch', k: 'range', label: 'Max batch per instance', min: 8, max: 512, step: 8, f: v => v + ' seqs' },
+    { p: 'fabricGbps', k: 'range', label: 'Fabric per instance (KV, sync)', min: 25, max: 3200, step: 25, f: v => v + ' Gbps' },
+    { k: 'poolReadout' }
+  ],
+  link: [
+    { p: 'gbps', k: 'range', label: 'Bandwidth', min: 1, max: 800, step: 1, f: v => v + ' Gbps' },
+    { p: 'rttMs', k: 'range', label: 'Round trip', min: 1, max: 150, step: 1, f: v => v + ' ms' },
+    { p: 'egressPerGB', k: 'range', label: 'Egress price (data leaving cloud)', min: 0, max: 0.15, step: 0.005, f: v => '$' + v.toFixed(3) + '/GB' }
+  ],
+  train: [
+    { p: 'model', k: 'select', label: 'Model being trained', opts: modelOpts },
+    { p: 'gpu', k: 'select', label: 'GPU type', opts: gpuOpts },
+    { p: 'gpus', k: 'range', label: 'GPUs', min: 8, max: 4096, step: 8, f: fInt },
+    { p: 'siteKind', k: 'seg', label: 'Runs in', opts: [['onprem', 'On-prem'], ['neo', 'Neocloud']] },
+    { p: 'tokensPerStepM', k: 'range', label: 'Global batch per step', min: 0.5, max: 32, step: 0.5, f: v => v + 'M tok' },
+    { p: 'mfu', k: 'range', label: 'Model FLOPs utilization', min: 10, max: 70, step: 1, f: v => v + '%' },
+    { p: 'overlap', k: 'check', label: 'Overlap gradient sync with compute' },
+    { p: 'horizonMin', k: 'range', label: 'Duration when no serving traffic', min: 5, max: 30, step: 5, f: v => v + ' min' },
+    { k: 'trainHint' }
+  ],
+  model: [
+    { p: 'key', k: 'select', label: 'Preset', opts: c => modelOpts.concat(c.key === 'custom' ? [['custom', 'Custom']] : []) },
+    { k: 'grid', ctl: [
+      { p: 'params', k: 'number', label: 'Params (B)', min: 0.5, max: 2000, step: 0.1 },
+      { p: 'active', k: 'number', label: 'Active (B)', min: 0.5, max: 2000, step: 0.1 },
+      { p: 'layers', k: 'number', label: 'Layers', min: 1, max: 200, step: 1 },
+      { p: 'kvHeads', k: 'number', label: 'KV heads', min: 0, max: 128, step: 1, show: c => !c.mla },
+      { p: 'headDim', k: 'number', label: 'Head dim', min: 0, max: 512, step: 8, show: c => !c.mla },
+      { p: 'mla', k: 'number', label: 'MLA latent dim', min: 0, max: 2048, step: 8, show: c => !!c.mla }
+    ] },
+    { p: 'wPrec', k: 'seg', label: 'Weights', opts: [['fp8', 'FP8'], ['bf16', 'BF16']] },
+    { p: 'kvPrec', k: 'seg', label: 'KV cache', opts: [['fp8', 'FP8'], ['bf16', 'BF16']] },
+    { k: 'modelReadout' }
+  ],
+  slo: [
+    { p: 'ttft', k: 'range', label: 'TTFT (time to first token)', min: 0.2, max: 20, step: 0.1, f: v => v.toFixed(1) + ' s' },
+    { p: 'tpotMs', k: 'range', label: 'TPOT (time per output token)', min: 5, max: 300, step: 5, f: v => v + ' ms' }
+  ]
+};
+FIELDS.chat = FIELDS.agent.filter(f => f.p !== 'contextTokens').map(f => f.p === 'turnTokens' ? Object.assign({}, f, { label: 'User message per turn' }) : f.p === 'thinkS' ? Object.assign({}, f, { label: 'User think time between turns' }) : f);
+let formNode = null, formBound = [];
+function renderDetails() {
+  const box = $('#details');
+  formNode = null; formBound = [];
+  if (S.sel && S.sel.type === 'node') {
+    const n = nodeById(S.sel.id);
+    if (!n) { S.sel = null; return renderDetails(); }
+    formNode = n;
+    box.innerHTML = '';
+    const head = document.createElement('div');
+    head.innerHTML = '<span class="typetag" style="background:' + typeColor(n) + '">' + NT[n.type].title + '</span><div class="ctl"><label for="nm">Name</label><input type="text" id="nm" value="' + esc(n.cfg.name) + '"></div>';
+    box.appendChild(head);
+    head.querySelector('#nm').addEventListener('change', e => { n.cfg.name = e.target.value || NT[n.type].title; renderGraph(); scheduleRun(); });
+    const form = document.createElement('div');
+    for (const f of FIELDS[n.type] || []) form.appendChild(makeField(n, f));
+    box.appendChild(form);
+    const live = document.createElement('div'); live.id = 'live'; box.appendChild(live);
+    const br = document.createElement('div'); br.className = 'btnrow';
+    br.innerHTML = (NT[n.type].fixed ? '' : '<button class="btn danger" type="button" data-act="del">Delete node</button>') + '<button class="btn" type="button" data-act="dup">Duplicate</button>';
+    box.appendChild(br);
+    refreshForm();
+    renderLive();
+    return;
+  }
+  if (S.sel && S.sel.type === 'edge') {
+    const e = S.graph.edges.find(x => x.id === S.sel.id);
+    if (!e) { S.sel = null; return renderDetails(); }
+    const a = nodeById(e.from), b = nodeById(e.to), k = edgeKind(e);
+    box.innerHTML = '<span class="typetag" style="background:' + edgeColor(e) + '">Wire</span><h2>' + esc(a.cfg.name) + ' → ' + esc(b.cfg.name) + '</h2><div class="sub">' + ({ req: 'Carries requests', kv: 'Carries KV caches from prefill to decode', train: 'Carries gradient sync for the training job' })[k] + '</div><div id="live"></div><div class="btnrow"><button class="btn danger" type="button" data-act="del">Delete wire</button></div>';
+    renderLive();
+    return;
+  }
+  renderOverview();
+}
+function makeField(n, f) {
+  const c = n.cfg;
+  const w = document.createElement('div');
+  w.className = 'ctl';
+  const id = 'f' + Math.random().toString(36).slice(2, 8);
+  if (f.k === 'grid') { w.className = 'grid2'; for (const ff of f.ctl) w.appendChild(makeField(n, ff)); return w; }
+  if (f.k === 'poolReadout' || f.k === 'modelReadout' || f.k === 'trainHint' || f.k === 'targets') { w.className = f.k === 'trainHint' ? 'note' : f.k === 'targets' ? 'ctl' : 'readout'; w.dataset.kind = f.k; formBound.push({ f, w }); return w; }
+  if (f.k === 'upload') {
+    w.innerHTML = '<label class="upload" id="drop"><input type="file" id="file" accept=".csv,text/csv">Upload a trace CSV or drop it here<br><span>Azure format (TIMESTAMP, ContextTokens, GeneratedTokens) or timestamp, input_tokens, output_tokens</span></label><div class="note" id="upnote">' + (traces.uploaded ? 'Loaded ' + esc(traces.uploaded.name) + ': ' + fInt(traces.uploaded.trace.length) + ' requests.' : '') + '</div>';
+    setTimeout(() => wireUpload(n), 0);
+    return w;
+  }
+  const lab = '<span>' + f.label + '</span>';
+  if (f.k === 'range') {
+    w.innerHTML = '<label for="' + id + '">' + lab + '<output></output></label><input type="range" id="' + id + '">';
+    const inp = w.querySelector('input'); Object.assign(inp, { min: f.min, max: f.max, step: f.step });
+    inp.addEventListener('input', () => { c[f.p] = +inp.value; changed(n); });
+    formBound.push({ f, w, inp, out: w.querySelector('output') });
+  } else if (f.k === 'number') {
+    w.innerHTML = '<label for="' + id + '">' + lab + '</label><input type="number" id="' + id + '">';
+    const inp = w.querySelector('input'); Object.assign(inp, { min: f.min, max: f.max, step: f.step });
+    inp.addEventListener('change', () => { c[f.p] = clamp(+inp.value || f.min, f.min, f.max); if (n.type === 'model') c.key = 'custom'; changed(n, true); });
+    formBound.push({ f, w, inp });
+  } else if (f.k === 'text') {
+    const lid = id + 'l';
+    w.innerHTML = '<label for="' + id + '">' + lab + '</label><input type="text" id="' + id + '"' + (f.list ? ' list="' + lid + '"' : '') + '>' + (f.list ? '<datalist id="' + lid + '"></datalist>' : '') + (f.hint ? '<div class="hint">' + f.hint + '</div>' : '');
+    const inp = w.querySelector('input');
+    inp.addEventListener('change', () => { c[f.p] = inp.value.trim() || 'Site'; changed(n, true); });
+    if (f.list) { const sites = [...new Set(S.graph.nodes.filter(m => m.type === 'pool').map(m => m.cfg.site))]; w.querySelector('datalist').innerHTML = sites.map(s => '<option value="' + esc(s) + '">').join(''); }
+    formBound.push({ f, w, inp });
+    return w;
+  } else if (f.k === 'select') {
+    w.innerHTML = '<label for="' + id + '">' + lab + '</label><select id="' + id + '"></select>';
+    const sel = w.querySelector('select');
+    sel.addEventListener('change', () => {
+      if (n.type === 'model' && f.p === 'key') { if (sel.value !== 'custom') Object.assign(c, E.MODELS[sel.value], { key: sel.value, name: c.name }); }
+      else c[f.p] = sel.value;
+      changed(n, true);
+    });
+    formBound.push({ f, w, inp: sel });
+  } else if (f.k === 'check') {
+    w.className = 'ctl check';
+    w.innerHTML = '<label for="' + id + '"><input type="checkbox" id="' + id + '">' + lab + '</label>';
+    const inp = w.querySelector('input');
+    inp.addEventListener('change', () => {
+      c[f.p] = inp.checked;
+      if (n.type === 'pool' && f.p === 'autoscale' && inp.checked) { c.min = Math.min(c.min, c.instances); c.max = Math.max(c.max, c.instances, 1); }
+      if (n.type === 'pool' && f.p === 'autoscale' && !inp.checked) c.instances = Math.max(1, c.max);
+      changed(n, true);
+    });
+    formBound.push({ f, w, inp });
+  } else if (f.k === 'seg') {
+    w.innerHTML = '<label>' + lab + '</label><div class="seg" role="group" aria-label="' + f.label + '"></div>';
+    const g = w.querySelector('.seg');
+    for (const [v, t] of f.opts) {
+      const b = document.createElement('button'); b.type = 'button'; b.textContent = t; b.dataset.v = v;
+      b.addEventListener('click', () => {
+        c[f.p] = v;
+        if (n.type === 'pool' && f.p === 'siteKind') { if (v === 'neo' && c.site === 'On-prem DC') c.site = 'Neocloud A'; if (v === 'onprem' && /^Neocloud/.test(c.site)) c.site = 'On-prem DC'; }
+        changed(n, true);
+      });
+      g.appendChild(b);
+    }
+    formBound.push({ f, w, seg: g });
+  }
+  if (f.hint) { const h = document.createElement('div'); h.className = 'hint'; h.textContent = f.hint; w.appendChild(h); }
+  return w;
+}
+function changed(n, structural) {
+  refreshForm();
+  if (structural || n.type === 'pool' || n.type === 'model') renderGraph();
+  else { const v = views[n.id]; if (v) v.g.querySelectorAll('text')[2].textContent = cfgLine(n); }
+  if (structural) renderPalette();
+  scheduleRun();
+}
+function refreshForm() {
+  const n = formNode;
+  if (!n) return;
+  const c = n.cfg;
+  for (const b of formBound) {
+    const f = b.f;
+    b.w.hidden = f.show ? !f.show(c) : false;
+    if (f.k === 'range') { b.inp.value = c[f.p]; b.out.textContent = f.f ? f.f(c[f.p]) : c[f.p]; }
+    else if (f.k === 'number' || f.k === 'text') b.inp.value = c[f.p];
+    else if (f.k === 'check') b.inp.checked = !!c[f.p];
+    else if (f.k === 'select') {
+      const opts = typeof f.opts === 'function' ? f.opts(c) : f.opts;
+      const sig = opts.map(o => o[0]).join('|');
+      if (b.sig !== sig) { b.inp.innerHTML = opts.map(o => '<option value="' + o[0] + '">' + esc(o[1]) + '</option>').join(''); b.sig = sig; }
+      b.inp.value = c[f.p];
+    } else if (f.k === 'seg') { for (const btn of b.seg.children) { const on = btn.dataset.v === c[f.p]; btn.classList.toggle('on', on); btn.setAttribute('aria-pressed', on); } }
+    else if (f.k === 'poolReadout') {
+      const m = S.graph.nodes.find(x => x.type === 'model');
+      if (!m) { b.w.innerHTML = 'Add a Model node to see this pool’s profile.'; continue; }
+      const P = E.profile(c.gpu, m.cfg), G = E.GPUS[c.gpu];
+      const rows = [['GPUs per instance (tensor parallel)', P.tp], ['KV cache per instance', fK(P.kvCap) + ' tok'], ['Prefill throughput', fK(P.prefill) + ' tok/s'], ['Decode step, batch 32 at 2k ctx', fMs(P.a + P.b0 * 32 + P.c * 64000)], ['Price', fUsd(c.siteKind === 'neo' ? G.rent : G.onprem) + '/GPU-h' + (c.siteKind === 'neo' ? ' rented' : ' amortized')]];
+      b.w.innerHTML = '<table>' + rows.map(r => '<tr><td>' + r[0] + '</td><td>' + r[1] + '</td></tr>').join('') + '</table>' + (P.multiNode ? '<div class="warnline">Weights need more than 8 GPUs per instance: modelled as a 16-GPU multi-node instance.</div>' : '') + (P.kvCap < 20000 ? '<div class="warnline">Little KV cache left after weights.</div>' : '');
+    } else if (f.k === 'modelReadout') {
+      const rows = [];
+      const P0 = E.profile('H100', c);
+      rows.push(['KV cache per token', fK(P0.kvBytesPerToken / 1024) + ' KB']);
+      rows.push(['Weights', (P0.wBytes / 1e9).toFixed(0) + ' GB']);
+      for (const g of ['H100', 'H200', 'B200', 'MI300X']) { const P = E.profile(g, c); rows.push([g + ': GPUs / KV per instance', P.tp + ' / ' + fK(P.kvCap)]); }
+      b.w.innerHTML = '<table>' + rows.map(r => '<tr><td>' + r[0] + '</td><td>' + r[1] + '</td></tr>').join('') + '</table>';
+    } else if (f.k === 'trainHint') {
+      const linked = S.graph.edges.some(e => e.from === n.id);
+      b.w.innerHTML = linked ? 'Split across sites: each step pushes a full gradient copy (' + fK(E.MODELS[c.model].params * 2) + ' GB) over the linked network, sharing it with serving traffic.' : 'Runs inside one site. Wire its output pin to a Cross-site link to split it across two sites.';
+    } else if (f.k === 'targets') {
+      const outs = S.graph.edges.filter(e => e.from === n.id);
+      b.w.innerHTML = '<label><span>Targets in priority order</span></label>' + (outs.length ? '<ul class="targets">' + outs.map((e, i) => '<li><span>' + (i + 1) + '. ' + esc(nodeById(e.to).cfg.name) + (i === 0 && c.policy === 'primary-first' ? ' <span class="pill">primary</span>' : '') + '</span>' + (i ? '<button class="linkbtn" type="button" data-primary="' + e.id + '">Make first</button>' : '') + '</li>').join('') + '</ul>' : '<div class="hint">Wire this router to pools or links.</div>');
+    }
+  }
+}
+function wireUpload(n) {
+  const inp = $('#file'), drop = $('#drop'), note = $('#upnote');
+  if (!inp) return;
+  const load = file => {
+    if (!file) return;
+    const rd = new FileReader();
+    rd.onload = () => {
+      try {
+        const res = E.parseTraceCSV(String(rd.result));
+        traces.uploaded = { name: file.name, trace: res.trace };
+        n.cfg.trace = 'uploaded'; n.cfg.scale = 1;
+        const dur = res.trace.length ? res.trace[res.trace.length - 1].t : 0;
+        note.className = 'note';
+        note.textContent = 'Loaded ' + fInt(res.trace.length) + ' requests over ' + mmss(dur) + (res.notes.length ? ' (' + res.notes.join('; ') + ')' : '') + '.';
+        changed(n, true);
+      } catch (err) { note.className = 'note err'; note.textContent = err.message; }
+    };
+    rd.readAsText(file);
+  };
+  inp.addEventListener('change', () => load(inp.files[0]));
+  drop.addEventListener('dragover', e => { e.preventDefault(); drop.classList.add('drag'); });
+  drop.addEventListener('dragleave', () => drop.classList.remove('drag'));
+  drop.addEventListener('drop', e => { e.preventDefault(); drop.classList.remove('drag'); load(e.dataTransfer.files[0]); });
+}
+$('#details').addEventListener('click', e => {
+  const b = e.target.closest('[data-act]');
+  const pr = e.target.closest('[data-primary]');
+  const li = e.target.closest('[data-req]');
+  if (pr) { const i = S.graph.edges.findIndex(x => x.id === pr.dataset.primary); const [ed] = S.graph.edges.splice(i, 1); S.graph.edges.unshift(ed); refreshForm(); scheduleRun(); return; }
+  if (li) { select({ type: 'req', id: +li.dataset.req }); return; }
+  if (!b) return;
+  const a = b.dataset.act;
+  if (a === 'del') deleteSelection();
+  else if (a === 'dup' && S.sel && S.sel.type === 'node') {
+    const n = nodeById(S.sel.id);
+    if (NT[n.type].singleton) return toast('Only one ' + NT[n.type].title + ' node per canvas.');
+    const id = n.type + (S.nid++);
+    const m = { id, type: n.type, x: n.x + 32, y: n.y + 32, cfg: JSON.parse(JSON.stringify(n.cfg)) };
+    m.cfg.name = n.cfg.name + ' copy';
+    S.graph.nodes.push(m); renderGraph(); select({ type: 'node', id }); scheduleRun();
+  } else if (a === 'back') select(null);
+  else if (a === 'jump' && S.sel && S.sel.type === 'req') seek(S.run.reqs[S.sel.id].t);
+  else if (a === 'node') select({ type: 'node', id: b.dataset.id });
+});
+$('#details').addEventListener('keydown', e => { if (e.key === 'Enter') { const li = e.target.closest('[data-req]'); if (li) select({ type: 'req', id: +li.dataset.req }); } });
+
+// ---------- live details ----------
+function spark(arr, t, color, yMax) {
+  const w = 300, h = 40, D = Math.max(1, arr.length - 1);
+  let m = yMax || 0; if (!m) for (const v of arr) if (isFinite(v)) m = Math.max(m, v); m = m || 1;
+  let d = '';
+  for (let i = 0; i < arr.length; i++) d += (i ? 'L' : 'M') + (w * i / D).toFixed(1) + ' ' + (h - 3 - (h - 6) * clamp((arr[i] || 0) / m, 0, 1)).toFixed(1);
+  const x = w * clamp(t, 0, D) / D;
+  return '<svg class="spark" viewBox="0 0 ' + w + ' ' + h + '" preserveAspectRatio="none" aria-hidden="true"><path d="' + d + 'L' + w + ' ' + h + 'L0 ' + h + 'Z" fill="' + color + '" fill-opacity="0.15"/><path d="' + d + '" fill="none" stroke="' + color + '" stroke-width="1.4" vector-effect="non-scaling-stroke"/><line x1="' + x + '" x2="' + x + '" y1="0" y2="' + h + '" stroke="var(--ink)" stroke-dasharray="3 3" vector-effect="non-scaling-stroke"/></svg>';
+}
+const rowH = (a, b) => '<div class="row"><span>' + a + '</span><span>' + b + '</span></div>';
+const poolName = id => { const n = nodeById(id); return n ? n.cfg.name : id; };
+function renderLive() {
+  const box = $('#live');
+  const R = S.run;
+  if (!box) return;
+  if (!R) { box.innerHTML = ''; return; }
+  const t = S.T, s = clamp(Math.floor(t), 0, R.D - 1), fr = R.frames[s];
+  let html = '<h3 class="sec">Live at ' + mmss(t) + '</h3>';
+  if (S.sel.type === 'edge') {
+    const fl = R.flow[S.sel.id];
+    if (!fl) { box.innerHTML = '<div class="sub">No traffic recorded on this wire in the last run.</div>'; return; }
+    box.innerHTML = html + rowH('Flow this second', fInt(fl[s]) + ' /s') + rowH('Peak', fInt(R.flowMax[S.sel.id]) + ' /s') + spark(fl, t, edgeColor(S.graph.edges.find(e => e.id === S.sel.id)));
+    return;
+  }
+  const n = nodeById(S.sel.id);
+  if (n.type === 'pool') {
+    const p = R.pools.find(x => x.id === n.id);
+    if (!p) { box.innerHTML = '<div class="sub">Not in the last run: re-simulating.</div>'; return; }
+    const f = fr.pools[p.id];
+    const qs = Float64Array.from(R.frames, x => x.pools[p.id].q);
+    html += (n.cfg.siteKind === 'neo' ? '<div class="blind">This site exposes VM-level telemetry only. Its fabric and NIC numbers are simulated and cannot be checked against measurements.</div>' : '') +
+      rowH('Instances serving / billed', (f.serving + f.draining) + ' / ' + (f.serving + f.starting + f.draining) + (f.starting ? ' (' + f.starting + ' cold)' : '')) +
+      rowH('Compute load', fPct(f.util)) + rowH('Queue (oldest wait)', fInt(f.q) + ' (' + fS(f.head) + ')') +
+      rowH('Decoding / prefilling', fInt(f.batch) + ' / ' + fInt(f.pre)) + rowH('KV cache used', fPct(f.kv)) +
+      rowH('Output tokens/s', fK(f.tok)) + rowH('GPUs · cost rate', f.gpus + ' · ' + fUsd(f.cost * 3600) + '/h') +
+      '<div class="sparklabel">Compute load</div>' + spark(R.series.util[p.id], t, n.cfg.siteKind === 'neo' ? 'var(--neo)' : 'var(--onprem)', 1) +
+      '<div class="sparklabel">Queue length</div>' + spark(qs, t, 'var(--c-queue)');
+  } else if (n.type === 'link') {
+    const f = fr.links[n.id];
+    if (!f) { box.innerHTML = ''; return; }
+    let tot = 0, trn = 0; for (const x of R.frames) { tot += x.links[n.id].gbps / 8; trn += x.links[n.id].trainGbps / 8; }
+    html += '<div class="blind">The neocloud end of this link is not observable: use is simulated from what crosses it.</div>' +
+      rowH('Bandwidth used', fPct(f.util) + ' (' + f.gbps.toFixed(1) + ' Gbps)') + rowH('of which gradient sync', f.trainGbps.toFixed(1) + ' Gbps') +
+      rowH('KV transfers in flight', fInt(f.xfers)) + rowH('Moved this run (serving)', fK(tot - trn) + ' GB') + (trn ? rowH('Moved this run (training)', fK(trn) + ' GB') : '') +
+      '<div class="sparklabel">Bandwidth used</div>' + spark(Float64Array.from(R.frames, x => x.links[n.id].util), t, 'var(--c-xfer)', 1);
+  } else if (n.type === 'router') {
+    const share = R.routerShare[n.id];
+    if (!share) { box.innerHTML = ''; return; }
+    const lo = Math.max(0, s - 9);
+    const tot = {}; let all = 0;
+    for (const pid in share) { let v = 0; for (let j = lo; j <= s; j++) v += share[pid][j]; tot[pid] = v; all += v; }
+    html += Object.keys(tot).map(pid => rowH('→ ' + esc(poolName(pid)), fPct(all ? tot[pid] / all : 0) + ' of last 10 s')).join('') +
+      '<div class="sparklabel">Requests per second</div>' + spark(R.series.arrivals, t, 'var(--n-route)');
+  } else if (['agent', 'chat', 'trace'].includes(n.type)) {
+    const a = R.srcArr[n.id];
+    if (!a) { box.innerHTML = ''; return; }
+    html += rowH('Requests this second', fInt(a[s])) + (R.srcUsers[n.id] ? rowH('Users with a request in flight', fInt(R.srcUsers[n.id][s])) : '') +
+      '<div class="sparklabel">Requests per second</div>' + spark(a, t, 'var(--n-src)');
+  } else if (n.type === 'train') {
+    const ts = R.summary.train;
+    if (!ts) { box.innerHTML = ''; return; }
+    const steps = R.train.steps;
+    html += rowH('Steps completed', fInt(fr.train ? fr.train.steps : 0)) + rowH('Mean step time', fS(ts.stepS)) + rowH('Pure compute per step', fS(ts.computeS)) +
+      rowH('Waiting on gradient sync', fPct(ts.commShare)) + rowH('Tokens / s', fK(ts.tokPerS)) + rowH('Days per 100B tokens', ts.daysPer100B.toFixed(1)) + rowH('Cost / hour', fUsd(ts.costPerHr)) +
+      '<div class="sparklabel">Step time over the run</div>' + spark(steps.map(x => x.end - x.start), steps.length * clamp(t / R.D, 0, 1), 'var(--train)');
+  } else if (n.type === 'slo') {
+    html += rowH('Requests meeting both targets', fPct(R.summary.slo)) + rowH('TTFT p99 (rolling 30 s)', fS(R.series.p99[s]));
+  } else html = '';
+  box.innerHTML = html;
+}
+function renderOverview() {
+  const box = $('#details'), R = S.run;
+  if (S.sel && S.sel.type === 'req' && R) {
+    const q = R.reqs[S.sel.id];
+    const end = isFinite(q.tFinish) ? q.tFinish : (isFinite(q.tFirst) ? q.tFirst : q.t + 1);
+    const total = Math.max(1e-6, end - q.t);
+    const segs = [];
+    const add = (nm, a, b, c) => { if (isFinite(a) && isFinite(b) && b > a + 1e-6) segs.push({ nm, a: a - q.t, b: b - q.t, c }); };
+    const disagg = q.dPool && q.dPool !== q.pPool;
+    if (q.net) add('Network', q.t, q.t + q.net, 'var(--c-xfer)');
+    add('Queue wait', q.tEnq, q.tAdmit, 'var(--c-queue)');
+    add('Prefill', q.tAdmit, q.tPrefEnd, 'var(--c-prefill)');
+    if (disagg) { add('KV transfer', q.tPrefEnd, q.tXferEnd, 'var(--c-xfer)'); add('Decode wait', q.tXferEnd, q.tFirst, 'var(--c-dwait)'); }
+    add('Decode', q.tFirst, q.tFinish, 'color-mix(in srgb, var(--ink) 35%, transparent)');
+    box.innerHTML = '<button class="linkbtn" data-act="back" type="button">&larr; Overview</button>' +
+      '<h2>Request #' + q.id + ' ' + (q.fail ? '<span class="pill bad">rejected</span>' : q.ok ? '<span class="pill ok">met SLO</span>' : '<span class="pill bad">missed SLO</span>') + '</h2>' +
+      '<div class="sub">Arrived ' + mmss(q.t) + (q.user >= 0 ? ' · user ' + q.user : '') + ' · ' + esc(poolName(q.pPool)) + (disagg ? ' → ' + esc(poolName(q.dPool)) : '') + (q.inLink ? ' via ' + esc(poolName(q.inLink)) : '') + '</div>' +
+      (q.fail ? '<div class="blind">' + esc(q.fail) + '.</div>' : '') +
+      '<div class="wf">' + segs.map(g => '<div class="wrow"><span>' + g.nm + '</span><div class="track"><i style="left:' + (100 * g.a / total).toFixed(2) + '%;width:' + Math.max(0.8, 100 * (g.b - g.a) / total).toFixed(2) + '%;background:' + g.c + '"></i></div><span>' + fS(g.b - g.a) + '</span></div>').join('') + '</div>' +
+      rowH('Input tokens (cached)', fInt(q.isl) + ' (' + fInt(q.cached || 0) + ')') + rowH('Output tokens', fInt(q.osl)) + rowH('TTFT', fS(q.ttft)) + rowH('TPOT', fMs(q.tpot)) +
+      '<div class="btnrow"><button class="btn" data-act="jump" type="button">Jump to its arrival</button></div>';
+    return;
+  }
+  if (!R) { box.innerHTML = '<h2>Overview</h2><div class="sub">Build or load a graph, then press Play.</div>'; return; }
+  const t = S.T, s = clamp(Math.floor(t), 0, R.D - 1), Sr = R.series;
+  const lo = Math.max(0, t - 20);
+  const list = [];
+  for (let i = 0; i < R.reqs.length; i++) { const q = R.reqs[i]; if (q.t > t) break; if (q.t >= lo && (isFinite(q.ttft) || q.fail)) list.push(q); }
+  list.sort((a, b) => (b.fail ? 1e9 : b.ttft) - (a.fail ? 1e9 : a.ttft));
+  const top = list.slice(0, 8);
+  box.innerHTML = '<h2>At ' + mmss(t) + '</h2><div class="sub">' + fInt(Sr.arrivals[s]) + ' arrivals this second · TTFT p99 ' + fS(Sr.p99[s]) + ' · ' + (Sr.firsts[s] ? fPct(Sr.viol[s] / Sr.firsts[s]) : '0%') + ' over target</div>' +
+    '<h3 class="sec">Slowest requests, last 20 s</h3>' +
+    (top.length ? '<ul class="reqlist">' + top.map(q => {
+      const tot = Math.max(1e-6, (q.bQueue || 0) + (q.bPrefill || 0) + (q.bXfer || 0) + (q.bDwait || 0));
+      const seg = (v, c) => v > 0 ? '<i style="width:' + (100 * v / tot).toFixed(1) + '%;background:' + c + '"></i>' : '';
+      return '<li data-req="' + q.id + '" tabindex="0"><span>#' + q.id + ' <span class="meta">' + fK(q.isl) + ' in · ' + fK(q.osl) + ' out · ' + esc(poolName(q.pPool)) + '</span></span><span class="ttft">' + (q.fail ? 'rejected' : fS(q.ttft)) + '</span><span class="bar">' + seg(q.bQueue, 'var(--c-queue)') + seg(q.bPrefill, 'var(--c-prefill)') + seg(q.bXfer, 'var(--c-xfer)') + seg(q.bDwait, 'var(--c-dwait)') + '</span></li>';
+    }).join('') + '</ul>' : '<div class="sub">No requests in this window.</div>') +
+    '<div class="sub" style="margin-top:8px">Bars split TTFT into queue, prefill, transfer and decode wait. Click one for its lifecycle, or click a node to edit it.</div>';
+}
+function select(sel) { S.sel = sel; markSelection(); renderDetails(); }
+
+// ---------- simulation ----------
+let runTimer = 0, firstRun = true;
+function scheduleRun(ms) { if (ms !== 0) S.dirty = true; clearTimeout(runTimer); $('#status').innerHTML = 'Re-simulating…'; runTimer = setTimeout(doRun, ms == null ? 300 : ms); }
+function doRun() {
+  const c = E.compileGraph(S.graph, traceLookup);
+  S.probs = { errors: c.errors, warn: c.warn };
+  renderProblems(); markProblems();
+  if (c.errors.length) { $('#status').innerHTML = '<span class="bad">' + c.errors.length + ' problem' + (c.errors.length > 1 ? 's' : '') + ' to fix before it can run</span> (see the left panel)'; return; }
+  let R;
+  try { R = E.simulate(c.spec); } catch (err) { $('#status').textContent = 'Simulation failed: ' + err.message; return; }
+  prep(R);
+  S.run = R;
+  if (firstRun) {
+    firstRun = false;
+    const Sr = R.series;
+    let best = -1;
+    for (let i = 0; i < R.D; i++) if (Sr.firsts[i] && Sr.viol[i] / Sr.firsts[i] > 0.1) { best = i; break; }
+    S.T = best >= 0 ? Math.min(R.D - 1, best + 15) : R.D * 0.55;
+  }
+  S.T = clamp(S.T, 0, Math.max(0, R.D - 1));
+  if (S.sel && S.sel.type === 'req') S.sel = null;
+  const sm = R.summary;
+  $('#status').innerHTML = '<b>' + fInt(sm.requests) + '</b> requests' + (sm.users ? ' from <b>' + fInt(sm.users) + '</b> users' : '') + ' · <b>' + mmss(R.D) + '</b> simulated in ' + sm.simMs + ' ms' + (S.baseline ? ' · vs baseline <b>' + esc(S.baseline.label) + '</b>' : '');
+  $('#scrub').max = Math.max(1, R.D - 1);
+  renderKpis(); buildCharts(); buildStrip();
+  renderDetails();
+  render(true);
+  if (S.needFit) { S.needFit = false; requestAnimationFrame(fit); }
+}
+function prep(R) {
+  R.maxQ = {};
+  for (const p of R.pools) { let m = 1; for (const f of R.frames) m = Math.max(m, f.pools[p.id].q); R.maxQ[p.id] = m; }
+  const spec = R.spec;
+  R.routeEdges = {}; R.kvEdges = {}; R.srcEdge = {};
+  for (const r of spec.routers) for (const x of r.targets) R.routeEdges[r.id + '|' + x.pool] = x.edges;
+  for (const p of spec.pools) for (const d of p.decode) R.kvEdges[p.id + '|' + d.pool] = d.edges;
+  for (const s of spec.sources) R.srcEdge[s.id] = s.edge;
+  const D = R.D;
+  const flow = {};
+  const bump = (eid, s) => { if (s < 0 || s >= D) return; (flow[eid] || (flow[eid] = new Float32Array(D)))[s]++; };
+  R.routerShare = {}; R.srcArr = {}; R.srcUsers = {};
+  for (const q of R.reqs) {
+    const s = Math.floor(q.t);
+    if (s < D) {
+      bump(R.srcEdge[q.src], s);
+      for (const e of R.routeEdges[q.router + '|' + q.pPool] || []) bump(e, s);
+      const rs = R.routerShare[q.router] || (R.routerShare[q.router] = {});
+      (rs[q.pPool] || (rs[q.pPool] = new Float32Array(D)))[s]++;
+      (R.srcArr[q.src] || (R.srcArr[q.src] = new Float32Array(D)))[s]++;
+    }
+    if (q.user >= 0 && isFinite(q.tFinish)) { const a = R.srcUsers[q.src] || (R.srcUsers[q.src] = new Float32Array(D)); for (let j = Math.max(0, s); j <= Math.min(D - 1, Math.floor(q.tFinish)); j++) a[j]++; }
+    if (q.xLink && isFinite(q.tPrefEnd)) for (const e of R.kvEdges[q.pPool + '|' + q.dPool] || []) bump(e, Math.floor(q.tPrefEnd));
+  }
+  if (spec.train && spec.train.link) {
+    const te = S.graph.edges.find(e => e.from === spec.train.id && e.to === spec.train.link);
+    if (te) { const a = flow[te.id] = new Float32Array(D); R.frames.forEach((f, i) => { a[i] = f.links[spec.train.link] ? f.links[spec.train.link].trainGbps : 0; }); }
+  }
+  R.flow = flow; R.flowMax = {};
+  for (const id in flow) { let m = 0; for (const v of flow[id]) m = Math.max(m, v); R.flowMax[id] = m || 1; }
+  R.xf = R.reqs.filter(q => q.xLink && isFinite(q.tPrefEnd) && isFinite(q.tXferEnd)).sort((a, b) => a.tPrefEnd - b.tPrefEnd);
+  R.maxXf = R.xf.reduce((m, q) => Math.max(m, q.tXferEnd - q.tPrefEnd), 0);
+  const tp = TP.TEMPLATES.find(x => x.id === S.tpl);
+  R.label = tp ? tp.name + (S.dirty ? ' (edited)' : '') : 'custom graph';
+}
+
+// ---------- live canvas ----------
+const dotsLayer = $('#dots');
+const dots = [];
+for (let i = 0; i < 220; i++) dots.push(el('circle', { r: 3.6, cx: -9999, cy: -9999 }, dotsLayer));
+function along(pts, f) {
+  f = clamp(f, 0, 1) * (pts.length - 1);
+  const i = Math.min(pts.length - 2, Math.floor(f)), u = f - i;
+  return { x: pts[i].x + (pts[i + 1].x - pts[i].x) * u, y: pts[i].y + (pts[i + 1].y - pts[i].y) * u };
+}
+function pathPts(edgeIds) {
+  const out = [];
+  for (const id of edgeIds || []) { const ev = edgeViews[id]; if (!ev) return null; for (const p of ev.pts) out.push(p); }
+  return out.length ? out : null;
+}
+function updateLive(t) {
+  const R = S.run;
+  if (!R) return;
+  const s = clamp(Math.floor(t), 0, R.D - 1), fr = R.frames[s];
+  const slo = R.spec.slo;
+  for (const id in views) {
+    const v = views[id], n = v.n, X = v.refs;
+    if (n.type === 'pool') {
+      const f = fr.pools[id];
+      if (!f) continue;
+      X.stats.textContent = (f.serving + f.draining) + '/' + (f.serving + f.starting + f.draining) + ' up · load ' + fPct(f.util) + ' · KV ' + fPct(f.kv) + ' · ' + fK(f.tok) + ' tok/s';
+      const col = n.cfg.siteKind === 'neo' ? 'var(--neo)' : 'var(--onprem)';
+      for (let i = 0; i < X.cells.length; i++) {
+        const C = X.cells[i], ins = f.inst[i];
+        if (!ins) { C.c.setAttribute('fill', 'none'); C.c.setAttribute('stroke', 'var(--line)'); C.c.setAttribute('stroke-dasharray', '3 3'); C.c.removeAttribute('fill-opacity'); C.kv.setAttribute('width', 0); C.tt.textContent = 'Not provisioned'; continue; }
+        C.c.removeAttribute('stroke-dasharray');
+        if (ins.st === 1) { C.c.setAttribute('fill', 'url(#hatch)'); C.c.removeAttribute('fill-opacity'); C.c.setAttribute('stroke', col); C.c.setAttribute('stroke-dasharray', '4 2'); C.kv.setAttribute('width', 0); C.tt.textContent = 'Cold start: ready in ' + Math.ceil(ins.cold) + ' s (billed)'; }
+        else {
+          C.c.setAttribute('fill', col); C.c.setAttribute('fill-opacity', (0.12 + 0.83 * ins.u).toFixed(2));
+          C.c.setAttribute('stroke', ins.st === 2 ? 'var(--muted)' : 'none'); if (ins.st === 2) C.c.setAttribute('stroke-dasharray', '2 2');
+          C.kv.setAttribute('width', Math.max(0, (C.sz - 4) * ins.kv));
+          C.tt.textContent = (ins.st === 2 ? 'Draining · ' : '') + 'Load ' + fPct(ins.u) + ' · KV ' + fPct(ins.kv);
+        }
+      }
+      X.q.textContent = 'Queue ' + fInt(f.q) + (f.q ? ' · ' + fS(f.head) : '');
+      X.qbar.setAttribute('width', X.qw * Math.log1p(f.q) / Math.log1p(R.maxQ[id] || 1));
+      X.qbar.setAttribute('fill', f.head > slo.ttft ? 'var(--crit)' : f.head > slo.ttft / 3 ? 'var(--warn)' : 'var(--good)');
+    } else if (n.type === 'link') {
+      const f = fr.links[id];
+      if (!f) continue;
+      X.t1.textContent = fPct(f.util) + ' used · ' + f.gbps.toFixed(0) + ' Gbps · ' + f.xfers + ' KV';
+      X.bar.setAttribute('width', X.bw * f.util);
+      X.bar.setAttribute('fill', f.util > 0.85 ? 'var(--crit)' : f.util > 0.6 ? 'var(--warn)' : 'var(--good)');
+      X.tbar.setAttribute('width', X.bw * Math.min(1, f.trainGbps / Math.max(1e-9, n.cfg.gbps)));
+    } else if (n.type === 'train') {
+      const f = fr.train;
+      if (!f) continue;
+      X.t1.textContent = (f.syncing ? 'Syncing gradients' : f.computing ? 'Computing' : 'Between steps') + ' · step ' + (f.steps + 1);
+      X.t2.textContent = 'last step ' + fS(f.lastStep) + ' · ' + fPct(R.summary.train.commShare) + ' waiting on sync';
+      const steps = R.train.steps, cur = steps.find(x => x.start <= t && x.end > t);
+      X.bar.setAttribute('width', cur ? X.bw * (t - cur.start) / (cur.end - cur.start) : 0);
+      X.bar.setAttribute('fill', f.syncing ? 'var(--c-xfer)' : 'var(--train)');
+    } else if (['agent', 'chat', 'trace'].includes(n.type)) {
+      const a = R.srcArr[id];
+      X.t1.textContent = a ? fInt(a[s]) + ' req/s' + (R.srcUsers[id] ? ' · ' + fInt(R.srcUsers[id][s]) + ' in flight' : '') : 'not in run';
+      X.t2.textContent = n.type === 'trace' ? 'prefix cache ' + n.cfg.prefixHit + '%' : 'prefix cache ' + n.cfg.prefixHit + '% · ' + fK(n.cfg.outTokens) + ' out/turn';
+    } else if (n.type === 'router') {
+      const sh = R.routerShare[id];
+      if (!sh) { X.t1.textContent = 'not in run'; X.t2.textContent = ''; continue; }
+      const lo = Math.max(0, s - 9); let all = 0; const tot = [];
+      for (const pid in sh) { let v = 0; for (let j = lo; j <= s; j++) v += sh[pid][j]; tot.push([pid, v]); all += v; }
+      tot.sort((a, b) => b[1] - a[1]);
+      X.t1.textContent = fInt(R.series.arrivals[s]) + ' req/s in';
+      X.t2.textContent = tot.slice(0, 2).map(([pid, v]) => (poolName(pid).length > 12 ? poolName(pid).slice(0, 11) + '…' : poolName(pid)) + ' ' + fPct(all ? v / all : 0)).join(' · ');
+    } else if (n.type === 'slo') {
+      X.t1.textContent = 'Met: ' + fPct(R.summary.slo) + ' · p99 now ' + fS(R.series.p99[s]);
+    }
+  }
+  for (const id in edgeViews) {
+    const ev = edgeViews[id], fl = R.flow[id];
+    const v = fl ? fl[s] / R.flowMax[id] : 0;
+    ev.wire.setAttribute('stroke-width', (1.6 + 4 * v).toFixed(2));
+    ev.flow.setAttribute('opacity', v > 0.01 ? 0.9 : 0);
+    ev.flow.style.strokeDashoffset = String(-(t * 30) % 120);
+  }
+  let di = 0;
+  const reqs = R.reqs;
+  let lo = 0, hi = reqs.length;
+  while (lo < hi) { const m = (lo + hi) >> 1; if (reqs[m].t <= t) lo = m + 1; else hi = m; }
+  for (let i = lo - 1; i >= 0 && di < 140; i--) {
+    const q = reqs[i], age = t - q.t;
+    if (age > 1.2) break;
+    const pts = pathPts([R.srcEdge[q.src]].concat(R.routeEdges[q.router + '|' + q.pPool] || []));
+    if (!pts) continue;
+    const p = along(pts, age / 1.2), d = dots[di++];
+    d.setAttribute('cx', p.x); d.setAttribute('cy', p.y); d.setAttribute('fill', nodeById(q.pPool) && nodeById(q.pPool).cfg.siteKind === 'neo' ? 'var(--neo)' : 'var(--onprem)'); d.setAttribute('r', 3.4);
+  }
+  const xf = R.xf;
+  lo = 0; hi = xf.length;
+  while (lo < hi) { const m = (lo + hi) >> 1; if (xf[m].tPrefEnd <= t) lo = m + 1; else hi = m; }
+  for (let i = lo - 1; i >= 0 && di < dots.length - 6; i--) {
+    const q = xf[i];
+    if (t - q.tPrefEnd > R.maxXf) break;
+    if (t >= q.tXferEnd) continue;
+    const pts = pathPts(R.kvEdges[q.pPool + '|' + q.dPool]);
+    if (!pts) continue;
+    const p = along(pts, (t - q.tPrefEnd) / (q.tXferEnd - q.tPrefEnd)), d = dots[di++];
+    d.setAttribute('cx', p.x); d.setAttribute('cy', p.y + ((q.id % 5) - 2) * 2); d.setAttribute('fill', 'var(--c-xfer)'); d.setAttribute('r', 4);
+  }
+  if (fr.train && fr.train.syncing && R.spec.train) {
+    const te = S.graph.edges.find(e => e.from === R.spec.train.id);
+    const pts = te && pathPts([te.id]);
+    if (pts) for (let k = 0; k < 5 && di < dots.length; k++) { const p = along(pts, ((t * 0.6 + k / 5) % 1)), d = dots[di++]; d.setAttribute('cx', p.x); d.setAttribute('cy', p.y); d.setAttribute('fill', 'var(--train)'); d.setAttribute('r', 5); }
+  }
+  for (; di < dots.length; di++) { const d = dots[di]; if (d.getAttribute('cx') !== '-9999') { d.setAttribute('cx', -9999); d.setAttribute('cy', -9999); } }
+}
+
+// ---------- KPIs ----------
+function kpiTile(k, v, cls, d, dcls, extra) { return '<div class="kpi ' + (cls || '') + (extra || '') + '"><div class="k" title="' + k + '">' + k + '</div><div class="v">' + v + '</div><div class="d ' + (dcls || '') + '">' + (d || '') + '</div></div>'; }
+function delta(cur, base, lowerBetter, fmt) {
+  if (!S.baseline || !isFinite(cur) || !isFinite(base)) return ['', ''];
+  const diff = cur - base;
+  if (Math.abs(diff) < 1e-9) return ['= baseline', ''];
+  return [(diff > 0 ? '▲ ' : '▼ ') + fmt(Math.abs(diff)), (lowerBetter ? diff < 0 : diff > 0) ? 'better' : 'worse'];
+}
+function renderKpis() {
+  const R = S.run, s = R.summary, b = S.baseline ? S.baseline.summary : {}, slo = R.spec.slo;
+  const tiles = [];
+  const t1 = (k, v, cls, cur, base, lower, fmt, extra) => { const [d, dc] = delta(cur, base, lower, fmt); tiles.push(kpiTile(k, v, cls, d, dc, extra)); };
+  if (s.requests) {
+    t1('SLO attainment', fPct(s.slo), s.slo >= 0.99 ? 'good' : s.slo >= 0.9 ? 'warn' : 'crit', s.slo, b.slo, false, v => (v * 100).toFixed(1) + ' pt');
+    t1('TTFT p99', fS(s.ttftP99), s.ttftP99 <= slo.ttft ? 'good' : 'crit', s.ttftP99, b.ttftP99, true, fS);
+    t1('TPOT p99', fMs(s.tpotP99), s.tpotP99 <= slo.tpot ? 'good' : 'crit', s.tpotP99, b.tpotP99, true, fMs);
+    t1('Compute load', fPct(s.util), '', s.util, b.util, false, v => (v * 100).toFixed(0) + ' pt');
+    t1('Peak serving GPUs', fInt(s.peakGpus), '', s.peakGpus, b.peakGpus, true, fInt);
+    t1('Serving $ / hour', fUsd(s.costPerHr), '', s.costPerHr, b.costPerHr, true, fUsd);
+    t1('$ / M output tok', fUsd(s.costPerMTok), '', s.costPerMTok, b.costPerMTok, true, fUsd);
+    t1('Cross-site traffic', s.crossGB >= 1 ? fK(s.crossGB) + ' GB' : (s.crossGB * 1000).toFixed(0) + ' MB', '', s.crossGB, b.crossGB, true, v => fK(v) + ' GB');
+    if (s.dropped) tiles.push(kpiTile('Rejected (context > KV)', fInt(s.dropped), 'crit', '', ''));
+  }
+  if (s.train) {
+    const t = s.train, bt = b.train || {};
+    t1('Training step', fS(t.stepS), 'train', t.stepS, bt.stepS, true, fS);
+    t1('Waiting on sync', fPct(t.commShare), t.commShare > 0.2 ? 'crit' : t.commShare > 0.05 ? 'warn' : 'good', t.commShare, bt.commShare, true, v => (v * 100).toFixed(0) + ' pt');
+    t1('Days / 100B tokens', t.daysPer100B.toFixed(1), 'train', t.daysPer100B, bt.daysPer100B, true, v => v.toFixed(1));
+    t1('Training $ / hour', fUsd(t.costPerHr), 'train', t.costPerHr, bt.costPerHr, true, fUsd);
+  }
+  $('#kpis').innerHTML = tiles.join('');
+}
+
+// ---------- charts ----------
+const CH = { w: 420, h: 150, l: 38, r: 8, t: 8, b: 18 };
+let charts = [];
+function niceMax(v) { if (!(v > 0)) return 1; const p = Math.pow(10, Math.floor(Math.log10(v))); for (const m of [1, 2, 2.5, 5, 10]) if (m * p >= v) return m * p; return 10 * p; }
+function makeChart(title, legend, opt) {
+  opt = opt || {};
+  const card = document.createElement('section');
+  card.className = 'chart' + (opt.wide ? ' wide' : '');
+  card.innerHTML = '<h4>' + title + '</h4><div class="legend">' + legend.map(l => '<span><i class="' + (l.dash ? 'dash' : '') + '" style="' + (l.dash ? 'border-color:' : 'background:') + l.c + '"></i>' + l.n + '</span>').join('') + '</div>';
+  const W = opt.wide ? 1000 : CH.w, H = opt.h || CH.h, L = opt.l || CH.l;
+  const s = el('svg', { viewBox: '0 0 ' + W + ' ' + H, role: 'img', 'aria-label': title.replace(/<[^>]+>/g, '') });
+  card.appendChild(s);
+  $('#charts').appendChild(card);
+  const D = Math.max(1, S.run.D - 1);
+  const ch = { svg: s, W, H, L, X: v => L + (W - L - CH.r) * v / D };
+  s.addEventListener('click', e => { const pt = s.createSVGPoint(); pt.x = e.clientX; pt.y = e.clientY; const p = pt.matrixTransform(s.getScreenCTM().inverse()); seek(clamp((p.x - L) / (W - L - CH.r) * D, 0, D)); });
+  return ch;
+}
+function axes(ch, yMax, yFmt) {
+  const Y = v => ch.H - CH.b - (ch.H - CH.b - CH.t) * clamp(v / yMax, 0, 1);
+  for (let i = 0; i <= 4; i++) { const v = yMax * i / 4, y = Y(v); el('line', { x1: ch.L, x2: ch.W - CH.r, y1: y, y2: y, stroke: 'var(--line)', 'stroke-width': i ? 0.6 : 1 }, ch.svg); if (i % 2 === 0) el('text', { x: ch.L - 4, y: y + 3.5, 'text-anchor': 'end' }, ch.svg, yFmt(v)); }
+  const D = S.run.D, step = D > 1500 ? 600 : D > 700 ? 300 : 120;
+  for (let s = 0; s <= D; s += step) el('text', { x: ch.X(s), y: ch.H - 4, 'text-anchor': 'middle' }, ch.svg, mmss(s));
+  return Y;
+}
+function linePath(arr, X, Y, cap) { let d = '', pen = false; for (let i = 0; i < arr.length; i++) { const v = arr[i]; if (!isFinite(v)) { pen = false; continue; } d += (pen ? 'L' : 'M') + X(i).toFixed(1) + ' ' + Y(cap ? Math.min(v, cap) : v).toFixed(1); pen = true; } return d; }
+function stacked(ch, series, Y) {
+  const n = series[0].data.length, acc = new Float64Array(n);
+  for (const s of series) {
+    let top = '', bot = '';
+    for (let i = 0; i < n; i++) { const y0 = acc[i]; acc[i] += s.data[i] || 0; top += (i ? 'L' : 'M') + ch.X(i).toFixed(1) + ' ' + Y(acc[i]).toFixed(1); bot = 'L' + ch.X(i).toFixed(1) + ' ' + Y(y0).toFixed(1) + bot; }
+    el('path', { d: top + bot + 'Z', fill: s.c, 'fill-opacity': 0.75 }, ch.svg);
+  }
+}
+function ph(ch) { ch.ph = el('line', { y1: CH.t, y2: ch.H - CH.b, stroke: 'var(--ink)', 'stroke-width': 1.1, 'stroke-dasharray': '3 3' }, ch.svg); }
+function buildCharts() {
+  $('#charts').innerHTML = ''; charts = [];
+  const R = S.run, Sr = R.series, slo = R.spec.slo;
+  { const leg = [{ n: 'p99', c: 'var(--accent)' }, { n: 'p50', c: 'color-mix(in srgb, var(--accent) 45%, transparent)' }, { n: 'target', c: 'var(--crit)', dash: true }];
+    if (S.baseline) leg.push({ n: 'baseline p99', c: 'var(--muted)', dash: true });
+    const ch = makeChart('TTFT <small>rolling 30 s, s</small>', leg);
+    let m = slo.ttft * 1.5; for (let i = 0; i < R.D; i++) if (isFinite(Sr.p99[i])) m = Math.max(m, Sr.p99[i]);
+    if (S.baseline) for (const v of S.baseline.p99) if (isFinite(v)) m = Math.max(m, v);
+    m = Math.min(niceMax(m), Math.max(niceMax(slo.ttft * 10), 10));
+    const Y = axes(ch, m, v => v < 10 ? v.toFixed(1) : Math.round(v));
+    if (S.baseline) el('path', { d: linePath(S.baseline.p99.slice(0, R.D), ch.X, Y, m), stroke: 'var(--muted)', fill: 'none', 'stroke-width': 1.2, 'stroke-dasharray': '5 3' }, ch.svg);
+    el('path', { d: linePath(Sr.p50, ch.X, Y, m), stroke: 'var(--accent)', 'stroke-opacity': 0.45, fill: 'none', 'stroke-width': 1.2 }, ch.svg);
+    el('path', { d: linePath(Sr.p99, ch.X, Y, m), stroke: 'var(--accent)', fill: 'none', 'stroke-width': 1.7 }, ch.svg);
+    el('line', { x1: ch.L, x2: ch.W - CH.r, y1: Y(slo.ttft), y2: Y(slo.ttft), stroke: 'var(--crit)', 'stroke-dasharray': '6 4', 'stroke-width': 1.1 }, ch.svg);
+    ph(ch); charts.push(ch); }
+  { const ch = makeChart('Where TTFT goes <small>mean, rolling 10 s</small>', [{ n: 'queue', c: 'var(--c-queue)' }, { n: 'prefill', c: 'var(--c-prefill)' }, { n: 'network/KV', c: 'var(--c-xfer)' }, { n: 'decode wait', c: 'var(--c-dwait)' }]);
+    let m = 0.1; for (let i = 0; i < R.D; i++) m = Math.max(m, Sr.bq[i] + Sr.bp[i] + Sr.bx[i] + Sr.bd[i]);
+    const Y = axes(ch, niceMax(m), v => v < 10 ? v.toFixed(1) : Math.round(v));
+    stacked(ch, [{ data: Sr.bq, c: 'var(--c-queue)' }, { data: Sr.bp, c: 'var(--c-prefill)' }, { data: Sr.bx, c: 'var(--c-xfer)' }, { data: Sr.bd, c: 'var(--c-dwait)' }], Y);
+    ph(ch); charts.push(ch); }
+  if (R.pools.length) { const ps = R.pools.slice().sort((a, b) => (a.siteKind === 'neo') - (b.siteKind === 'neo'));
+    const shade = (p, i) => p.siteKind === 'neo' ? 'color-mix(in srgb, var(--neo) ' + (90 - (i % 3) * 25) + '%, transparent)' : 'color-mix(in srgb, var(--onprem) ' + (90 - (i % 3) * 25) + '%, transparent)';
+    const leg = ps.map((p, i) => ({ n: p.name, c: shade(p, i) }));
+    if (S.baseline) leg.push({ n: 'baseline', c: 'var(--muted)', dash: true });
+    const ch = makeChart('Serving GPUs <small>incl. cold starts</small>', leg);
+    let m = 1; for (let i = 0; i < R.D; i++) { let s = 0; for (const p of ps) s += Sr.gpus[p.id][i]; m = Math.max(m, s); }
+    if (S.baseline) for (const v of S.baseline.gpus) m = Math.max(m, v);
+    const Y = axes(ch, niceMax(m), fK);
+    stacked(ch, ps.map((p, i) => ({ data: Sr.gpus[p.id], c: shade(p, i) })), Y);
+    if (S.baseline) el('path', { d: linePath(S.baseline.gpus.slice(0, R.D), ch.X, Y), stroke: 'var(--muted)', fill: 'none', 'stroke-width': 1.2, 'stroke-dasharray': '5 3' }, ch.svg);
+    ph(ch); charts.push(ch); }
+  { const ch = makeChart('Traffic <small>req/s</small>', [{ n: 'arrivals', c: 'var(--accent)' }, { n: 'completions', c: 'var(--muted)' }]);
+    let m = 1; for (let i = 0; i < R.D; i++) m = Math.max(m, Sr.arrivals[i], Sr.completions[i]);
+    const Y = axes(ch, niceMax(m), fK);
+    el('path', { d: linePath(Sr.completions, ch.X, Y), stroke: 'var(--muted)', fill: 'none', 'stroke-width': 1.1 }, ch.svg);
+    el('path', { d: linePath(Sr.arrivals, ch.X, Y), stroke: 'var(--accent)', fill: 'none', 'stroke-width': 1.3 }, ch.svg);
+    ph(ch); charts.push(ch); }
+  { const rows = R.pools.map(p => ({ n: p.name, data: Sr.util[p.id], c: p.siteKind === 'neo' ? 'var(--neo)' : 'var(--onprem)' }));
+    for (const L of R.links) if (!L.fabric || R.frames.some(f => f.links[L.id].util > 0.01)) rows.push({ n: L.name, data: Float64Array.from(R.frames, f => f.links[L.id].util), c: 'var(--c-xfer)' });
+    const h = 12 + rows.length * 18 + 16;
+    const ch = makeChart('Load heatmap <small>compute load per pool, bandwidth per link; click to jump</small>', [], { wide: true, h, l: 160 });
+    const bin = Math.max(1, Math.ceil(R.D / 300));
+    rows.forEach((row, ri) => {
+      const y = 6 + ri * 18;
+      el('text', { x: ch.L - 6, y: y + 11, 'text-anchor': 'end' }, ch.svg, row.n.length > 26 ? row.n.slice(0, 25) + '…' : row.n);
+      for (let s = 0; s < R.D; s += bin) { let v = 0; for (let j = s; j < Math.min(R.D, s + bin); j++) v = Math.max(v, row.data[j] || 0); if (v < 0.02) continue; el('rect', { x: ch.X(s), y, width: Math.max(1, ch.X(s + bin) - ch.X(s) + 0.3), height: 14, fill: row.c, 'fill-opacity': (0.08 + 0.9 * v).toFixed(2) }, ch.svg); }
+    });
+    const step = R.D > 1500 ? 300 : R.D > 700 ? 120 : 60;
+    for (let s = 0; s <= R.D; s += step) el('text', { x: ch.X(s), y: h - 3, 'text-anchor': 'middle' }, ch.svg, mmss(s));
+    ch.ph = el('line', { y1: 4, y2: h - 14, stroke: 'var(--ink)', 'stroke-width': 1.1, 'stroke-dasharray': '3 3' }, ch.svg);
+    charts.push(ch); }
+}
+function buildStrip() {
+  const v = $('#vstrip');
+  v.innerHTML = '';
+  const R = S.run, Sr = R.series, D = Math.max(1, R.D);
+  el('rect', { x: 0, y: 0, width: 1000, height: 12, fill: 'var(--panel)' }, v);
+  for (let s = 0; s < R.D; s++) { if (!Sr.firsts[s]) continue; const f = Sr.viol[s] / Sr.firsts[s]; if (f <= 0.02) continue; el('rect', { x: 1000 * s / D, y: 0, width: Math.max(1, 1000 / D), height: 12, fill: 'var(--crit)', 'fill-opacity': (0.2 + 0.8 * f).toFixed(2) }, v); }
+  if (R.summary.train) for (const st of R.train.steps) if (st.comm > 0.5) el('rect', { x: 1000 * (st.end - st.comm) / D, y: 9, width: Math.max(1, 1000 * st.comm / D), height: 3, fill: 'var(--train)' }, v);
+}
+$('#vstrip').addEventListener('click', e => { if (!S.run) return; const b = e.currentTarget.getBoundingClientRect(); seek((e.clientX - b.left) / b.width * (S.run.D - 1)); });
+
+// ---------- playback ----------
+let lastSec = -1;
+function seek(t) { if (!S.run) return; S.T = clamp(t, 0, Math.max(0, S.run.D - 1)); render(true); }
+function render(force) {
+  const R = S.run;
+  if (!R) return;
+  updateLive(S.T);
+  for (const ch of charts) { const x = ch.X(S.T); ch.ph.setAttribute('x1', x); ch.ph.setAttribute('x2', x); }
+  $('#clock').textContent = mmss(S.T) + ' / ' + mmss(R.D);
+  const sc = $('#scrub'); if (document.activeElement !== sc) sc.value = S.T;
+  const sec = Math.floor(S.T);
+  if (force || sec !== lastSec) {
+    lastSec = sec;
+    if (S.sel && (S.sel.type === 'node' || S.sel.type === 'edge')) renderLive();
+    else if (!S.sel || S.sel.type !== 'req') renderOverview();
+  }
+}
+let lastTs = 0;
+function loop(ts) {
+  if (S.playing && S.run) {
+    const dt = lastTs ? Math.min(0.1, (ts - lastTs) / 1000) : 0;
+    S.T += dt * S.speed;
+    if (S.T >= S.run.D - 1) { S.T = S.run.D - 1; setPlaying(false); }
+    render(false);
+  }
+  lastTs = ts;
+  requestAnimationFrame(loop);
+}
+function setPlaying(v) { S.playing = v; $('#bPlay').innerHTML = v ? '&#10074;&#10074; Pause' : '&#9654; Play'; }
+$('#bPlay').onclick = () => { if (!S.run) return; if (!S.playing && S.T >= S.run.D - 1.01) S.T = 0; setPlaying(!S.playing); };
+$('#bBack').onclick = () => seek(Math.floor(S.T) - 1);
+$('#bFwd').onclick = () => seek(Math.floor(S.T) + 1);
+$('#speed').onchange = e => { S.speed = +e.target.value; };
+$('#scrub').addEventListener('input', e => { S.T = +e.target.value; render(false); });
+function nextBreach() {
+  const R = S.run; if (!R) return;
+  const Sr = R.series, ok = s => Sr.firsts[s] && Sr.viol[s] / Sr.firsts[s] > 0.1;
+  for (let s = Math.floor(S.T) + 1; s < R.D; s++) if (ok(s)) return seek(s);
+  for (let s = 0; s <= Math.floor(S.T); s++) if (ok(s)) return seek(s);
+  toast('No seconds with more than 10% of requests over the TTFT target.');
+}
+$('#bNext').onclick = nextBreach;
+document.addEventListener('keydown', e => {
+  if (e.target.closest('input, select, textarea')) return;
+  if (e.key === ' ') { e.preventDefault(); $('#bPlay').click(); }
+  else if (e.key === 'ArrowRight') seek(Math.floor(S.T) + 1);
+  else if (e.key === 'ArrowLeft') seek(Math.floor(S.T) - 1);
+  else if (e.key === 'n' || e.key === 'N') nextBreach();
+  else if (e.key === 'f' || e.key === 'F') fit();
+  else if (e.key === 'Delete' || e.key === 'Backspace') { e.preventDefault(); deleteSelection(); }
+  else if (/^[1-6]$/.test(e.key)) { const sp = $('#speed'); sp.selectedIndex = +e.key - 1; S.speed = +sp.value; }
+});
+$('#pinBtn').onclick = () => {
+  const R = S.run; if (!R) return;
+  const tot = new Float64Array(R.D);
+  for (const p of R.pools) for (let i = 0; i < R.D; i++) tot[i] += R.series.gpus[p.id][i];
+  S.baseline = { label: R.label, summary: R.summary, p99: Array.from(R.series.p99), gpus: Array.from(tot) };
+  $('#clearBtn').hidden = false; $('#pinBtn').textContent = 'Re-pin baseline';
+  toast('Pinned. Change anything and the KPIs and charts compare against it.');
+  doRun();
+};
+$('#clearBtn').onclick = () => { S.baseline = null; $('#clearBtn').hidden = true; $('#pinBtn').textContent = 'Pin as baseline'; doRun(); };
+$('#copyBtn').onclick = () => {
+  const txt = JSON.stringify(S.graph, null, 1);
+  if (navigator.clipboard && navigator.clipboard.writeText) navigator.clipboard.writeText(txt).then(() => toast('Graph JSON copied.'), () => toast('Copy was blocked by the browser.'));
+  else toast('Copy is not available here.');
+};
+// templates
+const tplSel = $('#tpl');
+tplSel.innerHTML = TP.TEMPLATES.map(t => '<option value="' + t.id + '">Template: ' + t.name + ' — ' + t.desc + '</option>').join('');
+tplSel.onchange = () => loadTemplate(tplSel.value);
+function loadTemplate(id) {
+  const t = TP.TEMPLATES.find(x => x.id === id);
+  S.tpl = id; S.graph = t.build(); S.sel = null; S.dirty = false; firstRun = true; setPlaying(false);
+  S.nid = 100; S.needFit = true;
+  renderPalette(); renderGraph(); requestAnimationFrame(fit); renderDetails(); scheduleRun(0);
+}
+loadTemplate('burst');
+requestAnimationFrame(loop);
+window.addEventListener('resize', () => {});
+})();
+</script>
+</body>
+</html>
