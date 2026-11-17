@@ -227,6 +227,12 @@ These tools are built:
 
 Details: [PLANNING.md](PLANNING.md).
 
+## Ask in plain English (built)
+
+A question box reads a what-if into graph edits and a stress test, runs both, and answers with before and after numbers and where the bottleneck moves. The parser is rule-based and local: names match nodes by label, site or traffic source, and unknown words are shown as not used, never guessed. An LLM front end could later produce the same edit list.
+
+Details: [ASK.md](ASK.md).
+
 ## Build phases
 
 1. **Prototype (done):** a browser-only node editor and player on the tier-1 engine, with agent, chat, trace and training nodes, seven templates and baseline compare. Profiles come from spec sheets, not measurements.

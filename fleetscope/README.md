@@ -160,6 +160,12 @@ Here the coding-agent fleet's router switches from cache-oblivious to KV-aware r
 
 ![Buy vs rent](docs/img/plan-buy-vs-rent.png)
 
+### Ask in plain English
+
+Type a what-if in the box at the top, such as "What if coding agents move to H200 and the cloud link drops to 25 Gbps?". FleetScope shows how it read the question, runs it against the current graph and answers with before and after numbers. **Apply to the canvas** keeps the change. The parser is rule-based and runs in the page, so no question leaves the browser. See [docs/ASK.md](docs/ASK.md).
+
+![Ask](docs/img/ask.png)
+
 ### What if… a partial outage
 
 Half of the on-prem pool fails for two and a half minutes. Down instances show red, streams cut mid-answer are counted as lost, the KPIs compare against the same graph unstressed, and the banner names where it breaks first. See [docs/STRESS.md](docs/STRESS.md).
@@ -209,6 +215,7 @@ npm run build     # inline src/ into dist/index.html
 | `docs/CLUSTER.md` | The cluster model, policy knobs, and importing a real cluster |
 | `src/training.js`, `src/training-ui.js` | Training job model (phases, data loading, stragglers, checkpoints, faults) and the Training view |
 | `src/optimize.js`, `docs/PLANNING.md` | Optimiser, buy-vs-rent planner, MIG packing |
+| `src/ask.js`, `docs/ASK.md` | Reads plain-English what-ifs into graph edits and stress tests, and answers them |
 | `src/plan.js`, `tools/fleetscope-plan.mjs`, `scenarios/`, `docs/CI.md` | Plans base vs head scenarios for CI and the Report button |
 | `src/scenario.js`, `docs/SCENARIO.md` | Shared clock, change set across views, and fleet pools linked to cluster workloads |
 | `src/forecast.js`, `tools/live-twin.mjs`, `docs/LIVE.md` | Forecasts, projections, predicted-breach alerts and the scheduled CLI |

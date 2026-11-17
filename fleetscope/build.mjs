@@ -20,6 +20,7 @@ const inlined = {
   '/*TRAINING*/': read('src/training.js'),
   '/*PLAN*/': read('src/plan.js'),
   '/*OPTIMIZE*/': read('src/optimize.js'),
+  '/*ASK*/': read('src/ask.js'),
   '/*TRAININGUI*/': read('src/training-ui.js'),
   '/*INFERENCEUI*/': read('src/inference-ui.js'),
 };
