@@ -45,7 +45,43 @@
 html, body { height: 100%; margin: 0; }
 body { background: var(--bg); color: var(--ink); font: 13px/1.45 var(--font-ui); }
 button, select, input { font: inherit; color: inherit; }
-.shell { display: grid; grid-template-columns: 210px minmax(0, 1fr) 340px; grid-template-rows: auto minmax(0, 1fr); height: 100%; }
+.shell { display: grid; grid-template-columns: 210px minmax(0, 1fr) 340px; grid-template-rows: auto minmax(0, 1fr); height: calc(100% - 34px); }
+.shell[hidden] { display: none; }
+.viewbar { height: 34px; box-sizing: border-box; display: flex; align-items: center; gap: 2px; padding: 0 10px; background: var(--ink); color: var(--panel); }
+.viewbar b { font: 600 13px var(--font-display); margin-right: 12px; letter-spacing: .3px; }
+.viewbar button { border: 0; background: transparent; color: inherit; opacity: .7; padding: 5px 12px; border-radius: 6px; cursor: pointer; font-size: 12.5px; }
+.viewbar button[aria-selected="true"] { opacity: 1; background: color-mix(in srgb, var(--panel) 18%, transparent); font-weight: 600; }
+.viewbar .hint { margin-left: auto; font-size: 11.5px; opacity: .65; }
+/* cluster view */
+.cfg .card { border: 1px solid var(--line); border-radius: 8px; padding: 4px 8px; margin-bottom: 6px; background: var(--panel-2); }
+.cfg .card summary { cursor: pointer; font-size: 12px; display: flex; gap: 6px; align-items: center; flex-wrap: wrap; }
+.cfg .card summary span { color: var(--muted); font-size: 11px; }
+.cfg .frow { display: flex; justify-content: space-between; align-items: center; gap: 6px; font-size: 11.5px; margin: 4px 0; }
+.cfg .frow input, .cfg .frow select, .cfg .ctl input { width: 74px; border: 1px solid var(--line); border-radius: 5px; padding: 2px 4px; background: var(--panel); }
+.cfg .chk { display: block; font-size: 12px; margin: 5px 0; cursor: pointer; }
+.cfg .lbl { font-size: 11.5px; color: var(--muted); }
+.cfg .ctl { margin: 6px 0; }
+.sw { display: inline-block; width: 9px; height: 9px; border-radius: 2px; margin-right: 5px; vertical-align: 0; }
+.chead { margin: 8px 10px 0; font-size: 13px; background: var(--panel); border: 1px solid var(--line); border-left: 4px solid var(--accent); border-radius: 8px; padding: 7px 10px; }
+.chead b { font-weight: 600; }
+.chead .sub { color: var(--muted); }
+.gridWrap { position: relative; margin: 8px 10px 0; padding: 8px; background: var(--panel); border: 1px solid var(--line); border-radius: 10px; }
+.gridWrap canvas { display: block; cursor: crosshair; }
+.gtip { position: absolute; pointer-events: none; background: var(--ink); color: var(--panel); font-size: 11.5px; padding: 4px 8px; border-radius: 6px; max-width: 260px; z-index: 3; }
+.glegend { display: flex; flex-wrap: wrap; gap: 4px 12px; font-size: 11px; color: var(--muted); margin: 6px 12px 0; }
+.glegend i { display: inline-block; width: 9px; height: 9px; border-radius: 2px; margin-right: 4px; vertical-align: -1px; }
+.glegend i.empty { border: 1px solid var(--line); background: none; }
+.glegend i.hatch { background: repeating-linear-gradient(135deg, var(--muted) 0 2px, transparent 2px 4px); }
+.glegend i.dash { border-top: 1.5px dashed var(--ink); height: 0; width: 14px; border-radius: 0; vertical-align: 3px; }
+.glegend .sep { font-weight: 600; }
+#clusterApp .timeline { margin: 6px 10px 0; padding: 6px 8px; background: var(--panel); border: 1px solid var(--line); border-radius: 10px; }
+#clusterApp .timeline input { width: 100%; }
+#cGantt { display: block; margin: 0 18px 20px; }
+.cpad { margin: 12px 18px 4px !important; font: 600 12px var(--font-display); text-transform: uppercase; letter-spacing: .7px; color: var(--muted); }
+.cpad .sub { text-transform: none; letter-spacing: 0; }
+#cKpis .v { font-size: 15px; white-space: nowrap; }
+.btnlike { border: 1px solid var(--line); background: var(--panel-2); border-radius: 7px; padding: 4px 9px; cursor: pointer; font-size: 13px; }
+.btnlike:hover { border-color: var(--accent); }
 /* toolbar */
 .toolbar { grid-column: 1 / -1; display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; padding: 8px 12px; background: var(--panel); border-bottom: 1px solid var(--line); }
 .brand { display: flex; align-items: baseline; gap: 6px; margin-right: 4px; }
@@ -238,7 +274,11 @@ button, select, input { font: inherit; color: inherit; }
 </style>
 </head>
 <body>
-<div class="shell">
+<nav class="viewbar" id="viewbar" role="tablist" aria-label="View">
+  <button type="button" role="tab" data-view="fleet" aria-selected="true" title="Serving and training graph: traffic, routers, pools, links">Fleet graph</button>
+  <button type="button" role="tab" data-view="cluster" aria-selected="false" title="Kubernetes layer: nodes, GPUs, queues, scheduler policy">Cluster</button>
+  <span class="hint" id="viewhint">Traffic, routing and pools across sites</span></nav>
+<div class="shell" id="fleetApp">
   <header class="toolbar">
     <div class="brand"><b>FleetScope</b><span title="Performance comes from spec-sheet figures and fixed efficiency factors, not measurements">uncalibrated prototype</span></div>
     <div class="tb">
@@ -295,6 +335,7 @@ button, select, input { font: inherit; color: inherit; }
   </section>
   <aside class="details" id="details" aria-live="polite"></aside>
 </div>
+<div class="shell" id="clusterApp" hidden></div>
 <script>
 /*ENGINE*/
 </script>
@@ -1701,6 +1742,7 @@ function nextBreach() {
 }
 $('#bNext').onclick = nextBreach;
 document.addEventListener('keydown', e => {
+  if ($('#fleetApp').hidden) return;
   if (e.target.closest('input, select, textarea')) return;
   if (e.key === ' ') { e.preventDefault(); $('#bPlay').click(); }
   else if (e.key === 'ArrowRight') seek(Math.floor(S.T) + 1);
@@ -2042,6 +2084,25 @@ renderLensBar();
 loadTemplate('burst');
 requestAnimationFrame(loop);
 window.addEventListener('resize', () => {});
+})();
+</script>
+<script>
+/*CLUSTER*/
+</script>
+<script>
+/*CLUSTERUI*/
+</script>
+<script>
+(function () {
+  const hints = { fleet: 'Traffic, routing and pools across sites', cluster: 'Nodes, GPUs, queues and the scheduler: who gets which GPU, and who waits' };
+  document.getElementById('viewbar').addEventListener('click', e => {
+    const b = e.target.closest('[data-view]'); if (!b) return;
+    const v = b.dataset.view;
+    for (const x of document.querySelectorAll('#viewbar [data-view]')) x.setAttribute('aria-selected', String(x === b));
+    document.getElementById('viewhint').textContent = hints[v];
+    document.getElementById('fleetApp').hidden = v !== 'fleet';
+    if (v === 'cluster') window.FleetClusterView.show(); else window.FleetClusterView.hide();
+  });
 })();
 </script>
 </body>
