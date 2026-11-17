@@ -165,7 +165,7 @@ button, select, input { font: inherit; color: inherit; }
 .linkbtn { background: none; border: 0; color: var(--accent); cursor: pointer; padding: 0; text-decoration: underline; font-size: 12px; }
 .pill { display: inline-block; font-size: 11px; padding: 0 7px; border-radius: 99px; border: 1px solid var(--line); }
 .pill.ok { color: var(--good); border-color: var(--good); } .pill.bad { color: var(--crit); border-color: var(--crit); }
-.upload { display: block; margin-top: 8px; border: 1px dashed var(--line); border-radius: 8px; padding: 8px; text-align: center; cursor: pointer; font-size: 11.5px; color: var(--muted); }
+.ctl label.upload, .upload { display: block; margin-top: 8px; border: 1px dashed var(--line); border-radius: 8px; padding: 8px; text-align: center; cursor: pointer; font-size: 11.5px; color: var(--muted); }
 .upload:hover, .upload.drag { border-color: var(--accent); color: var(--ink); }
 .upload input { display: none; }
 .note { font-size: 11px; color: var(--muted); margin-top: 4px; }
@@ -234,9 +234,12 @@ button, select, input { font: inherit; color: inherit; }
 /*TEMPLATES*/
 </script>
 <script>
+/*INGEST*/
+</script>
+<script>
 (function () {
 'use strict';
-const E = window.FleetEngine, TP = window.FleetTemplates, NT = TP.NODE_TYPES;
+const E = window.FleetEngine, TP = window.FleetTemplates, NT = TP.NODE_TYPES, IN = window.FleetIngest;
 const $ = s => document.querySelector(s);
 const NS = 'http://www.w3.org/2000/svg';
 function el(tag, attrs, parent, text) {
@@ -576,8 +579,9 @@ const FIELDS = {
   trace: [
     { p: 'trace', k: 'select', label: 'Trace', opts: () => Object.keys(E.TRACES).map(k => [k, E.TRACES[k].label]).concat(traces.uploaded ? [['uploaded', 'Uploaded: ' + traces.uploaded.name]] : []) },
     { k: 'upload' },
-    { p: 'scale', k: 'range', label: 'Load multiplier', min: 0.25, max: 3, step: 0.05, f: v => v.toFixed(2) + '×' },
-    { p: 'prefixHit', k: 'range', label: 'Prefix cache hit', min: 0, max: 95, step: 5, f: v => v + '%' }
+    { p: 'scale', k: 'range', label: 'Load multiplier', min: 0.25, max: 10, step: 0.05, f: v => v.toFixed(2) + '×', hint: 'If your log was sampled (say 10% of requests), set the inverse (10×).' },
+    { p: 'useRecordedCache', k: 'check', label: 'Use cache hits recorded in the log', show: c => c.trace === 'uploaded' && traces.uploaded && traces.uploaded.stats.withCached > 0 },
+    { p: 'prefixHit', k: 'range', label: 'Prefix cache hit', min: 0, max: 95, step: 5, f: v => v + '%', hint: 'Applied to requests whose log has no cache data.' }
   ],
   router: [
     { p: 'policy', k: 'select', label: 'Policy', opts: [['primary-first', 'Primary first, burst when queued'], ['least-wait', 'Least estimated wait'], ['round-robin', 'Round robin (naive)']] },
@@ -678,7 +682,7 @@ function makeField(n, f) {
   if (f.k === 'grid') { w.className = 'grid2'; for (const ff of f.ctl) w.appendChild(makeField(n, ff)); return w; }
   if (f.k === 'poolReadout' || f.k === 'modelReadout' || f.k === 'trainHint' || f.k === 'targets') { w.className = f.k === 'trainHint' ? 'note' : f.k === 'targets' ? 'ctl' : 'readout'; w.dataset.kind = f.k; formBound.push({ f, w }); return w; }
   if (f.k === 'upload') {
-    w.innerHTML = '<label class="upload" id="drop"><input type="file" id="file" accept=".csv,text/csv">Upload a trace CSV or drop it here<br><span>Azure format (TIMESTAMP, ContextTokens, GeneratedTokens) or timestamp, input_tokens, output_tokens</span></label><div class="note" id="upnote">' + (traces.uploaded ? 'Loaded ' + esc(traces.uploaded.name) + ': ' + fInt(traces.uploaded.trace.length) + ' requests.' : '') + '</div>';
+    w.innerHTML = '<label class="upload" id="drop"><input type="file" id="file" accept=".csv,.json,.jsonl,.ndjson,.txt">Upload a trace or drop it here<br><span>vLLM OpenTelemetry spans (OTLP or Jaeger JSON), gateway JSON logs (OpenAI, Anthropic or LiteLLM usage), or CSV (Azure format or timestamp, input_tokens, output_tokens). Only timings and token counts are read.</span></label><div class="note" id="upnote">' + (traces.uploaded ? esc(uploadNote(traces.uploaded)) : '') + '</div>';
     setTimeout(() => wireUpload(n), 0);
     return w;
   }
@@ -783,6 +787,14 @@ function refreshForm() {
     }
   }
 }
+function uploadNote(u) {
+  const st = u.stats || { requests: u.trace.length, seconds: 0, withCached: 0, withTtft: 0, sessions: 0 };
+  const extra = [];
+  if (st.withTtft) extra.push(fPct(st.withTtft / st.requests) + ' with recorded TTFT');
+  if (st.withCached) extra.push(fPct(st.withCached / st.requests) + ' with cache hits');
+  if (st.sessions) extra.push(fInt(st.sessions) + ' sessions');
+  return (u.format ? u.format + ': ' : '') + fInt(st.requests) + ' requests over ' + mmss(st.seconds) + (extra.length ? ', ' + extra.join(', ') : '') + '.' + (u.notes && u.notes.length ? ' Note: ' + u.notes.join('; ') + '.' : '');
+}
 function wireUpload(n) {
   const inp = $('#file'), drop = $('#drop'), note = $('#upnote');
   if (!inp) return;
@@ -791,12 +803,11 @@ function wireUpload(n) {
     const rd = new FileReader();
     rd.onload = () => {
       try {
-        const res = E.parseTraceCSV(String(rd.result));
-        traces.uploaded = { name: file.name, trace: res.trace };
-        n.cfg.trace = 'uploaded'; n.cfg.scale = 1;
-        const dur = res.trace.length ? res.trace[res.trace.length - 1].t : 0;
+        const res = IN.parseTrace(String(rd.result));
+        traces.uploaded = { name: file.name, trace: res.trace, format: res.format, stats: res.stats, notes: res.notes };
+        n.cfg.trace = 'uploaded'; n.cfg.scale = 1; n.cfg.useRecordedCache = true;
         note.className = 'note';
-        note.textContent = 'Loaded ' + fInt(res.trace.length) + ' requests over ' + mmss(dur) + (res.notes.length ? ' (' + res.notes.join('; ') + ')' : '') + '.';
+        note.textContent = uploadNote(traces.uploaded);
         changed(n, true);
       } catch (err) { note.className = 'note err'; note.textContent = err.message; }
     };
@@ -887,6 +898,11 @@ function renderLive() {
     if (!a) { box.innerHTML = ''; return; }
     html += rowH('Requests this second', fInt(a[s])) + (R.srcUsers[n.id] ? rowH('Users with a request in flight', fInt(R.srcUsers[n.id][s])) : '') +
       '<div class="sparklabel">Requests per second</div>' + spark(a, t, 'var(--n-src)');
+    const rc = R.summary.recorded;
+    if (n.type === 'trace' && rc) html += '<h3 class="sec">Recorded vs simulated</h3>' + rowH('Requests with recorded TTFT', fInt(rc.requests)) +
+      rowH('TTFT p50: recorded / simulated', fS(rc.ttftP50) + ' / ' + fS(rc.simTtftP50)) + rowH('TTFT p99: recorded / simulated', fS(rc.ttftP99) + ' / ' + fS(rc.simTtftP99)) +
+      (isFinite(rc.queueP99) ? rowH('Recorded queue time p99', fS(rc.queueP99)) : '') +
+      '<div class="sub" style="margin-top:6px">' + calibrationHint(rc) + '</div>';
   } else if (n.type === 'train') {
     const ts = R.summary.train;
     if (!ts) { box.innerHTML = ''; return; }
@@ -898,6 +914,12 @@ function renderLive() {
     html += rowH('Requests meeting both targets', fPct(R.summary.slo)) + rowH('TTFT p99 (rolling 30 s)', fS(R.series.p99[s]));
   } else html = '';
   box.innerHTML = html;
+}
+function calibrationHint(rc) {
+  const e = rc.errP99;
+  if (!isFinite(e)) return 'Not enough matched requests to compare.';
+  if (Math.abs(e) <= 0.2 && Math.abs(rc.errP50) <= 0.1) return 'Within the spec\u2019s acceptance bar (10% on p50, 20% on p99): this graph reproduces the recorded latency.';
+  return 'Simulated p99 is ' + Math.round(Math.abs(e) * 100) + '% ' + (e < 0 ? 'lower' : 'higher') + ' than recorded. ' + (e < 0 ? 'The graph is likely faster than the real fleet: check that instance counts and GPU types match what served this log, then lower the model\u2019s efficiency by calibrating profiles.' : 'The graph is likely slower than the real fleet: check instance counts, max batch and prefix-cache hits against production.');
 }
 function renderOverview() {
   const box = $('#details'), R = S.run;
@@ -919,6 +941,7 @@ function renderOverview() {
       (q.fail ? '<div class="blind">' + esc(q.fail) + '.</div>' : '') +
       '<div class="wf">' + segs.map(g => '<div class="wrow"><span>' + g.nm + '</span><div class="track"><i style="left:' + (100 * g.a / total).toFixed(2) + '%;width:' + Math.max(0.8, 100 * (g.b - g.a) / total).toFixed(2) + '%;background:' + g.c + '"></i></div><span>' + fS(g.b - g.a) + '</span></div>').join('') + '</div>' +
       rowH('Input tokens (cached)', fInt(q.isl) + ' (' + fInt(q.cached || 0) + ')') + rowH('Output tokens', fInt(q.osl)) + rowH('TTFT', fS(q.ttft)) + rowH('TPOT', fMs(q.tpot)) +
+      (isFinite(q.recTtft) ? rowH('Recorded TTFT (log)', fS(q.recTtft)) : '') + (isFinite(q.recQueue) ? rowH('Recorded queue time (log)', fS(q.recQueue)) : '') + (isFinite(q.recE2e) ? rowH('Recorded end-to-end (log)', fS(q.recE2e)) : '') +
       '<div class="btnrow"><button class="btn" data-act="jump" type="button">Jump to its arrival</button></div>';
     return;
   }
@@ -1137,6 +1160,7 @@ function renderKpis() {
     t1('Serving $ / hour', fUsd(s.costPerHr), '', s.costPerHr, b.costPerHr, true, fUsd);
     t1('$ / M output tok', fUsd(s.costPerMTok), '', s.costPerMTok, b.costPerMTok, true, fUsd);
     t1('Cross-site traffic', s.crossGB >= 1 ? fK(s.crossGB) + ' GB' : (s.crossGB * 1000).toFixed(0) + ' MB', '', s.crossGB, b.crossGB, true, v => fK(v) + ' GB');
+    if (s.recorded && isFinite(s.recorded.errP99)) { const e = s.recorded.errP99; tiles.push(kpiTile('Recorded TTFT p99 (log)', fS(s.recorded.ttftP99), Math.abs(e) <= 0.2 ? 'good' : 'warn', 'sim ' + (e >= 0 ? '+' : '') + Math.round(e * 100) + '% vs log', '')); }
     if (s.dropped) tiles.push(kpiTile('Rejected (context > KV)', fInt(s.dropped), 'crit', '', ''));
   }
   if (s.train) {
@@ -1189,14 +1213,17 @@ function buildCharts() {
   const R = S.run, Sr = R.series, slo = R.spec.slo;
   { const leg = [{ n: 'p99', c: 'var(--accent)' }, { n: 'p50', c: 'color-mix(in srgb, var(--accent) 45%, transparent)' }, { n: 'target', c: 'var(--crit)', dash: true }];
     if (S.baseline) leg.push({ n: 'baseline p99', c: 'var(--muted)', dash: true });
+    const hasRec = Sr.recP99 && Array.prototype.some.call(Sr.recP99, isFinite);
+    if (hasRec) leg.push({ n: 'recorded p99 (log)', c: 'var(--good)', dash: true });
     const ch = makeChart('TTFT <small>rolling 30 s, s</small>', leg);
-    let m = slo.ttft * 1.5; for (let i = 0; i < R.D; i++) if (isFinite(Sr.p99[i])) m = Math.max(m, Sr.p99[i]);
+    let m = slo.ttft * 1.5; for (let i = 0; i < R.D; i++) { if (isFinite(Sr.p99[i])) m = Math.max(m, Sr.p99[i]); if (hasRec && isFinite(Sr.recP99[i])) m = Math.max(m, Sr.recP99[i]); }
     if (S.baseline) for (const v of S.baseline.p99) if (isFinite(v)) m = Math.max(m, v);
     m = Math.min(niceMax(m), Math.max(niceMax(slo.ttft * 10), 10));
     const Y = axes(ch, m, v => v < 10 ? v.toFixed(1) : Math.round(v));
     if (S.baseline) el('path', { d: linePath(S.baseline.p99.slice(0, R.D), ch.X, Y, m), stroke: 'var(--muted)', fill: 'none', 'stroke-width': 1.2, 'stroke-dasharray': '5 3' }, ch.svg);
     el('path', { d: linePath(Sr.p50, ch.X, Y, m), stroke: 'var(--accent)', 'stroke-opacity': 0.45, fill: 'none', 'stroke-width': 1.2 }, ch.svg);
     el('path', { d: linePath(Sr.p99, ch.X, Y, m), stroke: 'var(--accent)', fill: 'none', 'stroke-width': 1.7 }, ch.svg);
+    if (hasRec) el('path', { d: linePath(Sr.recP99, ch.X, Y, m), stroke: 'var(--good)', fill: 'none', 'stroke-width': 1.5, 'stroke-dasharray': '2 3' }, ch.svg);
     el('line', { x1: ch.L, x2: ch.W - CH.r, y1: Y(slo.ttft), y2: Y(slo.ttft), stroke: 'var(--crit)', 'stroke-dasharray': '6 4', 'stroke-width': 1.1 }, ch.svg);
     ph(ch); charts.push(ch); }
   { const ch = makeChart('Where TTFT goes <small>mean, rolling 10 s</small>', [{ n: 'queue', c: 'var(--c-queue)' }, { n: 'prefill', c: 'var(--c-prefill)' }, { n: 'network/KV', c: 'var(--c-xfer)' }, { n: 'decode wait', c: 'var(--c-dwait)' }]);
