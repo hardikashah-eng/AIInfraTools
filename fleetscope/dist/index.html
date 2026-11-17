@@ -530,6 +530,38 @@ button, select, input { font: inherit; color: inherit; }
   }
   const blastRadius = (spec, st) => drain(blastIter(spec, st));
 
+  // Where each data class went, for requests that arrived in [t0, t1), and where the residency rule was broken:
+  // a pool outside the class's allowed zones, or non-public data over an unencrypted link (when required).
+  // A link that carries data into a disallowed zone is counted as part of the breach.
+  function securityBreakdown(R, t0, t1) {
+    const spec = R.spec, pol = spec.policy || DEFAULT_POLICY, P = {}, L = {};
+    for (const p of R.pools) P[p.id] = { zone: (spec.pools.find(x => x.id === p.id) || {}).zone || 'private', kvb: p.P.kvBytesPerToken };
+    for (const l of spec.links) L[l.id] = l;
+    const nodes = {}, cls0 = () => ({ public: 0, internal: 0, confidential: 0 });
+    const N = id => nodes[id] || (nodes[id] = { req: cls0(), viol: 0, gb: cls0(), violGB: 0, blocked: 0, n: 0 });
+    const tot = { req: cls0(), viol: 0, violGB: 0, blocked: 0, n: 0, restricted: 0 };
+    let lo = 0, hi = R.reqs.length;
+    while (lo < hi) { const m = (lo + hi) >> 1; if (R.reqs[m].t < t0) lo = m + 1; else hi = m; }
+    for (let i = lo; i < R.reqs.length && R.reqs[i].t < t1; i++) {
+      const q = R.reqs[i], c = q.cls || 'internal', S = N(q.src);
+      S.n++; S.req[c]++; tot.n++; tot.req[c]++;
+      if (c !== 'public') tot.restricted++;
+      if (q.failKind === 'policy') { S.blocked++; tot.blocked++; continue; }
+      let bad = false;
+      const visit = (pid) => { if (!pid || !P[pid]) return; const n = N(pid); n.req[c]++; if (!zoneAllowed(pol, c, P[pid].zone)) { n.viol++; bad = true; } };
+      const cross = (lid, gb, dest) => {
+        if (!lid || !L[lid]) return;
+        const n = N(lid); n.req[c]++; n.gb[c] += gb;
+        if (!linkAllowed(pol, c, L[lid]) || (dest && P[dest] && !zoneAllowed(pol, c, P[dest].zone))) { n.viol++; n.violGB += gb; tot.violGB += gb; bad = true; }
+      };
+      visit(q.pPool);
+      cross(q.inLink, Math.max(0, q.isl - (q.cached || 0)) * 4 / 1e9, q.pPool);
+      if (q.dPool && q.dPool !== q.pPool) { visit(q.dPool); cross(q.xLink, q.isl * (P[q.pPool] ? P[q.pPool].kvb : 0) / 1e9, q.dPool); }
+      if (bad) { S.viol++; tot.viol++; }
+    }
+    return { nodes, total: tot, policy: pol };
+  }
+
   // Turns a recorded trace into session chains for closed-loop replay.
   // Within a session, a turn that starts after the previous turn finished waits for the simulated finish plus the
   // recorded think time; a turn that overlaps it (a parallel tool call) is a branch timed from the previous turn's issue.
@@ -615,6 +647,19 @@ button, select, input { font: inherit; color: inherit; }
         const demand = e.peak * e.isl * pr.kvBytesPerToken * 8 / 1e9;
         if (L && demand > 0.7 * L.gbps) out.push({ node: L.id, level: 'warn', kind: 'link', msg: 'At peak, KV caches from ' + p.name + ' need about ' + Math.round(demand) + ' Gbps across ' + L.name + ' (' + L.gbps + ' Gbps).', fix: 'Raise link bandwidth, keep prefill and decode in one site, or cut prompt sizes.' });
       }
+    }
+    const pol = spec.policy || DEFAULT_POLICY;
+    for (const S of spec.sources) {
+      const R = spec.routers.find(r => r.id === S.router);
+      if (!R || S.cls === 'public') continue;
+      const poolOf = id => spec.pools.find(q => q.id === id);
+      const bad = R.targets.filter(x => { const p = poolOf(x.pool); return p && (!zoneAllowed(pol, S.cls, p.zone) || (p.role === 'prefill' && !p.decode.some(d => poolOf(d.pool) && zoneAllowed(pol, S.cls, poolOf(d.pool).zone)))); });
+      const ok = R.targets.length - bad.length;
+      if (bad.length && !R.enforce) out.push({ node: R.id, level: 'warn', kind: 'residency', msg: S.name + ' sends ' + S.cls + ' data, and ' + R.name + ' can route it to ' + bad.map(x => { const p = poolOf(x.pool); return zoneAllowed(pol, S.cls, p.zone) ? p.decode.map(d => poolOf(d.pool).name).join(', ') : p.name; }).join(', ') + ', outside its allowed zones.', fix: ok ? 'Turn on Enforce data residency on the router, or change the pool\u2019s trust zone.' : 'Add a pool in an allowed zone, or change the policy on the SLO node.' });
+      if (bad.length && R.enforce && !ok) out.push({ node: R.id, level: 'warn', kind: 'residency', msg: R.name + ' enforces residency but has no allowed pool for ' + S.cls + ' data from ' + S.name + ': every request will be blocked.', fix: 'Add a pool in an allowed zone.' });
+      const viaLinks = new Set();
+      for (const x of R.targets) { if (x.link) viaLinks.add(x.link); const p = poolOf(x.pool); if (p) for (const d of p.decode) if (d.link) viaLinks.add(d.link); }
+      for (const lid of viaLinks) { const L = spec.links.find(l => l.id === lid); if (L && L.encrypted === false && pol.encrypt && !out.some(o => o.kind === 'encryption' && o.node === L.id)) out.push({ node: L.id, level: 'warn', kind: 'encryption', msg: L.name + ' is not encrypted but carries ' + S.cls + ' data.', fix: 'Encrypt the link, or keep non-public traffic off it.' }); }
     }
     if (spec.train && spec.train.link && spec.pools.some(p => (p.decode || []).some(d => d.link === spec.train.link))) out.push({ node: spec.train.link, level: 'warn', kind: 'contention', msg: 'The training job\u2019s gradient sync shares a link with serving KV transfers.', fix: 'Give training its own link or keep the job in one site.' });
     return out;
@@ -868,6 +913,20 @@ button, select, input { font: inherit; color: inherit; }
   }
   const adviseModels = (spec, opts) => drain(adviseIter(spec, opts));
 
+  // ---------- data residency ----------
+  // Trust zones, most to least trusted. A data class may run only in zones up to its limit; non-public data
+  // may cross only encrypted links when the policy requires it.
+  const ZONES = { private: 0, dedicated: 1, shared: 2 };
+  const ZONE_LABEL = { private: 'private (own site)', dedicated: 'dedicated cloud', shared: 'shared cloud' };
+  const DEFAULT_POLICY = { confidential: 'private', internal: 'any', encrypt: true };
+  const zoneOf = c => (c.zone && c.zone !== 'auto' && ZONES[c.zone] != null ? c.zone : c.siteKind === 'neo' ? 'shared' : 'private');
+  function zoneAllowed(policy, cls, zone) {
+    if (cls === 'public') return true;
+    const lim = (policy || DEFAULT_POLICY)[cls === 'confidential' ? 'confidential' : 'internal'];
+    return lim === 'any' || ZONES[zone] <= ZONES[lim];
+  }
+  const linkAllowed = (policy, cls, L) => cls === 'public' || !(policy || DEFAULT_POLICY).encrypt || !L || L.encrypted !== false;
+
   // ---------- graph compile ----------
   // graph = { nodes: [{id, type, x, y, cfg}], edges: [{id, from, to}] }
   const NODE_RULES = {
@@ -884,8 +943,11 @@ button, select, input { font: inherit; color: inherit; }
     const sloN = g.nodes.find(n => n.type === 'slo');
     if (!modelN) errors.push({ msg: 'Add a Model node: every pool serves that model.' });
     const spec = { seed: 7, model: modelN ? Object.assign({}, modelN.cfg) : null, slo: sloN ? { ttft: sloN.cfg.ttft, tpot: sloN.cfg.tpotMs / 1000, thinkingStreamed: !!sloN.cfg.thinkingStreamed } : { ttft: 2, tpot: 0.06, thinkingStreamed: false },
-      sources: [], routers: [], pools: [], links: [], train: null, horizon: 0, paths: {} };
-    for (const n of g.nodes) if (n.type === 'link') spec.links.push({ id: n.id, name: n.cfg.name, gbps: n.cfg.gbps, rttMs: n.cfg.rttMs, egressPerGB: n.cfg.egressPerGB });
+      sources: [], routers: [], pools: [], links: [], train: null, horizon: 0, paths: {},
+      policy: sloN ? { confidential: sloN.cfg.confidentialIn || 'private', internal: sloN.cfg.internalIn || 'any', encrypt: sloN.cfg.requireEncryption !== false } : Object.assign({}, DEFAULT_POLICY),
+      owners: {} };
+    for (const n of g.nodes) if (n.cfg && (n.cfg.owner || n.cfg.oncall)) spec.owners[n.id] = { owner: (n.cfg.owner || '').trim(), oncall: (n.cfg.oncall || '').trim() };
+    for (const n of g.nodes) if (n.type === 'link') spec.links.push({ id: n.id, name: n.cfg.name, gbps: n.cfg.gbps, rttMs: n.cfg.rttMs, egressPerGB: n.cfg.egressPerGB, encrypted: n.cfg.encrypted !== false });
     // resolve a pool reached from an edge, possibly through one link node
     function reach(e) {
       const t = byId[e.to];
@@ -899,7 +961,8 @@ button, select, input { font: inherit; color: inherit; }
       const c = n.cfg;
       const p = { id: n.id, name: c.name, site: c.site, siteKind: c.siteKind, role: c.role, gpu: c.gpu,
         min: c.autoscale ? c.min : c.instances, max: c.autoscale ? Math.max(c.min, c.max, 1) : c.instances,
-        auto: !!c.autoscale, coldStart: c.coldStart, upWait: c.upWait, downUtil: c.downUtil / 100, maxBatch: c.maxBatch, fabricGbps: c.fabricGbps, decode: [] };
+        auto: !!c.autoscale, coldStart: c.coldStart, upWait: c.upWait, downUtil: c.downUtil / 100, maxBatch: c.maxBatch, fabricGbps: c.fabricGbps, decode: [],
+        zone: zoneOf(c) };
       if (c.role === 'prefill') {
         for (const e of outs(n.id)) for (const r of reach(e)) {
           const d = byId[r.pool];
@@ -922,7 +985,7 @@ button, select, input { font: inherit; color: inherit; }
         targets.push(r);
       }
       if (!targets.length) errors.push({ node: n.id, msg: n.cfg.name + ' has no pool to send requests to.' });
-      spec.routers.push({ id: n.id, name: n.cfg.name, policy: n.cfg.policy, burstWait: n.cfg.burstWait, targets });
+      spec.routers.push({ id: n.id, name: n.cfg.name, policy: n.cfg.policy, burstWait: n.cfg.burstWait, targets, enforce: !!n.cfg.enforceResidency });
     }
     let uidBase = 0;
     for (const n of g.nodes) {
@@ -931,7 +994,8 @@ button, select, input { font: inherit; color: inherit; }
       if (!e) { errors.push({ node: n.id, msg: n.cfg.name + ': wire it to a Router.' }); continue; }
       const c = n.cfg;
       const s = { id: n.id, name: c.name, kind: n.type === 'trace' ? 'open' : n.type, router: e.to, edge: e.id, prefixHit: c.prefixHit / 100, useRecordedCache: c.useRecordedCache !== false, userBase: uidBase,
-        replay: c.replay === 'sessions' ? 'sessions' : 'timestamps', onFail: c.onFail === 'giveup' ? 'giveup' : 'retry' };
+        replay: c.replay === 'sessions' ? 'sessions' : 'timestamps', onFail: c.onFail === 'giveup' ? 'giveup' : 'retry',
+        cls: ['public', 'internal', 'confidential'].includes(c.dataClass) ? c.dataClass : 'internal' };
       if (n.type === 'trace') { s.trace = traceLookup ? traceLookup(c.trace, c.scale) : []; }
       else { Object.assign(s, { users: c.users, turns: c.turns, systemTokens: c.systemTokens, contextTokens: n.type === 'agent' ? c.contextTokens : 0, turnTokens: c.turnTokens, outTokens: c.outTokens, thinkS: c.thinkS, gapS: c.gapS, duration: c.durationMin * 60 }); uidBase += c.users; }
       spec.sources.push(s);
@@ -990,7 +1054,11 @@ button, select, input { font: inherit; color: inherit; }
     const sites = {};
     for (const p of pools) sites[p.site] = Math.max(sites[p.site] || 0, p.fabricGbps || 400);
     for (const s in sites) addLink('fab:' + s, s + ' fabric', sites[s], 0.00002, 0, true, s);
-    for (const L of spec.links) addLink(L.id, L.name, L.gbps, L.rttMs / 1000, L.egressPerGB, false, null);
+    for (const L of spec.links) { addLink(L.id, L.name, L.gbps, L.rttMs / 1000, L.egressPerGB, false, null); links[L.id].encrypted = L.encrypted !== false; }
+    const policy = spec.policy || DEFAULT_POLICY;
+    // Under an enforced residency rule, a target is allowed when its pool, the link to it and (for prefill) some decode pool all are.
+    const decodeOk = (p, cls) => p.role !== 'prefill' || p.decode.some(d => zoneAllowed(policy, cls, byId[d.pool].zone) && linkAllowed(policy, cls, d.link && links[d.link]));
+    const targetOk = (x, cls) => zoneAllowed(policy, cls, x.P.zone) && linkAllowed(policy, cls, x.link && links[x.link]) && decodeOk(x.P, cls);
     const linkList = Object.values(links);
 
     const routers = spec.routers.map(r => Object.assign({}, r, { rr: 0, targets: r.targets.map(x => Object.assign({}, x, { P: byId[x.pool] })) }));
@@ -1005,8 +1073,9 @@ button, select, input { font: inherit; color: inherit; }
     }
     // A target behind a link that is down, or with no serving instance, is skipped while any other target can serve.
     const targetWait = x => (x.link && links[x.link].factor <= 0 ? Infinity : estWait(x.P));
-    function route(R) {
-      const T = R.targets;
+    function route(R, r) {
+      const T = R.enforce ? R.targets.filter(x => targetOk(x, r.cls)) : R.targets;
+      if (!T.length) return null;
       if (T.length === 1) return T[0];
       if (R.policy === 'round-robin') { const o = T.filter(x => isFinite(targetWait(x))); const pick = o.length ? o : [T[0]]; return pick[(R.rr++) % pick.length]; }
       let best = T[0], bw = targetWait(T[0]);
@@ -1026,7 +1095,7 @@ button, select, input { font: inherit; color: inherit; }
     const trng = makeRng(((spec.seed || 7) * 7919 + 101) >>> 0);
     function mkReq(src, t, isl, osl, cached, user) {
       const think = thinkMed > 0 ? clamp(Math.round(trng.logn(thinkMed, 0.6)), 16, 64000) : 0;
-      const r = { id: reqs.length, src: src.id, router: src.router, t, isl, osl, think, dec: think + osl, tTok1: NaN, cached: Math.max(0, Math.min(cached, isl - 1)), user,
+      const r = { id: reqs.length, src: src.id, cls: src.cls || 'internal', router: src.router, t, isl, osl, think, dec: think + osl, tTok1: NaN, cached: Math.max(0, Math.min(cached, isl - 1)), user,
         site: '', pPool: '', dPool: '', inLink: '', net: 0, tEnq: NaN, tAdmit: NaN, tPrefEnd: NaN, tXferStart: NaN, tXferEnd: NaN, tFirst: NaN, tFinish: NaN,
         gen: 0, preRem: 0, kvRes: 0, xLink: '', fail: '', recTtft: NaN, recQueue: NaN, recE2e: NaN };
       reqs.push(r);
@@ -1162,15 +1231,16 @@ button, select, input { font: inherit; color: inherit; }
       if (dp && dp.siteKind === 'neo') { const L = links[r.inLink] || links[r.xLink]; if (L && !L.fabric) { L.egressBytes += r.osl * 4; L.egrSec += r.osl * 4; L.totalBytes += r.osl * 4; } }
       if (r.user >= 0) after(r.user, r.isl, r.osl, t);
     }
-    const failCounts = { kv: 0, outage: 0, route: 0 };
+    const failCounts = { kv: 0, outage: 0, route: 0, policy: 0 };
     function failReq(r, t, why, kind) {
       r.fail = why; r.failKind = kind || 'kv'; failCounts[r.failKind]++; dropped++; doneCount++;
       if (r.sess) sessionTurnDone(r, t, false);
       if (r.user >= 0) { users[r.user].turns = 1; after(r.user, 0, 0, t + 5); }
     }
-    function pickDecode(p) {
+    function pickDecode(p, r) {
       let best = null, bs = Infinity;
       for (const d of p.decode) {
+        if (r && r.enforce && !(zoneAllowed(policy, r.cls, byId[d.pool].zone) && linkAllowed(policy, r.cls, d.link && links[d.link]))) continue;
         const D = byId[d.pool];
         const s = servingCount(D) + D.inst.filter(x => x.state === 'starting').length * 0.3;
         const score = (d.link && links[d.link].factor <= 0 ? 1e6 : 0) + (D.q.length + 1) / Math.max(0.3, s) + (d.link ? 0.5 : 0);
@@ -1184,7 +1254,7 @@ button, select, input { font: inherit; color: inherit; }
         if (r.dec <= 1) { x.kvUsed -= r.kvRes; x.ctxTok -= r.isl + 1; finish(r, t); } else x.batch.push(r);
         return;
       }
-      const d = pickDecode(p);
+      const d = pickDecode(p, r);
       const L = d.link ? links[d.link] : links['fab:' + p.site];
       r.tXferStart = t; r.xLink = L.id;
       L.xfers.push({ r, rem: r.isl * p.P.kvBytesPerToken, d: byId[d.pool] });
@@ -1398,7 +1468,9 @@ button, select, input { font: inherit; color: inherit; }
         else if (r.replayTurn) r = replayReq(r.replayTurn, r.t);
         const R = routerById[r.router];
         if (!R || !R.targets.length) { failReq(r, t, 'No route', 'route'); continue; }
-        const x = route(R);
+        const x = route(R, r);
+        if (!x) { failReq(r, t, 'No pool is allowed for ' + r.cls + ' data', 'policy'); continue; }
+        r.enforce = !!R.enforce;
         const p = x.P;
         r.site = p.site; r.pPool = p.id;
         if (x.link) {
@@ -1532,7 +1604,7 @@ button, select, input { font: inherit; color: inherit; }
     const recorded = compareRecorded(reqs, D);
     const bottleneck = findBottleneck(frames, pools, linkList, viol, firsts, slo, tviol, fins);
     const summary = {
-      requests: reqs.length, completed, dropped, rejected: failCounts.kv, lost: failCounts.outage, retried,
+      requests: reqs.length, completed, dropped, rejected: failCounts.kv, lost: failCounts.outage, blocked: failCounts.policy, retried,
       surgeRequests: reqs.filter(r => r.surge).length, bottleneck,
       replay: replayStats.sources ? (() => { const d = replayStats.drift.map(Math.abs).sort((a, b) => a - b); return { sessions: replayStats.sessions, turns: replayStats.turns, branches: replayStats.branches, estimatedGaps: replayStats.estimated, abandoned: replayStats.abandoned, retried: replayStats.retried, issued: replayStats.drift.length, driftP50: pct(d, 0.5), driftP90: pct(d, 0.9), meanDrift: replayStats.drift.length ? replayStats.drift.reduce((a, b) => a + b, 0) / replayStats.drift.length : NaN }; })() : null,
       slo: reqs.length ? ok / reqs.length : NaN,
@@ -1546,7 +1618,7 @@ button, select, input { font: inherit; color: inherit; }
     };
     summary.recorded = recorded.summary;
     summary.simMs = Math.round((typeof performance !== 'undefined' ? performance.now() : Date.now()) - T0);
-    const slim = reqs.map(r => ({ id: r.id, src: r.src, router: r.router, t: r.t, isl: r.isl, osl: r.osl, cached: r.cached, user: r.user, site: r.site, pPool: r.pPool, dPool: r.dPool, inLink: r.inLink, xLink: r.xLink,
+    const slim = reqs.map(r => ({ id: r.id, src: r.src, cls: r.cls, router: r.router, t: r.t, isl: r.isl, osl: r.osl, cached: r.cached, user: r.user, site: r.site, pPool: r.pPool, dPool: r.dPool, inLink: r.inLink, xLink: r.xLink,
       tEnq: r.tEnq, tAdmit: r.tAdmit, tPrefEnd: r.tPrefEnd, tXferEnd: r.tXferEnd, tFirst: r.tFirst, tFinish: r.tFinish, net: r.net, fail: r.fail,
       ttft: r.ttft, tpot: r.tpot, ok: r.ok, bQueue: r.bQueue, bPrefill: r.bPrefill, bXfer: r.bXfer, bDwait: r.bDwait,
       think: r.think, tTok1: r.tTok1, bThink: r.bThink, session: r.sess ? r.sess.ses.id : null, turn: r.sess ? r.turn : null, retryOf: r.retryOf || 0,
@@ -1563,7 +1635,7 @@ button, select, input { font: inherit; color: inherit; }
   }
 
   const api = { GPUS, MODELS, TRACES, NODE_RULES, CAUSE, profile, genTrace, scaleTrace, compileGraph, simulate, normStress, findBottleneck,
-    headroomIter, findHeadroom, healthOf, HEALTH_LABEL, costBreakdown, latencyBreakdown, blastIter, blastRadius, scaleFleet, sizeFleetIter, sizeFleet, adviseIter, adviseModels, compareRecorded, planSessions, lintSpec, makeRng };
+    headroomIter, findHeadroom, healthOf, HEALTH_LABEL, costBreakdown, latencyBreakdown, blastIter, blastRadius, securityBreakdown, zoneAllowed, ZONE_LABEL, DEFAULT_POLICY, scaleFleet, sizeFleetIter, sizeFleet, adviseIter, adviseModels, compareRecorded, planSessions, lintSpec, makeRng };
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
   else root.FleetEngine = api;
 })(typeof window !== 'undefined' ? window : this);
@@ -1577,23 +1649,23 @@ button, select, input { font: inherit; color: inherit; }
   const M = key => Object.assign({ name: 'Model', key, wPrec: 'fp8', kvPrec: 'fp8', thinkTokens: 0, thinkKeep: false }, E.MODELS[key]);
   const NODE_TYPES = {
     agent: { title: 'Coding agents', group: 'Traffic', color: 'src', inputs: false, outputs: true, w: 230,
-      defaults: () => ({ name: 'Coding agents', users: 60, turns: 12, systemTokens: 6000, contextTokens: 30000, turnTokens: 2500, outTokens: 350, thinkS: 4, gapS: 30, prefixHit: 85, durationMin: 10 }) },
+      defaults: () => ({ name: 'Coding agents', users: 60, turns: 12, systemTokens: 6000, contextTokens: 30000, turnTokens: 2500, outTokens: 350, thinkS: 4, gapS: 30, prefixHit: 85, durationMin: 10, dataClass: 'internal', owner: '', oncall: '' }) },
     chat: { title: 'Chat users', group: 'Traffic', color: 'src', inputs: false, outputs: true, w: 230,
-      defaults: () => ({ name: 'Chat users', users: 400, turns: 6, systemTokens: 800, contextTokens: 0, turnTokens: 300, outTokens: 300, thinkS: 20, gapS: 60, prefixHit: 50, durationMin: 10 }) },
+      defaults: () => ({ name: 'Chat users', users: 400, turns: 6, systemTokens: 800, contextTokens: 0, turnTokens: 300, outTokens: 300, thinkS: 20, gapS: 60, prefixHit: 50, durationMin: 10, dataClass: 'internal', owner: '', oncall: '' }) },
     trace: { title: 'Trace replay', group: 'Traffic', color: 'src', inputs: false, outputs: true, w: 230,
-      defaults: () => ({ name: 'Trace replay', trace: 'chat', scale: 1, prefixHit: 0, useRecordedCache: true, replay: 'timestamps', onFail: 'retry' }) },
+      defaults: () => ({ name: 'Trace replay', trace: 'chat', scale: 1, prefixHit: 0, useRecordedCache: true, replay: 'timestamps', onFail: 'retry', dataClass: 'internal', owner: '', oncall: '' }) },
     router: { title: 'Router', group: 'Routing', color: 'route', inputs: true, outputs: true, w: 200,
-      defaults: () => ({ name: 'Router', policy: 'primary-first', burstWait: 1.5 }) },
+      defaults: () => ({ name: 'Router', policy: 'primary-first', burstWait: 1.5, enforceResidency: false, owner: '', oncall: '' }) },
     pool: { title: 'GPU pool', group: 'Compute', color: 'pool', inputs: true, outputs: true, w: 290,
-      defaults: () => ({ name: 'On-prem pool', site: 'On-prem DC', siteKind: 'onprem', role: 'agg', gpu: 'H100', instances: 4, autoscale: false, min: 0, max: 8, coldStart: 90, upWait: 1, downUtil: 30, maxBatch: 256, fabricGbps: 400 }) },
+      defaults: () => ({ name: 'On-prem pool', site: 'On-prem DC', siteKind: 'onprem', role: 'agg', gpu: 'H100', instances: 4, autoscale: false, min: 0, max: 8, coldStart: 90, upWait: 1, downUtil: 30, maxBatch: 256, fabricGbps: 400, zone: 'auto', owner: '', oncall: '' }) },
     link: { title: 'Cross-site link', group: 'Network', color: 'link', inputs: true, outputs: true, w: 210,
-      defaults: () => ({ name: 'Cloud link', gbps: 100, rttMs: 20, egressPerGB: 0.05 }) },
+      defaults: () => ({ name: 'Cloud link', gbps: 100, rttMs: 20, egressPerGB: 0.05, encrypted: true, owner: '', oncall: '' }) },
     train: { title: 'Training job', group: 'Compute', color: 'train', inputs: false, outputs: true, w: 250,
-      defaults: () => ({ name: 'Training job', model: 'llama-70b', gpus: 256, gpu: 'H100', site: 'On-prem DC', siteKind: 'onprem', tokensPerStepM: 4, mfu: 40, overlap: true, horizonMin: 10 }) },
+      defaults: () => ({ name: 'Training job', model: 'llama-70b', gpus: 256, gpu: 'H100', site: 'On-prem DC', siteKind: 'onprem', tokensPerStepM: 4, mfu: 40, overlap: true, horizonMin: 10, owner: '', oncall: '' }) },
     model: { title: 'Model', group: 'Settings', color: 'set', inputs: false, outputs: false, w: 240, singleton: true, fixed: true,
       defaults: () => M('llama-70b') },
     slo: { title: 'SLO targets', group: 'Settings', color: 'set', inputs: false, outputs: false, w: 200, singleton: true, fixed: true,
-      defaults: () => ({ name: 'SLO targets', ttft: 2, tpotMs: 60, thinkingStreamed: false }) }
+      defaults: () => ({ name: 'SLO targets', ttft: 2, tpotMs: 60, thinkingStreamed: false, confidentialIn: 'private', internalIn: 'any', requireEncryption: true }) }
   };
   const PALETTE = [
     { type: 'agent', label: 'Coding agents', hint: 'Concurrent agent sessions with growing context' },
@@ -1621,7 +1693,7 @@ button, select, input { font: inherit; color: inherit; }
       edges: [edge('src', 'rt'), edge('rt', 'on'), edge('rt', 'lk'), edge('lk', 'neo')] }) },
     { id: 'agent', name: 'Coding agent fleet', desc: '60 agents, 30k-token contexts, 85% cache hits', build: () => ({
       nodes: [Object.assign(node('model', 'model', 40, 20), { cfg: M('coder-32b') }), node('slo', 'slo', 310, 20),
-        node('src', 'agent', 40, 250), node('rt', 'router', 330, 260),
+        node('src', 'agent', 40, 250, { dataClass: 'confidential' }), node('rt', 'router', 330, 260),
         node('on', 'pool', 600, 150, { name: 'On-prem H100', instances: 6 }),
         node('lk', 'link', 600, 470), node('neo', 'pool', 880, 410, Object.assign({}, NEO, { name: 'Neocloud H200', coldStart: 60 }))],
       edges: [edge('src', 'rt'), edge('rt', 'on'), edge('rt', 'lk'), edge('lk', 'neo')] }) },
@@ -1660,6 +1732,23 @@ button, select, input { font: inherit; color: inherit; }
       edges: [edge('src', 'rt'), edge('rt', 'on'), edge('rt', 'lk'), edge('lk', 'neo')] }) },
     { id: 'blank', name: 'Blank canvas', desc: 'Model and SLO nodes only', build: () => ({ nodes: [node('model', 'model', 40, 20), node('slo', 'slo', 310, 20)], edges: [] }) }
   ];
+  // Example owners so the Ownership lens has something to show; edit them on each node.
+  const OWNERS = {
+    agent: ['Developer Productivity', '@devprod-oncall'], chat: ['Assistant Product', '@assistant-oncall'], trace: ['Assistant Product', '@assistant-oncall'],
+    router: ['ML Platform', '@mlplatform-oncall'], onprem: ['ML Platform', '@mlplatform-oncall'], neo: ['Cloud Infrastructure', '@cloudinfra-oncall'],
+    link: ['Network Engineering', '@netops'], train: ['Foundation Models', '@fm-training-oncall']
+  };
+  for (const T of TEMPLATES) {
+    const build = T.build;
+    T.build = () => {
+      const g = build();
+      for (const n of g.nodes) {
+        const o = OWNERS[n.type === 'pool' ? (n.cfg.siteKind === 'neo' ? 'neo' : 'onprem') : n.type];
+        if (o && !n.cfg.owner) { n.cfg.owner = o[0]; n.cfg.oncall = o[1]; }
+      }
+      return g;
+    };
+  }
   const api = { NODE_TYPES, PALETTE, TEMPLATES, node, edge };
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
   else root.FleetTemplates = api;
@@ -2362,6 +2451,18 @@ const FIELDS = {
     { p: 'thinkingStreamed', k: 'check', label: 'Streamed thinking counts as the first token', hint: 'Turn on if your product streams reasoning to the user. Off: TTFT waits for the visible answer.' }
   ]
 };
+// data residency and ownership knobs
+const CLASS_FIELD = { p: 'dataClass', k: 'seg', label: 'Data class', opts: [['public', 'Public'], ['internal', 'Internal'], ['confidential', 'Confidential']], hint: 'What the prompts and their KV caches contain. The policy on the SLO node says where each class may run.' };
+const OWNER_FIELDS = [{ k: 'grid', ctl: [{ p: 'owner', k: 'text', label: 'Owner team', list: true }, { p: 'oncall', k: 'text', label: 'On-call', list: true }] }];
+FIELDS.agent.push(CLASS_FIELD); FIELDS.trace.push(CLASS_FIELD);
+FIELDS.router.push({ p: 'enforceResidency', k: 'check', label: 'Enforce data residency', hint: 'Only route each request to pools, links and decode pools its data class is allowed in. Requests with no allowed pool are blocked.' });
+FIELDS.pool.push({ p: 'zone', k: 'seg', label: 'Trust zone', opts: [['auto', 'By site'], ['private', 'Private'], ['dedicated', 'Dedicated'], ['shared', 'Shared']], hint: 'Private: your own site. Dedicated: single-tenant cloud capacity. Shared: multi-tenant cloud. "By site" is private on-prem, shared in a neocloud.' });
+FIELDS.link.push({ p: 'encrypted', k: 'check', label: 'Encrypted in transit' });
+FIELDS.slo.push(
+  { p: 'confidentialIn', k: 'seg', label: 'Confidential data may run in', opts: [['private', 'Private sites only'], ['dedicated', 'Private + dedicated cloud']] },
+  { p: 'internalIn', k: 'seg', label: 'Internal data may run in', opts: [['any', 'Anywhere'], ['dedicated', 'Private + dedicated'], ['private', 'Private only']] },
+  { p: 'requireEncryption', k: 'check', label: 'Non-public data must cross encrypted links only' });
+for (const t of ['agent', 'trace', 'router', 'pool', 'link', 'train']) FIELDS[t].push(...OWNER_FIELDS);
 FIELDS.chat = FIELDS.agent.filter(f => f.p !== 'contextTokens').map(f => f.p === 'turnTokens' ? Object.assign({}, f, { label: 'User message per turn' }) : f.p === 'thinkS' ? Object.assign({}, f, { label: 'User think time between turns' }) : f);
 let formNode = null, formBound = [];
 function renderDetails() {
@@ -2426,8 +2527,8 @@ function makeField(n, f) {
     const lid = id + 'l';
     w.innerHTML = '<label for="' + id + '">' + lab + '</label><input type="text" id="' + id + '"' + (f.list ? ' list="' + lid + '"' : '') + '>' + (f.list ? '<datalist id="' + lid + '"></datalist>' : '') + (f.hint ? '<div class="hint">' + f.hint + '</div>' : '');
     const inp = w.querySelector('input');
-    inp.addEventListener('change', () => { c[f.p] = inp.value.trim() || 'Site'; changed(n, true); });
-    if (f.list) { const sites = [...new Set(S.graph.nodes.filter(m => m.type === 'pool').map(m => m.cfg.site))]; w.querySelector('datalist').innerHTML = sites.map(s => '<option value="' + esc(s) + '">').join(''); }
+    inp.addEventListener('change', () => { c[f.p] = inp.value.trim() || (f.p === 'site' ? 'Site' : ''); changed(n, true); });
+    if (f.list) { const vals = f.p === 'site' ? S.graph.nodes.filter(m => m.type === 'pool').map(m => m.cfg.site) : S.graph.nodes.map(m => m.cfg[f.p]).filter(Boolean); w.querySelector('datalist').innerHTML = [...new Set(vals)].map(s => '<option value="' + esc(s) + '">').join(''); }
     formBound.push({ f, w, inp });
     return w;
   } else if (f.k === 'select') {
@@ -2693,7 +2794,7 @@ function renderOverview() {
   const nm = id => { const n = nodeById(id); return n ? n.cfg.name : id; };
   const LVo = S.lens !== 'perf' ? lensView(R, s) : null, Lz = lensOf(S.lens);
   const lensHtml = LVo ? '<h3 class="sec" style="margin-top:0">' + Lz.label + (Lz.scoped ? (S.scope === 'run' ? ', whole run' : ', last 10 s') : S.lens === 'rel' ? ': if each failed for the whole run' : '') + '</h3><div class="sub">' + LVo.headline + '</div><div class="lrows">' +
-    (() => { const mx = LVo.rows.reduce((m, r) => Math.max(m, r.v), 0) || 1; return LVo.rows.map(r => '<div class="row" data-selnode="' + r.id + '" title="' + esc(r.sub || '') + '"><span>' + esc(r.name) + '</span><span>' + esc(r.text) + '</span></div><i class="lbar" style="width:' + (100 * Math.max(0, r.v) / mx).toFixed(1) + '%;background:' + Lz.hue + '"></i>').join(''); })() + '</div>' : '';
+    (() => { const mx = LVo.rows.reduce((m, r) => Math.max(m, r.v), 0) || 1; return LVo.rows.map(r => '<div class="row" data-selnode="' + r.id + '" title="' + esc(r.sub || '') + '"><span>' + esc(r.name) + '</span><span>' + esc(r.text) + '</span></div><i class="lbar" style="width:' + (100 * Math.max(0, r.v) / mx).toFixed(1) + '%;background:' + (r.hue || Lz.hue) + '"></i>').join(''); })() + '</div>' : '';
   const healthHtml = LVo ? lensHtml : '<h3 class="sec" style="margin-top:0">Health at ' + mmss(t) + '</h3><div class="health">' + (hot.length ? hot.slice(0, 6).map(h => '<div class="row"><span><span class="hdot" style="background:' + (h.l === 2 ? 'var(--crit)' : 'var(--warn)') + '"></span><button class="linkbtn" type="button" data-selnode="' + h.id + '">' + esc(nm(h.id)) + '</button></span><span>' + esc(E.HEALTH_LABEL[h.c] || h.c) + '</span></div>').join('') : '<div class="sub">Every node is healthy this second.</div>') + '</div>';
   const rp = R.summary.replay;
   const rpHtml = rp ? '<h3 class="sec">Closed-loop replay</h3><div class="sub">' + fInt(rp.sessions) + ' recorded sessions, ' + fInt(rp.turns) + ' turns (' + fInt(rp.branches) + ' parallel calls). Turns ran a median ' + fS(rp.driftP50) + ' behind their recorded time (p90 ' + fS(rp.driftP90) + '): ' + (rp.driftP50 > 5 ? 'this fleet is slower than the one that recorded the log, so users would have sent less traffic than the timestamps say.' : 'close to the recorded pace.') + (rp.estimatedGaps ? ' ' + fInt(rp.estimatedGaps) + ' think times were estimated because the log has no latency for the turn before.' : '') + (rp.abandoned ? ' ' + fInt(rp.abandoned) + ' turns were never sent because their session gave up.' : '') + '</div>' : '';
@@ -2726,6 +2827,7 @@ function doRun() {
   prep(R);
   R.health = E.healthOf(R);
   S.run = R; S.runId++; S.lensKey = null;
+  if (S.lens === 'own') renderLensBar();
   if (S.lens === 'rel') ensureBlast();
   if (firstRun) {
     firstRun = false;
@@ -2785,8 +2887,11 @@ const LENSES = [
   { id: 'perf', label: 'Performance', hue: 'var(--crit)', scoped: false, hint: 'Health of each node, second by second: strained or failing, and why' },
   { id: 'lat', label: 'Latency', hue: 'var(--c-queue)', scoped: true, hint: 'Where time to first token is spent, node by node', metric: 'share of TTFT' },
   { id: 'cost', label: 'Cost', hue: 'var(--train)', scoped: true, hint: 'Where the money goes: GPU spend, idle GPUs, egress', metric: 'spend' },
-  { id: 'rel', label: 'Reliability', hue: 'var(--crit)', scoped: false, hint: 'What losing each pool, link or site for the whole run would do to the SLO', metric: 'SLO lost if it fails' }
+  { id: 'rel', label: 'Reliability', hue: 'var(--crit)', scoped: false, hint: 'What losing each pool, link or site for the whole run would do to the SLO', metric: 'SLO lost if it fails' },
+  { id: 'sec', label: 'Security', hue: 'var(--n-link)', scoped: true, hint: 'Where each data class runs and crosses, and where the residency rule is broken', metric: 'residency breaches' },
+  { id: 'own', label: 'Ownership', hue: 'var(--onprem)', scoped: false, hint: 'Which team owns each node, with its spend and the bottlenecks it carried' }
 ];
+const TEAM_HUES = ['var(--onprem)', 'var(--neo)', 'var(--train)', 'var(--n-link)', 'color-mix(in srgb, var(--crit) 55%, var(--n-link))', 'var(--n-src)', 'var(--n-route)'];
 const lensOf = id => LENSES.find(x => x.id === id) || LENSES[0];
 const nodeName = id => { const n = nodeById(id); return n ? n.cfg.name : id; };
 let perfLegend = null;
@@ -2797,7 +2902,7 @@ function renderLensBar() {
   const lg = $('#legendHud');
   if (perfLegend == null) perfLegend = lg.innerHTML;
   const L = lensOf(S.lens);
-  lg.innerHTML = L.id === 'perf' ? perfLegend : '<span><i style="background:var(--onprem)"></i>request to on-prem</span><span><i style="background:var(--neo)"></i>request to neocloud</span><span><i style="background:var(--c-xfer)"></i>KV cache transfer</span><span>' + L.label + ': low<span class="lgrad" style="background:linear-gradient(90deg, var(--line), ' + L.hue + ')"></span>high ' + L.metric + '</span>';
+  lg.innerHTML = L.id === 'perf' ? perfLegend : L.id === 'own' ? teamsOf().map(([tm, h]) => '<span><i style="background:' + h + '"></i>' + esc(tm) + '</span>').join('') + '<span><i style="background:var(--warn)"></i>no owner</span>' : '<span><i style="background:var(--onprem)"></i>request to on-prem</span><span><i style="background:var(--neo)"></i>request to neocloud</span><span><i style="background:var(--c-xfer)"></i>KV cache transfer</span><span>' + L.label + ': low<span class="lgrad" style="background:linear-gradient(90deg, var(--line), ' + L.hue + ')"></span>high ' + L.metric + '</span>';
 }
 function setLens(id) {
   S.lens = id; S.lensKey = null;
@@ -2824,6 +2929,73 @@ function lensView(R, s) {
   return v;
 }
 const LENS_EXTRA = {};
+function teamsOf() {
+  const teams = [...new Set(S.graph.nodes.map(n => (n.cfg.owner || '').trim()).filter(Boolean))].sort();
+  return teams.map((t, i) => [t, TEAM_HUES[i % TEAM_HUES.length]]);
+}
+const CLASS_LABEL = { public: 'public', internal: 'internal', confidential: 'confidential' };
+LENS_EXTRA.sec = (R, s) => {
+  const W = lensWindow(R, s), B = E.securityBreakdown(R, W.s0, W.s1), out = { nodes: {}, rows: [] }, T = B.total, pol = B.policy;
+  let mx = 0; for (const id in B.nodes) mx = Math.max(mx, B.nodes[id].viol);
+  const mix = r => ['confidential', 'internal', 'public'].filter(c => r[c]).map(c => fK(r[c]) + ' ' + c.slice(0, 4) + '.').join(' · ');
+  for (const id in B.nodes) {
+    const x = B.nodes[id], n = nodeById(id);
+    if (!n || !views[id]) continue;
+    let text, title, i, hue;
+    if (n.type === 'pool') {
+      const zone = R.spec.pools.find(p => p.id === id).zone;
+      text = zone + (x.viol ? ' · ' + fInt(x.viol) + ' breaches' : ' · ok');
+      title = E.ZONE_LABEL[zone] + ' · served ' + (mix(x.req) || 'nothing');
+    } else if (n.type === 'link') {
+      text = (n.cfg.encrypted === false ? 'unencrypted' : 'encrypted') + (x.viol ? ' · ' + (x.violGB >= 0.01 ? x.violGB.toFixed(2) + ' GB' : fInt(x.viol) + ' req') + ' out of zone' : ' · ok');
+      title = 'Carried ' + (mix(x.req) || 'nothing') + (x.gb.confidential ? ' · ' + x.gb.confidential.toFixed(2) + ' GB of confidential prompts and KV' : '');
+    } else {
+      const cls = (R.spec.sources.find(q => q.id === id) || {}).cls || 'internal';
+      text = cls + (x.viol ? ' · ' + fPct(x.viol / Math.max(1, x.n)) + ' exposed' : x.blocked ? ' · ' + fInt(x.blocked) + ' blocked' : ' · ok');
+      title = fInt(x.n) + ' requests' + (x.blocked ? ', ' + fInt(x.blocked) + ' blocked by the residency rule' : '');
+    }
+    i = x.viol ? Math.max(0.35, x.viol / mx) : x.blocked ? 0.5 : 0.25;
+    hue = x.viol ? 'var(--crit)' : x.blocked ? 'var(--warn)' : 'var(--good)';
+    out.nodes[id] = { i, text, title, hue };
+    out.rows.push({ id, name: n.cfg.name, v: x.viol + x.blocked * 0.5, text, sub: title });
+  }
+  for (const rt of R.spec.routers) if (views[rt.id]) out.nodes[rt.id] = { i: 0.4, text: rt.enforce ? 'enforcing residency' : 'not enforcing', title: 'Policy: confidential in ' + pol.confidential + (pol.confidential === 'private' ? ' sites' : ' or private') + ', internal ' + (pol.internal === 'any' ? 'anywhere' : 'in ' + pol.internal) + (pol.encrypt ? ', encrypted links only' : ''), hue: rt.enforce ? 'var(--good)' : 'var(--warn)' };
+  const worst = out.rows.filter(r => nodeById(r.id) && nodeById(r.id).type !== 'agent' && nodeById(r.id).type !== 'chat' && nodeById(r.id).type !== 'trace').sort((a, b) => b.v - a.v)[0];
+  out.headline = !T.n ? 'No requests arrived in this window.' : T.viol
+    ? '<b>' + fInt(T.viol) + '</b> of ' + fInt(T.restricted) + ' internal or confidential requests (' + fPct(T.viol / Math.max(1, T.restricted)) + ') ran outside their allowed zone' + (worst ? ', mostly at <b>' + esc(worst.name) + '</b>' : '') + (T.violGB >= 0.01 ? '; <b>' + T.violGB.toFixed(2) + ' GB</b> of their prompts and KV caches crossed into it' : '') + '. Turn on <i>Enforce data residency</i> on the router to keep them in.'
+    : T.blocked ? 'Residency held: <b>' + fInt(T.blocked) + '</b> requests had no allowed pool and were blocked.' : 'Residency held: no ' + (T.restricted ? 'internal or confidential ' : '') + 'request left its allowed zone' + (T.restricted ? '' : ' (all traffic here is public)') + '.';
+  return out;
+};
+LENS_EXTRA.own = (R) => {
+  const out = { nodes: {}, rows: [] }, hues = Object.fromEntries(teamsOf()), C = E.costBreakdown(R, 0, R.D), bt = R.summary.bottleneck, H = R.health;
+  const teams = {};
+  const unowned = [];
+  for (const id in views) {
+    const n = views[id].n;
+    if (n.type === 'model' || n.type === 'slo') continue;
+    const tm = (n.cfg.owner || '').trim();
+    if (!tm) { unowned.push(id); out.nodes[id] = { i: 0.5, text: 'no owner', title: 'Set an owner team and on-call on this node', hue: 'var(--warn)' }; continue; }
+    const T = teams[tm] || (teams[tm] = { nodes: [], spend: 0, breach: 0, failing: 0, oncall: new Set() });
+    T.nodes.push(id); if (n.cfg.oncall) T.oncall.add(n.cfg.oncall);
+    T.spend += C.nodes[id] ? C.nodes[id].spend : 0;
+    T.breach += bt ? bt.top.filter(b => b.id === id).reduce((a, b) => a + b.seconds, 0) : 0;
+    T.failing += H && H.sum[id] ? H.sum[id].crit : 0;
+    out.nodes[id] = { i: 1, text: tm + (n.cfg.oncall ? ' · ' + n.cfg.oncall : ''), title: tm + ' owns this node' + (n.cfg.oncall ? '; page ' + n.cfg.oncall : ''), hue: hues[tm] };
+  }
+  const total = Object.values(teams).reduce((a, t) => a + t.spend, 0) || 1, allBreach = bt ? bt.top.reduce((a, b) => a + b.seconds, 0) : 0;
+  for (const tm in teams) {
+    const T = teams[tm];
+    out.rows.push({ id: T.nodes[0], name: tm, hue: hues[tm], v: T.spend, text: fUsd(T.spend) + ' (' + fPct(T.spend / total) + ')' + (T.breach ? ' · ' + T.breach + ' s breaching' : ''), sub: T.nodes.map(nodeName).join(', ') + ([...T.oncall].length ? ' · on-call ' + [...T.oncall].join(', ') : '') });
+  }
+  for (const id of unowned) out.rows.push({ id, name: nodeName(id), v: -1, text: 'no owner', sub: 'Set an owner on this node' });
+  const first = bt && bt.first, firstTeam = first && nodeById(first.id) ? (nodeById(first.id).cfg.owner || '').trim() : '';
+  const top = out.rows.filter(r => r.v >= 0).sort((a, b) => b.v - a.v)[0];
+  out.headline = Object.keys(teams).length ? '<b>' + Object.keys(teams).length + '</b> teams own this fleet. ' + (top ? '<b>' + esc(top.name) + '</b> owns ' + fPct(top.v / total) + ' of the spend. ' : '') +
+    (first ? 'The first bottleneck (' + esc(first.name) + ') is ' + (firstTeam ? '<b>' + esc(firstTeam) + '</b>\u2019s' : 'unowned') + (allBreach ? '; ' : '. ') : '') + (allBreach ? Object.entries(teams).filter(([, t]) => t.breach).sort((a, b) => b[1].breach - a[1].breach).map(([tm, t]) => esc(tm) + ' carried ' + fPct(t.breach / allBreach)).join(', ') + ' of breach seconds. ' : '') +
+    (unowned.length ? '<b>' + unowned.length + '</b> node' + (unowned.length > 1 ? 's have' : ' has') + ' no owner.' : '')
+    : 'No node has an owner yet: set Owner team and On-call on each node.';
+  return out;
+};
 function lensWindow(R, s) { const run = S.scope === 'run'; return { run, s0: run ? 0 : Math.max(0, s - 9), s1: run ? R.D : s + 1 }; }
 function lensLatency(R, s) {
   const W = lensWindow(R, s), L = E.latencyBreakdown(R, W.s0, W.s1), out = { nodes: {}, rows: [] };
@@ -2908,6 +3080,7 @@ function perfHeadline(R, s) {
 }
 function applyLook(v, x, hue) {
   const X = v.refs, fr = v.g.querySelector('.frame');
+  if (x && x.hue) hue = x.hue;
   const key = x ? x.i.toFixed(2) + '|' + x.text + '|' + hue : '';
   if (v.lk === key) return;
   v.lk = key; v.hl = -1;
@@ -3022,7 +3195,7 @@ function updateLive(t) {
     const th = !LV && H && H.lvl[ev.e.to] ? H.lvl[ev.e.to][s] : 0;
     ev.wire.setAttribute('stroke', lk || th === 2 ? 'var(--crit)' : th === 1 ? 'var(--warn)' : edgeColor(ev.e));
     const lx = LV && (LV.nodes[ev.e.to] || LV.nodes[ev.e.from]);
-    if (lx && lx.i > 0.05) { ev.wire.style.stroke = 'color-mix(in srgb, ' + hue + ' ' + Math.round(25 + 75 * lx.i) + '%, ' + edgeColor(ev.e) + ')'; } else ev.wire.style.stroke = '';
+    if (lx && lx.i > 0.05 && S.lens !== 'own') { ev.wire.style.stroke = 'color-mix(in srgb, ' + (lx.hue || hue) + ' ' + Math.round(25 + 75 * lx.i) + '%, ' + edgeColor(ev.e) + ')'; } else ev.wire.style.stroke = '';
     if (lk) ev.wire.setAttribute('stroke-dasharray', '6 4'); else ev.wire.removeAttribute('stroke-dasharray');
     ev.flow.setAttribute('opacity', v > 0.01 ? 0.9 : 0);
     ev.flow.style.strokeDashoffset = String(-(t * 30) % 120);
