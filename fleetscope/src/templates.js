@@ -9,7 +9,7 @@
     chat: { title: 'Chat users', group: 'Traffic', color: 'src', inputs: false, outputs: true, w: 230,
       defaults: () => ({ name: 'Chat users', users: 400, turns: 6, systemTokens: 800, contextTokens: 0, turnTokens: 300, outTokens: 300, thinkS: 20, gapS: 60, prefixHit: 50, durationMin: 10 }) },
     trace: { title: 'Trace replay', group: 'Traffic', color: 'src', inputs: false, outputs: true, w: 230,
-      defaults: () => ({ name: 'Trace replay', trace: 'chat', scale: 1, prefixHit: 0, useRecordedCache: true }) },
+      defaults: () => ({ name: 'Trace replay', trace: 'chat', scale: 1, prefixHit: 0, useRecordedCache: true, replay: 'timestamps', onFail: 'retry' }) },
     router: { title: 'Router', group: 'Routing', color: 'route', inputs: true, outputs: true, w: 200,
       defaults: () => ({ name: 'Router', policy: 'primary-first', burstWait: 1.5 }) },
     pool: { title: 'GPU pool', group: 'Compute', color: 'pool', inputs: true, outputs: true, w: 290,
@@ -80,6 +80,12 @@
         node('lkb', 'link', 600, 640, { name: 'Link to cloud B', gbps: 40, rttMs: 45, egressPerGB: 0.08 }),
         node('neob', 'pool', 880, 690, Object.assign({}, NEO, { name: 'Cloud B MI300X', site: 'Neocloud B', gpu: 'MI300X', min: 1, coldStart: 150 }))],
       edges: [edge('src', 'rt'), edge('rt', 'on'), edge('rt', 'lka'), edge('lka', 'neoa'), edge('rt', 'lkb'), edge('lkb', 'neob')] }) },
+    { id: 'replay', name: 'Replay an agent log', desc: 'Recorded sessions, replayed closed loop', build: () => ({
+      nodes: [Object.assign(node('model', 'model', 40, 20), { cfg: M('coder-32b') }), node('slo', 'slo', 310, 20),
+        node('src', 'trace', 40, 250, { name: 'Agent sessions log', trace: 'sessions', replay: 'sessions' }), node('rt', 'router', 330, 260),
+        node('on', 'pool', 600, 150, { name: 'On-prem H100', instances: 4 }),
+        node('lk', 'link', 600, 470), node('neo', 'pool', 880, 410, Object.assign({}, NEO, { name: 'Neocloud H200', coldStart: 60, min: 0, max: 4 }))],
+      edges: [edge('src', 'rt'), edge('rt', 'on'), edge('rt', 'lk'), edge('lk', 'neo')] }) },
     { id: 'blank', name: 'Blank canvas', desc: 'Model and SLO nodes only', build: () => ({ nodes: [node('model', 'model', 40, 20), node('slo', 'slo', 310, 20)], edges: [] }) }
   ];
   const api = { NODE_TYPES, PALETTE, TEMPLATES, node, edge };

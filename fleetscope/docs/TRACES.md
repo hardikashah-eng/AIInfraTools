@@ -50,6 +50,24 @@ When the log carries TTFT, the run compares it with the simulation on the same r
 
 To use this as a first calibration check, build a graph that matches the fleet that served the log (instance counts, GPU types, max batch). Then compare the recorded and simulated percentiles. The spec's proposed acceptance bar is within 10% on p50 and 20% on p99.
 
+## Closed-loop replay
+
+By default a trace replays **open loop**: every request is sent at its recorded time. That is right for independent traffic, but wrong for sessions. In an agent loop the next turn is sent only after the previous answer arrives, so on a slower fleet the real users would have sent less traffic, later. Open-loop replay piles up a backlog no user would create; on a faster fleet it hides that users would have sent more.
+
+Set the Trace replay node's **Replay** to **Sessions (closed loop)**:
+
+- Requests are grouped by session. The importer reads `session_id`, `conversation_id`, `end_user` or `user` (top level or under `metadata`), and the `session` column in CSV.
+- A session's first turn is sent at its recorded time. Each later turn is sent when the simulated previous turn finishes, plus the recorded **think time**: the gap between the previous turn's recorded end and this turn's start.
+- The previous turn's recorded end is its start plus recorded end-to-end latency, or plus TTFT and 30 ms per output token, when only TTFT is logged. With neither, the think time is the arrival gap (assuming the recorded fleet was fast), and the node's details count how many gaps were estimated.
+- A turn that starts before the previous one ended (a parallel tool call) is treated as a branch: it is sent at the same offset from the previous turn's simulated start.
+- Requests without a session id still replay at their timestamps.
+- **When a turn fails** (rejected for KV, cut by an outage): retry it once after 5 s, or give up the rest of the session.
+- Surges clone whole sessions rather than single requests.
+
+The run reports how far turns fell behind the log: the **Turns behind the log** KPI (p50 and p90) and a note in the overview. A large drift means the simulated fleet is slower than the one that recorded the log, and the closed-loop numbers are the ones to trust.
+
+The sample **Agent sessions log** trace and the **Replay an agent log** template show this on synthetic data.
+
 ## Large logs: the converter
 
 The browser keeps the first 30 minutes or 40,000 requests. For bigger logs, cut a window and sample it first:

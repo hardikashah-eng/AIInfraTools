@@ -42,6 +42,18 @@ Upload a log to the Trace replay node: vLLM OpenTelemetry spans, gateway JSON lo
 
 ![Trace import](docs/img/trace-import.png)
 
+### Closed-loop replay of recorded sessions
+
+A recorded agent log (150 sessions, 1,516 turns) replayed as sessions: each turn waits for the previous answer and keeps the recorded think time between them, so a slower fleet sees less traffic instead of an impossible backlog. On 4 on-prem H100s, turns run a median 16 s behind the log, and simulated TTFT p99 is 9.6 s against 1.2 s recorded: this fleet is far slower than the one that produced the log. Replaying the same log by timestamps gives a p99 of 34 s. See [docs/TRACES.md](docs/TRACES.md#closed-loop-replay).
+
+![Closed-loop replay](docs/img/closed-loop-replay.png)
+
+### Health colouring and potential issues
+
+During playback each node's frame turns amber when strained and red when failing, with the cause on a badge (KV cache full, queueing, link saturated, instances down); wires into a failing node turn red too. The node blamed for an SLO breach that second is always red. Before anything runs, potential issues are flagged with an **!** on the node and listed under Problems: a neocloud that starts empty with a cold start longer than a burst, prefill demand near pool capacity at peak, KV demand above a link's bandwidth, contexts larger than an instance's KV cache, single pools behind a router, training sharing a link with serving.
+
+![Health colouring](docs/img/health-colouring.png)
+
 ### What if… a partial outage
 
 Half of the on-prem pool fails for two and a half minutes. Down instances show red, streams cut mid-answer are counted as lost, the KPIs compare against the same graph unstressed, and the banner names where it breaks first. See [docs/STRESS.md](docs/STRESS.md).
@@ -84,7 +96,7 @@ npm run build     # inline src/ into dist/index.html
 | `src/index.src.html` | Editor UI: palette, pan/zoom canvas, wiring, details panel, live node rendering, charts, timeline |
 | `build.mjs` | Inlines the engine, templates and importer into `dist/index.html` |
 | `dist/index.html` | Built page, committed so it can be opened directly; regenerate with `npm run build` |
-| `tests/` | Engine tests (determinism, causal ordering, conservation, per-template behaviour, profile maths) and import tests against fixtures for each log format |
+| `tests/` | Engine tests (determinism, causal ordering, conservation, per-template behaviour, profile maths), import tests against fixtures for each log format, stress tests, and closed-loop replay and lint tests |
 | `docs/SPEC.md` | Product spec: goals, architecture, data model, engine, player, calibration, phases |
 | `docs/TRACES.md` | How to capture and import real traces, and how recorded-vs-simulated comparison works |
 
@@ -93,7 +105,7 @@ npm run build     # inline src/ into dist/index.html
 | Node | Knobs |
 | --- | --- |
 | Coding agents / Chat users | Concurrent users, session length, starting context, tokens added per turn, output per turn, think or tool time, prefix-cache hit, duration (closed loop: a user's next turn waits for the previous answer) |
-| Trace replay | Sample trace or an uploaded log: vLLM OpenTelemetry spans, gateway JSON logs (OpenAI / Anthropic / LiteLLM usage) or CSV ([docs/TRACES.md](docs/TRACES.md)); load multiplier; recorded or assumed prefix-cache hits. Logs with recorded TTFT are compared with the simulation. |
+| Trace replay | Sample trace or an uploaded log: vLLM OpenTelemetry spans, gateway JSON logs (OpenAI / Anthropic / LiteLLM usage) or CSV ([docs/TRACES.md](docs/TRACES.md)); load multiplier; recorded or assumed prefix-cache hits; replay by timestamps (open loop) or by session (closed loop), and whether a session retries or gives up after a failed turn. Logs with recorded TTFT are compared with the simulation. |
 | Router | Primary first with a burst threshold, least estimated wait, or round robin; target priority |
 | GPU pool | Role (aggregated, prefill, decode), site and site type, GPU type, fixed or autoscaled instances, cold start, scale thresholds, max batch, fabric bandwidth |
 | Cross-site link | Bandwidth, round trip, egress price; shared by everything wired through it |
@@ -105,7 +117,8 @@ npm run build     # inline src/ into dist/index.html
 
 - **What if…** applies stress to the drawn graph without editing it: traffic or session surges in a time window, larger contexts, and outages of part of a pool, a whole site or a link. It includes a scenario suite and a breaking-point search ("holds 95% SLO up to 1.33× traffic, then breaks on…").
 - **Model advisor** right-sizes the fleet for each candidate model and reasoning level and ranks them by cost per 1,000 requests at your SLO, with an optional quality floor from your evals.
-- Every run names its **first bottleneck** (KV cache full, compute saturated, link saturated, cold starts, outage, or oversized decode batches).
+- Every run names its **first bottleneck** (KV cache full, compute saturated, link saturated, cold starts, outage, or oversized decode batches), and the canvas colours each node by its health second by second.
+- **Potential issues** are found from the graph and traffic before running and marked with an **!** on the node.
 
 Details, and how reasoning models change TTFT, capacity and cost: [docs/STRESS.md](docs/STRESS.md).
 
@@ -124,4 +137,4 @@ Requests that don't fit an instance's KV cache are rejected. Training steps cost
 
 ## Known gaps
 
-No automatic calibration yet (recorded-vs-simulated TTFT is shown, but profiles are not fitted), no closed-loop replay of recorded sessions, no prefix-cache locality across instances, no preemption when KV runs out mid-decode, training modelled per step rather than per collective. The spec's build phases cover what comes next.
+No automatic calibration yet (recorded-vs-simulated TTFT is shown, but profiles are not fitted), no prefix-cache locality across instances, no preemption when KV runs out mid-decode, training modelled per step rather than per collective. The spec's build phases cover what comes next.

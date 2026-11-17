@@ -65,9 +65,31 @@
   const TRACES = {
     chat: { label: 'Sample: chat, daily ramp with a spike' },
     agentic: { label: 'Sample: agentic, long prompts in bursts' },
-    steady: { label: 'Sample: steady 10 req/s' }
+    steady: { label: 'Sample: steady 10 req/s' },
+    sessions: { label: 'Sample: agent sessions log (session ids, recorded latency)' }
   };
+  // A synthetic "recorded" agent log: 150 sessions whose turns follow the previous answer plus tool time,
+  // with recorded TTFT and end-to-end latency, cache hits, and occasional parallel tool calls.
+  function genSessionLog(seed) {
+    const rng = makeRng((seed * 7919 + 4) >>> 0);
+    const rows = [];
+    for (let sid = 0; sid < 150; sid++) {
+      let t = rng.u() * 420, ctx = Math.round(4000 + 26000 * rng.u());
+      const turns = Math.max(2, Math.round(rng.logn(8, 0.5)));
+      for (let k = 0; k < turns && t < 600; k++) {
+        const add = Math.round(rng.logn(2000, 0.8));
+        const isl = Math.min(120000, ctx + add), osl = clamp(Math.round(rng.logn(300, 0.7)), 8, 4000);
+        const ttft = 0.25 + isl * (1 - 0.85) / 15000 + rng.u() * 0.3, e2e = ttft + osl * 0.03;
+        rows.push({ t, isl, osl, cached: Math.round(ctx * 0.85), ttft, e2e, session: 'agent-' + sid });
+        if (rng.u() < 0.1) rows.push({ t: t + 0.2, isl: Math.round(isl * 0.6), osl: Math.round(osl * 0.5), cached: Math.round(ctx * 0.5), ttft: ttft * 0.8, e2e: ttft * 0.8 + osl * 0.015, session: 'agent-' + sid });
+        ctx = isl + osl;
+        t += e2e + Math.max(0.3, rng.logn(4, 0.6));
+      }
+    }
+    return rows.sort((a, b) => a.t - b.t);
+  }
   function genTrace(kind, seed) {
+    if (kind === 'sessions') return genSessionLog(seed);
     const rng = makeRng((seed * 7919 + (kind === 'chat' ? 1 : kind === 'agentic' ? 2 : 3)) >>> 0);
     const D = 600;
     let rate, isl, osl, peak;
@@ -137,6 +159,96 @@
   }
 
   // ---------- simulation ----------
+  // Turns a recorded trace into session chains for closed-loop replay.
+  // Within a session, a turn that starts after the previous turn finished waits for the simulated finish plus the
+  // recorded think time; a turn that overlaps it (a parallel tool call) is a branch timed from the previous turn's issue.
+  // Without recorded latency, the think time is the arrival gap (the recorded fleet is assumed fast) and is flagged.
+  function planSessions(rows) {
+    const by = new Map(), loose = [];
+    for (const x of rows) { if (x.session == null || x.session === '') { loose.push(x); continue; } if (!by.has(x.session)) by.set(x.session, []); by.get(x.session).push(x); }
+    const sessions = [];
+    let turns = 0, branches = 0, estimated = 0;
+    const recFinish = x => (x.e2e != null ? x.t + x.e2e : x.ttft != null ? x.t + x.ttft + x.osl * 0.03 : NaN);
+    for (const [id, list] of by) {
+      list.sort((a, b) => a.t - b.t);
+      const T = list.map(x => ({ x, next: null, gap: 0, branches: [], branchOf: null }));
+      let anchor = 0;
+      for (let i = 1; i < T.length; i++) {
+        const prev = T[anchor].x, fin = recFinish(prev);
+        if (isFinite(fin) && T[i].x.t < fin - 0.05) { T[i].branchOf = anchor; T[anchor].branches.push({ idx: i, offset: Math.max(0, T[i].x.t - prev.t) }); branches++; continue; }
+        let gap;
+        if (isFinite(fin)) gap = Math.max(0, T[i].x.t - fin); else { gap = Math.max(0.2, T[i].x.t - prev.t); estimated++; }
+        T[anchor].next = i; T[i].gap = gap; anchor = i;
+      }
+      turns += T.length;
+      sessions.push({ id: String(id), turns: T });
+    }
+    return { sessions, loose, turns, branches, estimated };
+  }
+
+  // Potential issues found before running: misconfigurations and risks visible from the graph and traffic alone.
+  function lintSpec(spec) {
+    const out = [], P = {}, m = spec.model;
+    if (!m) return out;
+    for (const p of spec.pools) P[p.id] = profile(p.gpu, m);
+    // rough traffic estimate: requests/s and token sizes per router
+    const est = {};
+    for (const S of spec.sources) {
+      let rate = 0, peak = 0, isl = 0, osl = 0, maxCtx = 0, uncached = 0;
+      if (S.kind === 'open') {
+        const tr = S.trace || [];
+        const dur = tr.length ? Math.max(60, tr[tr.length - 1].t) : 1;
+        rate = tr.length / dur;
+        for (let i = 0, j = 0; i < tr.length; i++) { while (tr[i].t - tr[j].t > 10) j++; peak = Math.max(peak, (i - j + 1) / 10); }
+        for (const x of tr) { isl += x.isl; osl += x.osl; maxCtx = Math.max(maxCtx, x.isl + x.osl); uncached += x.isl - (S.useRecordedCache && x.cached != null ? x.cached : x.isl * S.prefixHit); }
+        if (tr.length) { isl /= tr.length; osl /= tr.length; uncached /= tr.length; }
+      } else {
+        const ctx = S.systemTokens + S.contextTokens + S.turnTokens * S.turns / 2;
+        isl = ctx; osl = S.outTokens; uncached = ctx * (1 - S.prefixHit) + S.turnTokens * S.prefixHit;
+        maxCtx = Math.min(128000, (S.systemTokens + S.contextTokens * 1.4 + S.turnTokens * S.turns * 2.5 + S.outTokens * S.turns) * 1.0);
+        rate = S.users / (S.thinkS + 4); peak = rate;
+      }
+      const e = est[S.router] || (est[S.router] = { rate: 0, peak: 0, isl: 0, osl: 0, uncached: 0, maxCtx: 0 });
+      e.peak += Math.max(peak, rate);
+      const w = e.rate + rate;
+      if (w > 0) { e.isl = (e.isl * e.rate + isl * rate) / w; e.osl = (e.osl * e.rate + osl * rate) / w; e.uncached = (e.uncached * e.rate + uncached * rate) / w; }
+      e.rate = w; e.maxCtx = Math.max(e.maxCtx, maxCtx);
+    }
+    const name = id => { const p = spec.pools.find(x => x.id === id); return p ? p.name : id; };
+    const fmtK = v => (v >= 1e4 ? Math.round(v / 1e3) + 'k' : v >= 1e3 ? (v / 1e3).toFixed(1) + 'k' : String(Math.round(v)));
+    for (const R of spec.routers) {
+      const e = est[R.id];
+      if (R.targets.length === 1) out.push({ node: R.targets[0].pool, level: 'info', kind: 'spof', msg: name(R.targets[0].pool) + ' is the only pool behind ' + R.name + ': if it fails, its traffic has nowhere to go.', fix: 'Add a second pool or site behind the router.' });
+      for (const x of R.targets) {
+        const p = spec.pools.find(q => q.id === x.pool), pr = P[x.pool];
+        if (!p || !e) continue;
+        if (e.maxCtx + (m.thinkTokens || 0) > pr.kvCap && p.role !== 'prefill') out.push({ node: p.id, level: 'warn', kind: 'kv', msg: 'Longest contexts (~' + fmtK(e.maxCtx) + ' tokens) exceed ' + p.name + '\u2019s KV cache per instance (' + fmtK(pr.kvCap) + '): those requests will be rejected.', fix: 'Use more GPUs per instance, a GPU with more memory, FP8 KV cache, or cap context.' });
+        if (p.auto && p.min === 0 && p.coldStart >= 60 && R.policy === 'primary-first' && x !== R.targets[0]) out.push({ node: p.id, level: 'warn', kind: 'cold', msg: p.name + ' starts empty and needs ' + p.coldStart + ' s to come up: bursts shorter than that end before its capacity arrives.', fix: 'Keep at least one instance warm (min ≥ 1) or cut the cold start.' });
+      }
+      if (e && R.targets.length) {
+        // prefill demand against front-pool capacity
+        let cap = 0;
+        for (const x of R.targets) { const p = spec.pools.find(q => q.id === x.pool); if (p) cap += (p.max || p.min) * P[p.id].prefill * (p.role === 'agg' ? 0.6 : 1); }
+        const need = e.peak * e.uncached;
+        if (cap > 0 && need > 0.8 * cap) out.push({ node: R.targets[0].pool, level: 'warn', kind: 'prefill', msg: 'At peak, traffic needs about ' + fmtK(need) + ' prefill tokens/s but the pools behind ' + R.name + ' manage about ' + fmtK(cap) + ' at full size.', fix: 'Add instances or prefill capacity, or raise prefix-cache hits.' });
+      }
+    }
+    for (const p of spec.pools) {
+      const pr = P[p.id];
+      if (pr.multiNode) out.push({ node: p.id, level: 'warn', kind: 'multinode', msg: p.name + ': the model needs more than 8 GPUs per instance on ' + p.gpu + ', so every instance spans nodes.', fix: 'Use a GPU with more memory or FP8 weights.' });
+      if (pr.kvCap < 20000) out.push({ node: p.id, level: 'warn', kind: 'kvsmall', msg: p.name + ' keeps only ' + fmtK(pr.kvCap) + ' tokens of KV cache per instance after weights.', fix: 'Use more GPUs per instance or a larger GPU.' });
+      for (const d of p.decode || []) {
+        if (!d.link) continue;
+        const L = spec.links.find(l => l.id === d.link);
+        const e = Object.values(est).reduce((a, b) => (b.peak > a.peak ? b : a), { peak: 0, isl: 0 });
+        const demand = e.peak * e.isl * pr.kvBytesPerToken * 8 / 1e9;
+        if (L && demand > 0.7 * L.gbps) out.push({ node: L.id, level: 'warn', kind: 'link', msg: 'At peak, KV caches from ' + p.name + ' need about ' + Math.round(demand) + ' Gbps across ' + L.name + ' (' + L.gbps + ' Gbps).', fix: 'Raise link bandwidth, keep prefill and decode in one site, or cut prompt sizes.' });
+      }
+    }
+    if (spec.train && spec.train.link && spec.pools.some(p => (p.decode || []).some(d => d.link === spec.train.link))) out.push({ node: spec.train.link, level: 'warn', kind: 'contention', msg: 'The training job\u2019s gradient sync shares a link with serving KV transfers.', fix: 'Give training its own link or keep the job in one site.' });
+    return out;
+  }
+
   // Compares recorded TTFT (from real logs) with simulated TTFT on the same requests.
   // Returns a per-second rolling p99 of recorded TTFT and a summary, or null summary when the trace has none.
   function compareRecorded(reqs, D) {
@@ -172,7 +284,7 @@
   };
   // Seconds where TPOT breaches dominate are put down to the pool decoding the largest batches.
   function findBottleneck(frames, pools, links, viol, firsts, slo, tviol, fins) {
-    const tally = {};
+    const tally = {}, blame = new Array(frames.length).fill(null);
     let first = null, breach = 0;
     for (let s = 0; s < frames.length; s++) {
       const ttftBreach = firsts[s] && viol[s] / firsts[s] > 0.1;
@@ -184,6 +296,7 @@
       if (!ttftBreach) {
         for (const p of pools) { const f = fr.pools[p.id]; if (f && f.batch > 0 && (!best || f.batch > best.weight)) best = { kind: 'tpot', id: p.id, name: p.name || p.id, rank: -1, weight: f.batch }; }
         if (best) {
+          blame[s] = { kind: best.kind, id: best.id };
           const key = best.kind + '|' + best.id;
           (tally[key] = tally[key] || { kind: best.kind, id: best.id, name: best.name, label: CAUSE.tpot.label, seconds: 0, first: s }).seconds++;
           if (!first) first = { t: s, kind: best.kind, id: best.id, name: best.name, label: CAUSE.tpot.label };
@@ -211,12 +324,73 @@
         else if (f.util >= 0.9) consider('link', L.id, L.name, f.xfers);
       }
       if (!best) continue;
+      blame[s] = { kind: best.kind, id: best.id };
       const key = best.kind + '|' + best.id;
       (tally[key] = tally[key] || { kind: best.kind, id: best.id, name: best.name, label: CAUSE[best.kind].label, seconds: 0, first: s }).seconds++;
       if (!first) first = { t: s, kind: best.kind, id: best.id, name: best.name, label: CAUSE[best.kind].label };
     }
     const top = Object.values(tally).sort((a, b) => b.seconds - a.seconds);
-    return { breachSeconds: breach, first, top };
+    return { breachSeconds: breach, first, top, blame };
+  }
+
+  // Health of every node, second by second: 0 healthy, 1 strained, 2 failing, with the cause.
+  // The node blamed for an SLO breach in a second is always marked failing with the breach cause.
+  const HEALTH_LABEL = { down: 'instances down', linkdown: 'link degraded', link: 'link saturated', kv: 'KV cache full', compute: 'compute saturated', cold: 'waiting on cold starts', queue: 'requests queueing', tpot: 'slow tokens', slo: 'missing the latency target', sync: 'waiting on gradient sync', upstream: 'a pool behind it is struggling' };
+  function healthOf(R) {
+    const D = R.D, spec = R.spec, slo = spec.slo, lvl = {}, cause = {}, sum = {};
+    const mk = id => { lvl[id] = new Uint8Array(D); cause[id] = new Array(D).fill(null); };
+    const set = (id, s, l, c) => { if (l > lvl[id][s]) { lvl[id][s] = l; cause[id][s] = c; } };
+    for (const p of spec.pools) mk(p.id);
+    for (const L of spec.links) mk(L.id);
+    for (const r of spec.routers) mk(r.id);
+    for (const S of spec.sources) mk(S.id);
+    if (spec.train) mk(spec.train.id);
+    const blame = (R.summary.bottleneck && R.summary.bottleneck.blame) || [];
+    for (let s = 0; s < D; s++) {
+      const fr = R.frames[s];
+      for (const p of spec.pools) {
+        const f = fr.pools[p.id];
+        if (!f) continue;
+        if (f.down > 0) set(p.id, s, 2, 'down');
+        if (f.kv >= 0.95 && f.q > 0) set(p.id, s, 2, 'kv');
+        if (f.q > 0 && f.head > slo.ttft) set(p.id, s, 2, f.util >= 0.9 ? 'compute' : 'queue');
+        if (f.starting > 0 && f.q > 0) set(p.id, s, 1, 'cold');
+        if (f.util >= 0.85) set(p.id, s, 1, 'compute');
+        if (f.kv >= 0.85) set(p.id, s, 1, 'kv');
+        if (f.q > 0 && f.head > slo.ttft / 3) set(p.id, s, 1, 'queue');
+      }
+      for (const L of spec.links) {
+        const f = fr.links[L.id];
+        if (!f) continue;
+        if (f.factor < 1) set(L.id, s, 2, 'linkdown');
+        else if (f.util >= 0.9) set(L.id, s, 2, 'link');
+        else if (f.util >= 0.7) set(L.id, s, 1, 'link');
+      }
+      const b = blame[s];
+      if (b && lvl[b.id]) { lvl[b.id][s] = 2; cause[b.id][s] = b.kind; }
+      for (const r of spec.routers) {
+        let w = 0;
+        for (const x of r.targets) { w = Math.max(w, lvl[x.pool][s]); if (x.link) w = Math.max(w, lvl[x.link][s]); }
+        if (w) set(r.id, s, w === 2 ? 1 : 0, 'upstream');
+      }
+      if (spec.train && spec.train.link && fr.train && fr.train.syncing && lvl[spec.train.link][s]) set(spec.train.id, s, lvl[spec.train.link][s], 'sync');
+    }
+    // traffic sources: share of their first tokens that missed TTFT in each second
+    const firsts = {}, miss = {};
+    for (const q of R.reqs) {
+      if (!isFinite(q.tFirst) || !lvl[q.src]) continue;
+      const s = Math.floor(q.tFirst); if (s >= D) continue;
+      (firsts[q.src] || (firsts[q.src] = new Uint16Array(D)))[s]++;
+      if (q.tFirst - q.t > slo.ttft) (miss[q.src] || (miss[q.src] = new Uint16Array(D)))[s]++;
+    }
+    for (const id in firsts) for (let s = 0; s < D; s++) { const f = firsts[id][s], m = miss[id] ? miss[id][s] : 0; if (f && m / f > 0.1) set(id, s, 2, 'slo'); else if (f && m / f > 0.02) set(id, s, 1, 'slo'); }
+    for (const id in lvl) {
+      const a = lvl[id], cnt = {}; let warn = 0, crit = 0;
+      for (let s = 0; s < D; s++) { if (a[s] === 1) warn++; else if (a[s] === 2) crit++; if (a[s]) cnt[cause[id][s]] = (cnt[cause[id][s]] || 0) + (a[s] === 2 ? 3 : 1); }
+      const top = Object.keys(cnt).sort((x, y) => cnt[y] - cnt[x])[0] || null;
+      sum[id] = { warn, crit, cause: top, level: crit >= Math.max(3, D * 0.01) ? 2 : warn + crit >= Math.max(5, D * 0.02) ? 1 : 0 };
+    }
+    return { lvl, cause, sum };
   }
 
   const drain = it => { let x; do x = it.next(); while (!x.done); return x.value; };
@@ -385,7 +559,8 @@
       const e = outs(n.id)[0];
       if (!e) { errors.push({ node: n.id, msg: n.cfg.name + ': wire it to a Router.' }); continue; }
       const c = n.cfg;
-      const s = { id: n.id, name: c.name, kind: n.type === 'trace' ? 'open' : n.type, router: e.to, edge: e.id, prefixHit: c.prefixHit / 100, useRecordedCache: c.useRecordedCache !== false, userBase: uidBase };
+      const s = { id: n.id, name: c.name, kind: n.type === 'trace' ? 'open' : n.type, router: e.to, edge: e.id, prefixHit: c.prefixHit / 100, useRecordedCache: c.useRecordedCache !== false, userBase: uidBase,
+        replay: c.replay === 'sessions' ? 'sessions' : 'timestamps', onFail: c.onFail === 'giveup' ? 'giveup' : 'retry' };
       if (n.type === 'trace') { s.trace = traceLookup ? traceLookup(c.trace, c.scale) : []; }
       else { Object.assign(s, { users: c.users, turns: c.turns, systemTokens: c.systemTokens, contextTokens: n.type === 'agent' ? c.contextTokens : 0, turnTokens: c.turnTokens, outTokens: c.outTokens, thinkS: c.thinkS, gapS: c.gapS, duration: c.durationMin * 60 }); uidBase += c.users; }
       spec.sources.push(s);
@@ -487,6 +662,7 @@
       return r;
     }
     let horizon = spec.horizon || 0;
+    const replayStats = { sources: 0, sessions: 0, turns: 0, branches: 0, estimated: 0, abandoned: 0, retried: 0, drift: [] };
     const users = [];
     let surgeBase = spec.sources.reduce((m, S) => Math.max(m, (S.userBase || 0) + (S.users || 0)), 0) + 100000;
     const srcById = {};
@@ -495,7 +671,22 @@
       if (S.kind === 'open') {
         const sg = stress.surge && stress.surge.target !== 'sessions' ? stress.surge : null;
         const srng = makeRng(((spec.seed || 7) * 977 + 13) >>> 0);
-        for (const x of S.trace) {
+        let openRows = S.trace;
+        if (S.replay === 'sessions') {
+          const plan = planSessions(S.trace);
+          openRows = plan.loose;
+          replayStats.sources++;
+          replayStats.sessions += plan.sessions.length; replayStats.turns += plan.turns; replayStats.branches += plan.branches; replayStats.estimated += plan.estimated;
+          for (const ses of plan.sessions) {
+            const copies = sg && inWin(ses.turns[0].x.t, sg) ? (() => { let e = Math.floor(sg.mult - 1); if (srng.u() < sg.mult - 1 - e) e++; return 1 + e; })() : 1;
+            for (let c = 0; c < copies; c++) {
+              const run = { S, ses, issued: [], done: 0, ended: false, clone: c > 0, offset: c ? srng.u() * 0.5 : 0 };
+              future.push({ t: ses.turns[0].x.t + run.offset, replayTurn: { run, idx: 0 } });
+            }
+          }
+          horizon = Math.max(horizon, S.trace.length ? S.trace[S.trace.length - 1].t : 0);
+        }
+        for (const x of openRows) {
           let isl = x.isl, cachedIn = S.useRecordedCache && x.cached != null ? x.cached : Math.round(x.isl * S.prefixHit);
           if (stress.ctx) { isl = Math.min(200000, Math.round(x.isl * stress.ctx.mult + stress.ctx.add)); cachedIn = Math.round(cachedIn * stress.ctx.mult); }
           const r = mkReq(S, x.t, isl, x.osl, cachedIn, -1);
@@ -561,6 +752,31 @@
       if (next < st.until) future.push({ t: next, user: uid, fresh: st.turns <= 0, pending: true });
     }
 
+    // ----- closed-loop replay of recorded sessions -----
+    function replayReq(item, t) {
+      const { run, idx } = item, x = run.ses.turns[idx].x, S = run.S;
+      let isl = x.isl, cached = S.useRecordedCache && x.cached != null ? x.cached : Math.round(x.isl * S.prefixHit);
+      if (stress.ctx) { isl = Math.min(200000, Math.round(x.isl * stress.ctx.mult + stress.ctx.add)); cached = Math.round(cached * stress.ctx.mult); }
+      const r = mkReq(S, t, isl, x.osl, cached, -1);
+      r.sess = run; r.turn = idx; r.retryOf = item.retry ? 1 : 0;
+      if (!stress.ctx && !run.clone && !item.retry) { if (x.ttft != null) r.recTtft = x.ttft; if (x.queue != null) r.recQueue = x.queue; if (x.e2e != null) r.recE2e = x.e2e; }
+      if (run.clone) r.surge = true;
+      if (!item.retry) {
+        run.issued[idx] = t;
+        if (!run.clone) replayStats.drift.push(t - x.t);
+        // Parallel tool calls recorded inside this turn's window start relative to this issue.
+        for (const b of run.ses.turns[idx].branches) future.push({ t: t + b.offset, replayTurn: { run, idx: b.idx } });
+      }
+      return r;
+    }
+    function sessionTurnDone(r, t, ok) {
+      const run = r.sess;
+      if (!ok && run.S.onFail === 'retry' && !r.retryOf) { replayStats.retried++; future.push({ t: t + 5, replayTurn: { run, idx: r.turn, retry: true } }); return; }
+      if (!ok && run.S.onFail === 'giveup') { if (!run.ended) { run.ended = true; replayStats.abandoned += run.ses.turns.filter((tn, i) => i > r.turn && !tn.branchOf).length; } return; }
+      if (run.ended) return;
+      const nx = run.ses.turns[r.turn].next;
+      if (nx != null) future.push({ t: t + run.ses.turns[nx].gap, replayTurn: { run, idx: nx } });
+    }
     function enq(p, r, t) {
       if (p.role === 'decode') { r.tXferEnd = t; r.dPool = p.id; } else r.tEnq = t;
       r._t = t;
@@ -570,6 +786,7 @@
     let doneCount = 0, outTokens = 0, genTokens = 0;
     function finish(r, t) {
       r.tFinish = t; doneCount++; outTokens += r.osl; genTokens += r.dec;
+      if (r.sess) sessionTurnDone(r, t, true);
       const dp = byId[r.dPool];
       if (dp && dp.siteKind === 'neo') { const L = links[r.inLink] || links[r.xLink]; if (L && !L.fabric) { L.egressBytes += r.osl * 4; L.totalBytes += r.osl * 4; } }
       if (r.user >= 0) after(r.user, r.isl, r.osl, t);
@@ -577,6 +794,7 @@
     const failCounts = { kv: 0, outage: 0, route: 0 };
     function failReq(r, t, why, kind) {
       r.fail = why; r.failKind = kind || 'kv'; failCounts[r.failKind]++; dropped++; doneCount++;
+      if (r.sess) sessionTurnDone(r, t, false);
       if (r.user >= 0) { users[r.user].turns = 1; after(r.user, 0, 0, t + 5); }
     }
     function pickDecode(p) {
@@ -806,6 +1024,7 @@
       while (future.size && future.peek().t <= t) {
         let r = future.pop();
         if (r.pending) { const st = users[r.user]; if (r.fresh) newSession(st); r = issue(st, r.t); st.lastThink = r.think; }
+        else if (r.replayTurn) r = replayReq(r.replayTurn, r.t);
         const R = routerById[r.router];
         if (!R || !R.targets.length) { failReq(r, t, 'No route', 'route'); continue; }
         const x = route(R);
@@ -943,6 +1162,7 @@
     const summary = {
       requests: reqs.length, completed, dropped, rejected: failCounts.kv, lost: failCounts.outage, retried,
       surgeRequests: reqs.filter(r => r.surge).length, bottleneck,
+      replay: replayStats.sources ? (() => { const d = replayStats.drift.map(Math.abs).sort((a, b) => a - b); return { sessions: replayStats.sessions, turns: replayStats.turns, branches: replayStats.branches, estimatedGaps: replayStats.estimated, abandoned: replayStats.abandoned, retried: replayStats.retried, issued: replayStats.drift.length, driftP50: pct(d, 0.5), driftP90: pct(d, 0.9), meanDrift: replayStats.drift.length ? replayStats.drift.reduce((a, b) => a + b, 0) / replayStats.drift.length : NaN }; })() : null,
       slo: reqs.length ? ok / reqs.length : NaN,
       ttftP50: pct(ttftAll, 0.5), ttftP99: pct(ttftAll, 0.99), tpotP99: pct(tpotAll, 0.99),
       util: gpuSec ? busyGpuSec / gpuSec : 0, peakGpus: peak,
@@ -957,7 +1177,7 @@
     const slim = reqs.map(r => ({ id: r.id, src: r.src, router: r.router, t: r.t, isl: r.isl, osl: r.osl, cached: r.cached, user: r.user, site: r.site, pPool: r.pPool, dPool: r.dPool, inLink: r.inLink, xLink: r.xLink,
       tEnq: r.tEnq, tAdmit: r.tAdmit, tPrefEnd: r.tPrefEnd, tXferEnd: r.tXferEnd, tFirst: r.tFirst, tFinish: r.tFinish, net: r.net, fail: r.fail,
       ttft: r.ttft, tpot: r.tpot, ok: r.ok, bQueue: r.bQueue, bPrefill: r.bPrefill, bXfer: r.bXfer, bDwait: r.bDwait,
-      think: r.think, tTok1: r.tTok1, bThink: r.bThink,
+      think: r.think, tTok1: r.tTok1, bThink: r.bThink, session: r.sess ? r.sess.ses.id : null, turn: r.sess ? r.turn : null, retryOf: r.retryOf || 0,
       recTtft: r.recTtft, recQueue: r.recQueue, recE2e: r.recE2e, failKind: r.failKind || '', retries: r.retries || 0, surge: !!r.surge }));
     return {
       spec,
@@ -971,7 +1191,7 @@
   }
 
   const api = { GPUS, MODELS, TRACES, NODE_RULES, CAUSE, profile, genTrace, scaleTrace, compileGraph, simulate, normStress, findBottleneck,
-    headroomIter, findHeadroom, scaleFleet, sizeFleetIter, sizeFleet, adviseIter, adviseModels, compareRecorded, makeRng };
+    headroomIter, findHeadroom, healthOf, HEALTH_LABEL, scaleFleet, sizeFleetIter, sizeFleet, adviseIter, adviseModels, compareRecorded, planSessions, lintSpec, makeRng };
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
   else root.FleetEngine = api;
 })(typeof window !== 'undefined' ? window : this);

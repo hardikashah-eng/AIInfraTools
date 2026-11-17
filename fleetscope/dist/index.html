@@ -95,6 +95,17 @@ button, select, input { font: inherit; color: inherit; }
 #graph .node .frame { fill: var(--panel); stroke: var(--line); stroke-width: 1.2; }
 #graph .node.sel .frame { stroke: var(--accent); stroke-width: 2.4; }
 #graph .node.err .frame { stroke: var(--crit); stroke-width: 2; }
+#graph .node.h1 .frame { stroke: var(--warn); stroke-width: 2.6; }
+#graph .node.h2 .frame { stroke: var(--crit); stroke-width: 3.2; }
+#graph .node.h2 .frame { filter: drop-shadow(0 0 6px color-mix(in srgb, var(--crit) 55%, transparent)); }
+#graph .hbadge { pointer-events: none; }
+#graph .lint { cursor: help; }
+.probs li.lint { border-left-color: var(--warn); }
+.probs li.lint.info { border-left-color: var(--accent); }
+.probs li .fix { display: block; color: var(--muted); margin-top: 2px; }
+.health { margin: 4px 0 6px; }
+.health .row b { font-weight: 600; }
+.hdot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-right: 5px; vertical-align: 0; }
 #graph .pin { cursor: crosshair; }
 #graph .pin:hover { stroke-width: 3; }
 #graph .ehit { cursor: pointer; }
@@ -251,7 +262,7 @@ button, select, input { font: inherit; color: inherit; }
         <g id="vp"><rect x="-20000" y="-20000" width="40000" height="40000" fill="url(#gridp)" id="bg"/><g id="edges"></g><g id="nodes"></g><g id="dots"></g><path id="tempWire" fill="none" stroke="var(--accent)" stroke-width="2" stroke-dasharray="5 4" d=""/></g>
       </svg>
       <div class="hud"><button type="button" id="zIn" aria-label="Zoom in">+</button><button type="button" id="zOut" aria-label="Zoom out">&minus;</button><button type="button" id="zFit">Fit</button></div>
-      <div class="legendHud"><span><i style="background:var(--onprem)"></i>request to on-prem</span><span><i style="background:var(--neo)"></i>request to neocloud</span><span><i style="background:var(--c-xfer)"></i>KV cache transfer</span><span><i style="background:var(--train)"></i>gradient sync</span></div>
+      <div class="legendHud"><span><i style="background:var(--onprem)"></i>request to on-prem</span><span><i style="background:var(--neo)"></i>request to neocloud</span><span><i style="background:var(--c-xfer)"></i>KV cache transfer</span><span><i style="background:var(--train)"></i>gradient sync</span><span><i style="background:var(--warn)"></i>strained</span><span><i style="background:var(--crit)"></i>failing</span><span><b style="color:var(--warn)">!</b> potential issue</span></div>
       <div class="toast" id="toast" role="status"></div>
       <div class="stressBanner" id="stressBanner" hidden></div>
     </div>
@@ -332,9 +343,31 @@ button, select, input { font: inherit; color: inherit; }
   const TRACES = {
     chat: { label: 'Sample: chat, daily ramp with a spike' },
     agentic: { label: 'Sample: agentic, long prompts in bursts' },
-    steady: { label: 'Sample: steady 10 req/s' }
+    steady: { label: 'Sample: steady 10 req/s' },
+    sessions: { label: 'Sample: agent sessions log (session ids, recorded latency)' }
   };
+  // A synthetic "recorded" agent log: 150 sessions whose turns follow the previous answer plus tool time,
+  // with recorded TTFT and end-to-end latency, cache hits, and occasional parallel tool calls.
+  function genSessionLog(seed) {
+    const rng = makeRng((seed * 7919 + 4) >>> 0);
+    const rows = [];
+    for (let sid = 0; sid < 150; sid++) {
+      let t = rng.u() * 420, ctx = Math.round(4000 + 26000 * rng.u());
+      const turns = Math.max(2, Math.round(rng.logn(8, 0.5)));
+      for (let k = 0; k < turns && t < 600; k++) {
+        const add = Math.round(rng.logn(2000, 0.8));
+        const isl = Math.min(120000, ctx + add), osl = clamp(Math.round(rng.logn(300, 0.7)), 8, 4000);
+        const ttft = 0.25 + isl * (1 - 0.85) / 15000 + rng.u() * 0.3, e2e = ttft + osl * 0.03;
+        rows.push({ t, isl, osl, cached: Math.round(ctx * 0.85), ttft, e2e, session: 'agent-' + sid });
+        if (rng.u() < 0.1) rows.push({ t: t + 0.2, isl: Math.round(isl * 0.6), osl: Math.round(osl * 0.5), cached: Math.round(ctx * 0.5), ttft: ttft * 0.8, e2e: ttft * 0.8 + osl * 0.015, session: 'agent-' + sid });
+        ctx = isl + osl;
+        t += e2e + Math.max(0.3, rng.logn(4, 0.6));
+      }
+    }
+    return rows.sort((a, b) => a.t - b.t);
+  }
   function genTrace(kind, seed) {
+    if (kind === 'sessions') return genSessionLog(seed);
     const rng = makeRng((seed * 7919 + (kind === 'chat' ? 1 : kind === 'agentic' ? 2 : 3)) >>> 0);
     const D = 600;
     let rate, isl, osl, peak;
@@ -404,6 +437,96 @@ button, select, input { font: inherit; color: inherit; }
   }
 
   // ---------- simulation ----------
+  // Turns a recorded trace into session chains for closed-loop replay.
+  // Within a session, a turn that starts after the previous turn finished waits for the simulated finish plus the
+  // recorded think time; a turn that overlaps it (a parallel tool call) is a branch timed from the previous turn's issue.
+  // Without recorded latency, the think time is the arrival gap (the recorded fleet is assumed fast) and is flagged.
+  function planSessions(rows) {
+    const by = new Map(), loose = [];
+    for (const x of rows) { if (x.session == null || x.session === '') { loose.push(x); continue; } if (!by.has(x.session)) by.set(x.session, []); by.get(x.session).push(x); }
+    const sessions = [];
+    let turns = 0, branches = 0, estimated = 0;
+    const recFinish = x => (x.e2e != null ? x.t + x.e2e : x.ttft != null ? x.t + x.ttft + x.osl * 0.03 : NaN);
+    for (const [id, list] of by) {
+      list.sort((a, b) => a.t - b.t);
+      const T = list.map(x => ({ x, next: null, gap: 0, branches: [], branchOf: null }));
+      let anchor = 0;
+      for (let i = 1; i < T.length; i++) {
+        const prev = T[anchor].x, fin = recFinish(prev);
+        if (isFinite(fin) && T[i].x.t < fin - 0.05) { T[i].branchOf = anchor; T[anchor].branches.push({ idx: i, offset: Math.max(0, T[i].x.t - prev.t) }); branches++; continue; }
+        let gap;
+        if (isFinite(fin)) gap = Math.max(0, T[i].x.t - fin); else { gap = Math.max(0.2, T[i].x.t - prev.t); estimated++; }
+        T[anchor].next = i; T[i].gap = gap; anchor = i;
+      }
+      turns += T.length;
+      sessions.push({ id: String(id), turns: T });
+    }
+    return { sessions, loose, turns, branches, estimated };
+  }
+
+  // Potential issues found before running: misconfigurations and risks visible from the graph and traffic alone.
+  function lintSpec(spec) {
+    const out = [], P = {}, m = spec.model;
+    if (!m) return out;
+    for (const p of spec.pools) P[p.id] = profile(p.gpu, m);
+    // rough traffic estimate: requests/s and token sizes per router
+    const est = {};
+    for (const S of spec.sources) {
+      let rate = 0, peak = 0, isl = 0, osl = 0, maxCtx = 0, uncached = 0;
+      if (S.kind === 'open') {
+        const tr = S.trace || [];
+        const dur = tr.length ? Math.max(60, tr[tr.length - 1].t) : 1;
+        rate = tr.length / dur;
+        for (let i = 0, j = 0; i < tr.length; i++) { while (tr[i].t - tr[j].t > 10) j++; peak = Math.max(peak, (i - j + 1) / 10); }
+        for (const x of tr) { isl += x.isl; osl += x.osl; maxCtx = Math.max(maxCtx, x.isl + x.osl); uncached += x.isl - (S.useRecordedCache && x.cached != null ? x.cached : x.isl * S.prefixHit); }
+        if (tr.length) { isl /= tr.length; osl /= tr.length; uncached /= tr.length; }
+      } else {
+        const ctx = S.systemTokens + S.contextTokens + S.turnTokens * S.turns / 2;
+        isl = ctx; osl = S.outTokens; uncached = ctx * (1 - S.prefixHit) + S.turnTokens * S.prefixHit;
+        maxCtx = Math.min(128000, (S.systemTokens + S.contextTokens * 1.4 + S.turnTokens * S.turns * 2.5 + S.outTokens * S.turns) * 1.0);
+        rate = S.users / (S.thinkS + 4); peak = rate;
+      }
+      const e = est[S.router] || (est[S.router] = { rate: 0, peak: 0, isl: 0, osl: 0, uncached: 0, maxCtx: 0 });
+      e.peak += Math.max(peak, rate);
+      const w = e.rate + rate;
+      if (w > 0) { e.isl = (e.isl * e.rate + isl * rate) / w; e.osl = (e.osl * e.rate + osl * rate) / w; e.uncached = (e.uncached * e.rate + uncached * rate) / w; }
+      e.rate = w; e.maxCtx = Math.max(e.maxCtx, maxCtx);
+    }
+    const name = id => { const p = spec.pools.find(x => x.id === id); return p ? p.name : id; };
+    const fmtK = v => (v >= 1e4 ? Math.round(v / 1e3) + 'k' : v >= 1e3 ? (v / 1e3).toFixed(1) + 'k' : String(Math.round(v)));
+    for (const R of spec.routers) {
+      const e = est[R.id];
+      if (R.targets.length === 1) out.push({ node: R.targets[0].pool, level: 'info', kind: 'spof', msg: name(R.targets[0].pool) + ' is the only pool behind ' + R.name + ': if it fails, its traffic has nowhere to go.', fix: 'Add a second pool or site behind the router.' });
+      for (const x of R.targets) {
+        const p = spec.pools.find(q => q.id === x.pool), pr = P[x.pool];
+        if (!p || !e) continue;
+        if (e.maxCtx + (m.thinkTokens || 0) > pr.kvCap && p.role !== 'prefill') out.push({ node: p.id, level: 'warn', kind: 'kv', msg: 'Longest contexts (~' + fmtK(e.maxCtx) + ' tokens) exceed ' + p.name + '\u2019s KV cache per instance (' + fmtK(pr.kvCap) + '): those requests will be rejected.', fix: 'Use more GPUs per instance, a GPU with more memory, FP8 KV cache, or cap context.' });
+        if (p.auto && p.min === 0 && p.coldStart >= 60 && R.policy === 'primary-first' && x !== R.targets[0]) out.push({ node: p.id, level: 'warn', kind: 'cold', msg: p.name + ' starts empty and needs ' + p.coldStart + ' s to come up: bursts shorter than that end before its capacity arrives.', fix: 'Keep at least one instance warm (min ≥ 1) or cut the cold start.' });
+      }
+      if (e && R.targets.length) {
+        // prefill demand against front-pool capacity
+        let cap = 0;
+        for (const x of R.targets) { const p = spec.pools.find(q => q.id === x.pool); if (p) cap += (p.max || p.min) * P[p.id].prefill * (p.role === 'agg' ? 0.6 : 1); }
+        const need = e.peak * e.uncached;
+        if (cap > 0 && need > 0.8 * cap) out.push({ node: R.targets[0].pool, level: 'warn', kind: 'prefill', msg: 'At peak, traffic needs about ' + fmtK(need) + ' prefill tokens/s but the pools behind ' + R.name + ' manage about ' + fmtK(cap) + ' at full size.', fix: 'Add instances or prefill capacity, or raise prefix-cache hits.' });
+      }
+    }
+    for (const p of spec.pools) {
+      const pr = P[p.id];
+      if (pr.multiNode) out.push({ node: p.id, level: 'warn', kind: 'multinode', msg: p.name + ': the model needs more than 8 GPUs per instance on ' + p.gpu + ', so every instance spans nodes.', fix: 'Use a GPU with more memory or FP8 weights.' });
+      if (pr.kvCap < 20000) out.push({ node: p.id, level: 'warn', kind: 'kvsmall', msg: p.name + ' keeps only ' + fmtK(pr.kvCap) + ' tokens of KV cache per instance after weights.', fix: 'Use more GPUs per instance or a larger GPU.' });
+      for (const d of p.decode || []) {
+        if (!d.link) continue;
+        const L = spec.links.find(l => l.id === d.link);
+        const e = Object.values(est).reduce((a, b) => (b.peak > a.peak ? b : a), { peak: 0, isl: 0 });
+        const demand = e.peak * e.isl * pr.kvBytesPerToken * 8 / 1e9;
+        if (L && demand > 0.7 * L.gbps) out.push({ node: L.id, level: 'warn', kind: 'link', msg: 'At peak, KV caches from ' + p.name + ' need about ' + Math.round(demand) + ' Gbps across ' + L.name + ' (' + L.gbps + ' Gbps).', fix: 'Raise link bandwidth, keep prefill and decode in one site, or cut prompt sizes.' });
+      }
+    }
+    if (spec.train && spec.train.link && spec.pools.some(p => (p.decode || []).some(d => d.link === spec.train.link))) out.push({ node: spec.train.link, level: 'warn', kind: 'contention', msg: 'The training job\u2019s gradient sync shares a link with serving KV transfers.', fix: 'Give training its own link or keep the job in one site.' });
+    return out;
+  }
+
   // Compares recorded TTFT (from real logs) with simulated TTFT on the same requests.
   // Returns a per-second rolling p99 of recorded TTFT and a summary, or null summary when the trace has none.
   function compareRecorded(reqs, D) {
@@ -439,7 +562,7 @@ button, select, input { font: inherit; color: inherit; }
   };
   // Seconds where TPOT breaches dominate are put down to the pool decoding the largest batches.
   function findBottleneck(frames, pools, links, viol, firsts, slo, tviol, fins) {
-    const tally = {};
+    const tally = {}, blame = new Array(frames.length).fill(null);
     let first = null, breach = 0;
     for (let s = 0; s < frames.length; s++) {
       const ttftBreach = firsts[s] && viol[s] / firsts[s] > 0.1;
@@ -451,6 +574,7 @@ button, select, input { font: inherit; color: inherit; }
       if (!ttftBreach) {
         for (const p of pools) { const f = fr.pools[p.id]; if (f && f.batch > 0 && (!best || f.batch > best.weight)) best = { kind: 'tpot', id: p.id, name: p.name || p.id, rank: -1, weight: f.batch }; }
         if (best) {
+          blame[s] = { kind: best.kind, id: best.id };
           const key = best.kind + '|' + best.id;
           (tally[key] = tally[key] || { kind: best.kind, id: best.id, name: best.name, label: CAUSE.tpot.label, seconds: 0, first: s }).seconds++;
           if (!first) first = { t: s, kind: best.kind, id: best.id, name: best.name, label: CAUSE.tpot.label };
@@ -478,12 +602,73 @@ button, select, input { font: inherit; color: inherit; }
         else if (f.util >= 0.9) consider('link', L.id, L.name, f.xfers);
       }
       if (!best) continue;
+      blame[s] = { kind: best.kind, id: best.id };
       const key = best.kind + '|' + best.id;
       (tally[key] = tally[key] || { kind: best.kind, id: best.id, name: best.name, label: CAUSE[best.kind].label, seconds: 0, first: s }).seconds++;
       if (!first) first = { t: s, kind: best.kind, id: best.id, name: best.name, label: CAUSE[best.kind].label };
     }
     const top = Object.values(tally).sort((a, b) => b.seconds - a.seconds);
-    return { breachSeconds: breach, first, top };
+    return { breachSeconds: breach, first, top, blame };
+  }
+
+  // Health of every node, second by second: 0 healthy, 1 strained, 2 failing, with the cause.
+  // The node blamed for an SLO breach in a second is always marked failing with the breach cause.
+  const HEALTH_LABEL = { down: 'instances down', linkdown: 'link degraded', link: 'link saturated', kv: 'KV cache full', compute: 'compute saturated', cold: 'waiting on cold starts', queue: 'requests queueing', tpot: 'slow tokens', slo: 'missing the latency target', sync: 'waiting on gradient sync', upstream: 'a pool behind it is struggling' };
+  function healthOf(R) {
+    const D = R.D, spec = R.spec, slo = spec.slo, lvl = {}, cause = {}, sum = {};
+    const mk = id => { lvl[id] = new Uint8Array(D); cause[id] = new Array(D).fill(null); };
+    const set = (id, s, l, c) => { if (l > lvl[id][s]) { lvl[id][s] = l; cause[id][s] = c; } };
+    for (const p of spec.pools) mk(p.id);
+    for (const L of spec.links) mk(L.id);
+    for (const r of spec.routers) mk(r.id);
+    for (const S of spec.sources) mk(S.id);
+    if (spec.train) mk(spec.train.id);
+    const blame = (R.summary.bottleneck && R.summary.bottleneck.blame) || [];
+    for (let s = 0; s < D; s++) {
+      const fr = R.frames[s];
+      for (const p of spec.pools) {
+        const f = fr.pools[p.id];
+        if (!f) continue;
+        if (f.down > 0) set(p.id, s, 2, 'down');
+        if (f.kv >= 0.95 && f.q > 0) set(p.id, s, 2, 'kv');
+        if (f.q > 0 && f.head > slo.ttft) set(p.id, s, 2, f.util >= 0.9 ? 'compute' : 'queue');
+        if (f.starting > 0 && f.q > 0) set(p.id, s, 1, 'cold');
+        if (f.util >= 0.85) set(p.id, s, 1, 'compute');
+        if (f.kv >= 0.85) set(p.id, s, 1, 'kv');
+        if (f.q > 0 && f.head > slo.ttft / 3) set(p.id, s, 1, 'queue');
+      }
+      for (const L of spec.links) {
+        const f = fr.links[L.id];
+        if (!f) continue;
+        if (f.factor < 1) set(L.id, s, 2, 'linkdown');
+        else if (f.util >= 0.9) set(L.id, s, 2, 'link');
+        else if (f.util >= 0.7) set(L.id, s, 1, 'link');
+      }
+      const b = blame[s];
+      if (b && lvl[b.id]) { lvl[b.id][s] = 2; cause[b.id][s] = b.kind; }
+      for (const r of spec.routers) {
+        let w = 0;
+        for (const x of r.targets) { w = Math.max(w, lvl[x.pool][s]); if (x.link) w = Math.max(w, lvl[x.link][s]); }
+        if (w) set(r.id, s, w === 2 ? 1 : 0, 'upstream');
+      }
+      if (spec.train && spec.train.link && fr.train && fr.train.syncing && lvl[spec.train.link][s]) set(spec.train.id, s, lvl[spec.train.link][s], 'sync');
+    }
+    // traffic sources: share of their first tokens that missed TTFT in each second
+    const firsts = {}, miss = {};
+    for (const q of R.reqs) {
+      if (!isFinite(q.tFirst) || !lvl[q.src]) continue;
+      const s = Math.floor(q.tFirst); if (s >= D) continue;
+      (firsts[q.src] || (firsts[q.src] = new Uint16Array(D)))[s]++;
+      if (q.tFirst - q.t > slo.ttft) (miss[q.src] || (miss[q.src] = new Uint16Array(D)))[s]++;
+    }
+    for (const id in firsts) for (let s = 0; s < D; s++) { const f = firsts[id][s], m = miss[id] ? miss[id][s] : 0; if (f && m / f > 0.1) set(id, s, 2, 'slo'); else if (f && m / f > 0.02) set(id, s, 1, 'slo'); }
+    for (const id in lvl) {
+      const a = lvl[id], cnt = {}; let warn = 0, crit = 0;
+      for (let s = 0; s < D; s++) { if (a[s] === 1) warn++; else if (a[s] === 2) crit++; if (a[s]) cnt[cause[id][s]] = (cnt[cause[id][s]] || 0) + (a[s] === 2 ? 3 : 1); }
+      const top = Object.keys(cnt).sort((x, y) => cnt[y] - cnt[x])[0] || null;
+      sum[id] = { warn, crit, cause: top, level: crit >= Math.max(3, D * 0.01) ? 2 : warn + crit >= Math.max(5, D * 0.02) ? 1 : 0 };
+    }
+    return { lvl, cause, sum };
   }
 
   const drain = it => { let x; do x = it.next(); while (!x.done); return x.value; };
@@ -652,7 +837,8 @@ button, select, input { font: inherit; color: inherit; }
       const e = outs(n.id)[0];
       if (!e) { errors.push({ node: n.id, msg: n.cfg.name + ': wire it to a Router.' }); continue; }
       const c = n.cfg;
-      const s = { id: n.id, name: c.name, kind: n.type === 'trace' ? 'open' : n.type, router: e.to, edge: e.id, prefixHit: c.prefixHit / 100, useRecordedCache: c.useRecordedCache !== false, userBase: uidBase };
+      const s = { id: n.id, name: c.name, kind: n.type === 'trace' ? 'open' : n.type, router: e.to, edge: e.id, prefixHit: c.prefixHit / 100, useRecordedCache: c.useRecordedCache !== false, userBase: uidBase,
+        replay: c.replay === 'sessions' ? 'sessions' : 'timestamps', onFail: c.onFail === 'giveup' ? 'giveup' : 'retry' };
       if (n.type === 'trace') { s.trace = traceLookup ? traceLookup(c.trace, c.scale) : []; }
       else { Object.assign(s, { users: c.users, turns: c.turns, systemTokens: c.systemTokens, contextTokens: n.type === 'agent' ? c.contextTokens : 0, turnTokens: c.turnTokens, outTokens: c.outTokens, thinkS: c.thinkS, gapS: c.gapS, duration: c.durationMin * 60 }); uidBase += c.users; }
       spec.sources.push(s);
@@ -754,6 +940,7 @@ button, select, input { font: inherit; color: inherit; }
       return r;
     }
     let horizon = spec.horizon || 0;
+    const replayStats = { sources: 0, sessions: 0, turns: 0, branches: 0, estimated: 0, abandoned: 0, retried: 0, drift: [] };
     const users = [];
     let surgeBase = spec.sources.reduce((m, S) => Math.max(m, (S.userBase || 0) + (S.users || 0)), 0) + 100000;
     const srcById = {};
@@ -762,7 +949,22 @@ button, select, input { font: inherit; color: inherit; }
       if (S.kind === 'open') {
         const sg = stress.surge && stress.surge.target !== 'sessions' ? stress.surge : null;
         const srng = makeRng(((spec.seed || 7) * 977 + 13) >>> 0);
-        for (const x of S.trace) {
+        let openRows = S.trace;
+        if (S.replay === 'sessions') {
+          const plan = planSessions(S.trace);
+          openRows = plan.loose;
+          replayStats.sources++;
+          replayStats.sessions += plan.sessions.length; replayStats.turns += plan.turns; replayStats.branches += plan.branches; replayStats.estimated += plan.estimated;
+          for (const ses of plan.sessions) {
+            const copies = sg && inWin(ses.turns[0].x.t, sg) ? (() => { let e = Math.floor(sg.mult - 1); if (srng.u() < sg.mult - 1 - e) e++; return 1 + e; })() : 1;
+            for (let c = 0; c < copies; c++) {
+              const run = { S, ses, issued: [], done: 0, ended: false, clone: c > 0, offset: c ? srng.u() * 0.5 : 0 };
+              future.push({ t: ses.turns[0].x.t + run.offset, replayTurn: { run, idx: 0 } });
+            }
+          }
+          horizon = Math.max(horizon, S.trace.length ? S.trace[S.trace.length - 1].t : 0);
+        }
+        for (const x of openRows) {
           let isl = x.isl, cachedIn = S.useRecordedCache && x.cached != null ? x.cached : Math.round(x.isl * S.prefixHit);
           if (stress.ctx) { isl = Math.min(200000, Math.round(x.isl * stress.ctx.mult + stress.ctx.add)); cachedIn = Math.round(cachedIn * stress.ctx.mult); }
           const r = mkReq(S, x.t, isl, x.osl, cachedIn, -1);
@@ -828,6 +1030,31 @@ button, select, input { font: inherit; color: inherit; }
       if (next < st.until) future.push({ t: next, user: uid, fresh: st.turns <= 0, pending: true });
     }
 
+    // ----- closed-loop replay of recorded sessions -----
+    function replayReq(item, t) {
+      const { run, idx } = item, x = run.ses.turns[idx].x, S = run.S;
+      let isl = x.isl, cached = S.useRecordedCache && x.cached != null ? x.cached : Math.round(x.isl * S.prefixHit);
+      if (stress.ctx) { isl = Math.min(200000, Math.round(x.isl * stress.ctx.mult + stress.ctx.add)); cached = Math.round(cached * stress.ctx.mult); }
+      const r = mkReq(S, t, isl, x.osl, cached, -1);
+      r.sess = run; r.turn = idx; r.retryOf = item.retry ? 1 : 0;
+      if (!stress.ctx && !run.clone && !item.retry) { if (x.ttft != null) r.recTtft = x.ttft; if (x.queue != null) r.recQueue = x.queue; if (x.e2e != null) r.recE2e = x.e2e; }
+      if (run.clone) r.surge = true;
+      if (!item.retry) {
+        run.issued[idx] = t;
+        if (!run.clone) replayStats.drift.push(t - x.t);
+        // Parallel tool calls recorded inside this turn's window start relative to this issue.
+        for (const b of run.ses.turns[idx].branches) future.push({ t: t + b.offset, replayTurn: { run, idx: b.idx } });
+      }
+      return r;
+    }
+    function sessionTurnDone(r, t, ok) {
+      const run = r.sess;
+      if (!ok && run.S.onFail === 'retry' && !r.retryOf) { replayStats.retried++; future.push({ t: t + 5, replayTurn: { run, idx: r.turn, retry: true } }); return; }
+      if (!ok && run.S.onFail === 'giveup') { if (!run.ended) { run.ended = true; replayStats.abandoned += run.ses.turns.filter((tn, i) => i > r.turn && !tn.branchOf).length; } return; }
+      if (run.ended) return;
+      const nx = run.ses.turns[r.turn].next;
+      if (nx != null) future.push({ t: t + run.ses.turns[nx].gap, replayTurn: { run, idx: nx } });
+    }
     function enq(p, r, t) {
       if (p.role === 'decode') { r.tXferEnd = t; r.dPool = p.id; } else r.tEnq = t;
       r._t = t;
@@ -837,6 +1064,7 @@ button, select, input { font: inherit; color: inherit; }
     let doneCount = 0, outTokens = 0, genTokens = 0;
     function finish(r, t) {
       r.tFinish = t; doneCount++; outTokens += r.osl; genTokens += r.dec;
+      if (r.sess) sessionTurnDone(r, t, true);
       const dp = byId[r.dPool];
       if (dp && dp.siteKind === 'neo') { const L = links[r.inLink] || links[r.xLink]; if (L && !L.fabric) { L.egressBytes += r.osl * 4; L.totalBytes += r.osl * 4; } }
       if (r.user >= 0) after(r.user, r.isl, r.osl, t);
@@ -844,6 +1072,7 @@ button, select, input { font: inherit; color: inherit; }
     const failCounts = { kv: 0, outage: 0, route: 0 };
     function failReq(r, t, why, kind) {
       r.fail = why; r.failKind = kind || 'kv'; failCounts[r.failKind]++; dropped++; doneCount++;
+      if (r.sess) sessionTurnDone(r, t, false);
       if (r.user >= 0) { users[r.user].turns = 1; after(r.user, 0, 0, t + 5); }
     }
     function pickDecode(p) {
@@ -1073,6 +1302,7 @@ button, select, input { font: inherit; color: inherit; }
       while (future.size && future.peek().t <= t) {
         let r = future.pop();
         if (r.pending) { const st = users[r.user]; if (r.fresh) newSession(st); r = issue(st, r.t); st.lastThink = r.think; }
+        else if (r.replayTurn) r = replayReq(r.replayTurn, r.t);
         const R = routerById[r.router];
         if (!R || !R.targets.length) { failReq(r, t, 'No route', 'route'); continue; }
         const x = route(R);
@@ -1210,6 +1440,7 @@ button, select, input { font: inherit; color: inherit; }
     const summary = {
       requests: reqs.length, completed, dropped, rejected: failCounts.kv, lost: failCounts.outage, retried,
       surgeRequests: reqs.filter(r => r.surge).length, bottleneck,
+      replay: replayStats.sources ? (() => { const d = replayStats.drift.map(Math.abs).sort((a, b) => a - b); return { sessions: replayStats.sessions, turns: replayStats.turns, branches: replayStats.branches, estimatedGaps: replayStats.estimated, abandoned: replayStats.abandoned, retried: replayStats.retried, issued: replayStats.drift.length, driftP50: pct(d, 0.5), driftP90: pct(d, 0.9), meanDrift: replayStats.drift.length ? replayStats.drift.reduce((a, b) => a + b, 0) / replayStats.drift.length : NaN }; })() : null,
       slo: reqs.length ? ok / reqs.length : NaN,
       ttftP50: pct(ttftAll, 0.5), ttftP99: pct(ttftAll, 0.99), tpotP99: pct(tpotAll, 0.99),
       util: gpuSec ? busyGpuSec / gpuSec : 0, peakGpus: peak,
@@ -1224,7 +1455,7 @@ button, select, input { font: inherit; color: inherit; }
     const slim = reqs.map(r => ({ id: r.id, src: r.src, router: r.router, t: r.t, isl: r.isl, osl: r.osl, cached: r.cached, user: r.user, site: r.site, pPool: r.pPool, dPool: r.dPool, inLink: r.inLink, xLink: r.xLink,
       tEnq: r.tEnq, tAdmit: r.tAdmit, tPrefEnd: r.tPrefEnd, tXferEnd: r.tXferEnd, tFirst: r.tFirst, tFinish: r.tFinish, net: r.net, fail: r.fail,
       ttft: r.ttft, tpot: r.tpot, ok: r.ok, bQueue: r.bQueue, bPrefill: r.bPrefill, bXfer: r.bXfer, bDwait: r.bDwait,
-      think: r.think, tTok1: r.tTok1, bThink: r.bThink,
+      think: r.think, tTok1: r.tTok1, bThink: r.bThink, session: r.sess ? r.sess.ses.id : null, turn: r.sess ? r.turn : null, retryOf: r.retryOf || 0,
       recTtft: r.recTtft, recQueue: r.recQueue, recE2e: r.recE2e, failKind: r.failKind || '', retries: r.retries || 0, surge: !!r.surge }));
     return {
       spec,
@@ -1238,7 +1469,7 @@ button, select, input { font: inherit; color: inherit; }
   }
 
   const api = { GPUS, MODELS, TRACES, NODE_RULES, CAUSE, profile, genTrace, scaleTrace, compileGraph, simulate, normStress, findBottleneck,
-    headroomIter, findHeadroom, scaleFleet, sizeFleetIter, sizeFleet, adviseIter, adviseModels, compareRecorded, makeRng };
+    headroomIter, findHeadroom, healthOf, HEALTH_LABEL, scaleFleet, sizeFleetIter, sizeFleet, adviseIter, adviseModels, compareRecorded, planSessions, lintSpec, makeRng };
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
   else root.FleetEngine = api;
 })(typeof window !== 'undefined' ? window : this);
@@ -1256,7 +1487,7 @@ button, select, input { font: inherit; color: inherit; }
     chat: { title: 'Chat users', group: 'Traffic', color: 'src', inputs: false, outputs: true, w: 230,
       defaults: () => ({ name: 'Chat users', users: 400, turns: 6, systemTokens: 800, contextTokens: 0, turnTokens: 300, outTokens: 300, thinkS: 20, gapS: 60, prefixHit: 50, durationMin: 10 }) },
     trace: { title: 'Trace replay', group: 'Traffic', color: 'src', inputs: false, outputs: true, w: 230,
-      defaults: () => ({ name: 'Trace replay', trace: 'chat', scale: 1, prefixHit: 0, useRecordedCache: true }) },
+      defaults: () => ({ name: 'Trace replay', trace: 'chat', scale: 1, prefixHit: 0, useRecordedCache: true, replay: 'timestamps', onFail: 'retry' }) },
     router: { title: 'Router', group: 'Routing', color: 'route', inputs: true, outputs: true, w: 200,
       defaults: () => ({ name: 'Router', policy: 'primary-first', burstWait: 1.5 }) },
     pool: { title: 'GPU pool', group: 'Compute', color: 'pool', inputs: true, outputs: true, w: 290,
@@ -1327,6 +1558,12 @@ button, select, input { font: inherit; color: inherit; }
         node('lkb', 'link', 600, 640, { name: 'Link to cloud B', gbps: 40, rttMs: 45, egressPerGB: 0.08 }),
         node('neob', 'pool', 880, 690, Object.assign({}, NEO, { name: 'Cloud B MI300X', site: 'Neocloud B', gpu: 'MI300X', min: 1, coldStart: 150 }))],
       edges: [edge('src', 'rt'), edge('rt', 'on'), edge('rt', 'lka'), edge('lka', 'neoa'), edge('rt', 'lkb'), edge('lkb', 'neob')] }) },
+    { id: 'replay', name: 'Replay an agent log', desc: 'Recorded sessions, replayed closed loop', build: () => ({
+      nodes: [Object.assign(node('model', 'model', 40, 20), { cfg: M('coder-32b') }), node('slo', 'slo', 310, 20),
+        node('src', 'trace', 40, 250, { name: 'Agent sessions log', trace: 'sessions', replay: 'sessions' }), node('rt', 'router', 330, 260),
+        node('on', 'pool', 600, 150, { name: 'On-prem H100', instances: 4 }),
+        node('lk', 'link', 600, 470), node('neo', 'pool', 880, 410, Object.assign({}, NEO, { name: 'Neocloud H200', coldStart: 60, min: 0, max: 4 }))],
+      edges: [edge('src', 'rt'), edge('rt', 'on'), edge('rt', 'lk'), edge('lk', 'neo')] }) },
     { id: 'blank', name: 'Blank canvas', desc: 'Model and SLO nodes only', build: () => ({ nodes: [node('model', 'model', 40, 20), node('slo', 'slo', 310, 20)], edges: [] }) }
   ];
   const api = { NODE_TYPES, PALETTE, TEMPLATES, node, edge };
@@ -1628,7 +1865,7 @@ const fInt = v => Math.round(v).toLocaleString('en-US');
 const roleName = { agg: 'Aggregated', prefill: 'Prefill', decode: 'Decode' };
 
 // ---------- state ----------
-const S = { graph: null, sel: null, view: { x: 40, y: 20, k: 0.8 }, run: null, baseline: null, T: 0, playing: false, speed: 15, probs: { errors: [], warn: [] }, nid: 1, tpl: 'burst' };
+const S = { graph: null, sel: null, view: { x: 40, y: 20, k: 0.8 }, run: null, baseline: null, T: 0, playing: false, speed: 15, probs: { errors: [], warn: [] }, lint: [], nid: 1, tpl: 'burst' };
 const traces = {};
 function traceLookup(key, scale) {
   let tr;
@@ -1679,7 +1916,9 @@ function renderProblems() {
   const ul = $('#probs');
   if (!ul) return;
   const items = S.probs.errors.map(e => ({ e, err: true })).concat(S.probs.warn.map(e => ({ e, err: false })));
-  ul.innerHTML = items.length ? items.map(x => '<li class="' + (x.err ? 'err' : '') + '"' + (x.e.node ? ' data-node="' + x.e.node + '"' : '') + '>' + esc(x.e.msg) + '</li>').join('') : '<li style="border-left-color:var(--good)">No problems. The graph compiles.</li>';
+  const lint = S.probs.errors.length ? [] : S.lint;
+  ul.innerHTML = (items.length ? items.map(x => '<li class="' + (x.err ? 'err' : '') + '"' + (x.e.node ? ' data-node="' + x.e.node + '"' : '') + '>' + esc(x.e.msg) + '</li>').join('') : '<li style="border-left-color:var(--good)">The graph compiles.</li>') +
+    lint.map(x => '<li class="lint ' + x.level + '" data-node="' + x.node + '"><b>' + (x.level === 'warn' ? 'Potential issue' : 'Note') + ':</b> ' + esc(x.msg) + '<span class="fix">' + esc(x.fix) + '</span></li>').join('');
 }
 
 // ---------- view ----------
@@ -1725,6 +1964,7 @@ function poolGrid(n) {
   const sz = Math.max(14, Math.min(26, Math.floor((w - (cols - 1) * 5) / cols)));
   return { maxN, cols, rows: Math.ceil(maxN / cols), sz };
 }
+function cfgLineFit(n) { const t = cfgLine(n), m = Math.floor((NT[n.type].w - 24) / 5.6); return t.length > m ? t.slice(0, m - 1) + '…' : t; }
 function cfgLine(n) {
   const c = n.cfg;
   const prof = () => S.graph.nodes.find(m => m.type === 'model');
@@ -1757,9 +1997,16 @@ function buildNode(n, layer) {
   el('path', { d: 'M0 10a10 10 0 0 1 10-10H' + (w - 10) + 'a10 10 0 0 1 10 10V30H0Z', fill: col, 'fill-opacity': 0.9 }, g);
   el('text', { x: 12, y: 20, 'font-size': 12.5, 'font-weight': 600, fill: '#fff' }, g, n.cfg.name.length > 28 ? n.cfg.name.slice(0, 27) + '…' : n.cfg.name);
   el('text', { x: w - 10, y: 20, 'font-size': 10, 'text-anchor': 'end', fill: '#fff', 'fill-opacity': 0.8 }, g, n.type === 'pool' ? n.cfg.site : NT[n.type].title);
-  el('text', { x: 12, y: 46, 'font-size': 11, fill: 'var(--muted)' }, g, cfgLine(n));
+  el('text', { x: 12, y: 46, 'font-size': 11, fill: 'var(--muted)' }, g, cfgLineFit(n));
   const v = { g, n, w, h, refs: {} };
   const R = v.refs;
+  R.hb = el('g', { class: 'hbadge', transform: 'translate(' + (w - 8) + ' -11)', opacity: 0 }, g);
+  R.hbr = el('rect', { x: 0, y: 0, width: 10, height: 18, rx: 9, fill: 'var(--crit)' }, R.hb);
+  R.hbt = el('text', { x: 0, y: 12.5, 'font-size': 10.5, 'font-weight': 600, fill: '#fff', 'text-anchor': 'end' }, R.hb, '');
+  R.lint = el('g', { class: 'lint', transform: 'translate(0 0)', opacity: 0 }, g);
+  el('circle', { cx: 0, cy: 0, r: 9, fill: 'var(--warn)', stroke: 'var(--panel)', 'stroke-width': 2 }, R.lint);
+  el('text', { x: 0, y: 4, 'font-size': 12, 'font-weight': 700, fill: '#fff', 'text-anchor': 'middle' }, R.lint, '!');
+  R.lintT = el('title', null, R.lint, '');
   if (NT[n.type].inputs) el('circle', { class: 'pin in', 'data-pin': 'in', cx: 0, cy: PIN_Y, r: 6, fill: 'var(--panel)', stroke: col, 'stroke-width': 2 }, g);
   if (NT[n.type].outputs) el('circle', { class: 'pin out', 'data-pin': 'out', cx: w, cy: PIN_Y, r: 6, fill: col, stroke: 'var(--panel)', 'stroke-width': 2 }, g);
   const live = (y, size) => el('text', { x: 12, y, 'font-size': size || 11, fill: 'var(--ink)', class: 'mono' }, g, '');
@@ -1851,6 +2098,14 @@ function markSelection() {
 function markProblems() {
   const bad = new Set(S.probs.errors.filter(e => e.node).map(e => e.node));
   for (const id in views) views[id].g.classList.toggle('err', bad.has(id));
+  const by = {};
+  for (const x of S.lint) (by[x.node] || (by[x.node] = [])).push(x);
+  for (const id in views) {
+    const L = by[id], X = views[id].refs;
+    if (!X.lint) continue;
+    X.lint.setAttribute('opacity', L ? 1 : 0);
+    if (L) { X.lint.firstChild.setAttribute('fill', L.some(x => x.level === 'warn') ? 'var(--warn)' : 'var(--accent)'); X.lintT.textContent = L.map(x => x.msg + ' ' + x.fix).join('\n'); }
+  }
 }
 
 // ---------- pointer interaction ----------
@@ -1947,6 +2202,9 @@ const FIELDS = {
     { p: 'trace', k: 'select', label: 'Trace', opts: () => Object.keys(E.TRACES).map(k => [k, E.TRACES[k].label]).concat(traces.uploaded ? [['uploaded', 'Uploaded: ' + traces.uploaded.name]] : []) },
     { k: 'upload' },
     { p: 'scale', k: 'range', label: 'Load multiplier', min: 0.25, max: 10, step: 0.05, f: v => v.toFixed(2) + '×', hint: 'If your log was sampled (say 10% of requests), set the inverse (10×).' },
+    { p: 'replay', k: 'seg', label: 'Replay', opts: [['timestamps', 'Timestamps (open loop)'], ['sessions', 'Sessions (closed loop)']], hint: 'Open loop sends every request at its recorded time, however slow the fleet is. Closed loop waits for each turn to finish before sending the session\u2019s next one, keeping the recorded think time between them.' },
+    { k: 'replayInfo', show: c => c.replay === 'sessions' },
+    { p: 'onFail', k: 'seg', label: 'When a turn fails', opts: [['retry', 'Retry once after 5 s'], ['giveup', 'Give up the session']], show: c => c.replay === 'sessions' },
     { p: 'useRecordedCache', k: 'check', label: 'Use cache hits recorded in the log', show: c => c.trace === 'uploaded' && traces.uploaded && traces.uploaded.stats.withCached > 0 },
     { p: 'prefixHit', k: 'range', label: 'Prefix cache hit', min: 0, max: 95, step: 5, f: v => v + '%', hint: 'Applied to requests whose log has no cache data.' }
   ],
@@ -2052,7 +2310,7 @@ function makeField(n, f) {
   w.className = 'ctl';
   const id = 'f' + Math.random().toString(36).slice(2, 8);
   if (f.k === 'grid') { w.className = 'grid2'; for (const ff of f.ctl) w.appendChild(makeField(n, ff)); return w; }
-  if (f.k === 'poolReadout' || f.k === 'modelReadout' || f.k === 'trainHint' || f.k === 'targets') { w.className = f.k === 'trainHint' ? 'note' : f.k === 'targets' ? 'ctl' : 'readout'; w.dataset.kind = f.k; formBound.push({ f, w }); return w; }
+  if (f.k === 'poolReadout' || f.k === 'modelReadout' || f.k === 'trainHint' || f.k === 'targets' || f.k === 'replayInfo') { w.className = f.k === 'trainHint' ? 'note' : f.k === 'targets' ? 'ctl' : 'readout'; w.dataset.kind = f.k; formBound.push({ f, w }); return w; }
   if (f.k === 'upload') {
     w.innerHTML = '<label class="upload" id="drop"><input type="file" id="file" accept=".csv,.json,.jsonl,.ndjson,.txt">Upload a trace or drop it here<br><span>vLLM OpenTelemetry spans (OTLP or Jaeger JSON), gateway JSON logs (OpenAI, Anthropic or LiteLLM usage), or CSV (Azure format or timestamp, input_tokens, output_tokens). Only timings and token counts are read.</span></label><div class="note" id="upnote">' + (traces.uploaded ? esc(uploadNote(traces.uploaded)) : '') + '</div>';
     setTimeout(() => wireUpload(n), 0);
@@ -2117,7 +2375,7 @@ function makeField(n, f) {
 function changed(n, structural) {
   refreshForm();
   if (structural || n.type === 'pool' || n.type === 'model') renderGraph();
-  else { const v = views[n.id]; if (v) v.g.querySelectorAll('text')[2].textContent = cfgLine(n); }
+  else { const v = views[n.id]; if (v) v.g.querySelectorAll('text')[2].textContent = cfgLineFit(n); }
   if (structural) renderPalette();
   scheduleRun();
 }
@@ -2137,6 +2395,12 @@ function refreshForm() {
       if (b.sig !== sig) { b.inp.innerHTML = opts.map(o => '<option value="' + o[0] + '">' + esc(o[1]) + '</option>').join(''); b.sig = sig; }
       b.inp.value = c[f.p];
     } else if (f.k === 'seg') { for (const btn of b.seg.children) { const on = btn.dataset.v === c[f.p]; btn.classList.toggle('on', on); btn.setAttribute('aria-pressed', on); } }
+    else if (f.k === 'replayInfo') {
+      const tr = traceLookup(c.trace, c.scale) || [], P = E.planSessions(tr);
+      b.w.innerHTML = P.sessions.length
+        ? fInt(P.sessions.length) + ' sessions, ' + fInt(P.turns) + ' turns' + (P.branches ? ', ' + fInt(P.branches) + ' parallel calls' : '') + (P.loose.length ? '. ' + fInt(P.loose.length) + ' requests have no session id and replay at their timestamps.' : '.') + (P.estimated ? ' ' + fInt(P.estimated) + ' think times are estimated (no latency recorded for the previous turn).' : '')
+        : 'This trace has no session ids, so every request replays at its timestamp. Logs with session_id, conversation_id or user fields can replay as sessions.';
+    }
     else if (f.k === 'poolReadout') {
       const m = S.graph.nodes.find(x => x.type === 'model');
       if (!m) { b.w.innerHTML = 'Add a Model node to see this pool’s profile.'; continue; }
@@ -2197,6 +2461,7 @@ $('#details').addEventListener('click', e => {
   if (pr) { const i = S.graph.edges.findIndex(x => x.id === pr.dataset.primary); const [ed] = S.graph.edges.splice(i, 1); S.graph.edges.unshift(ed); refreshForm(); scheduleRun(); return; }
   if (li) { select({ type: 'req', id: +li.dataset.req }); return; }
   const sk = e.target.closest('[data-seekto]'); if (sk) { seek(+sk.dataset.seekto); return; }
+  const sn = e.target.closest('[data-selnode]'); if (sn) { select({ type: 'node', id: sn.dataset.selnode }); return; }
   if (!b) return;
   const a = b.dataset.act;
   if (a === 'del') deleteSelection();
@@ -2311,7 +2576,7 @@ function renderOverview() {
     add('Answer', q.think && q.tFirst > q.tTok1 ? q.tFirst : q.tTok1, q.tFinish, 'color-mix(in srgb, var(--ink) 35%, transparent)');
     box.innerHTML = '<button class="linkbtn" data-act="back" type="button">&larr; Overview</button>' +
       '<h2>Request #' + q.id + ' ' + (q.fail ? '<span class="pill bad">rejected</span>' : q.ok ? '<span class="pill ok">met SLO</span>' : '<span class="pill bad">missed SLO</span>') + '</h2>' +
-      '<div class="sub">Arrived ' + mmss(q.t) + (q.user >= 0 ? ' · user ' + q.user : '') + ' · ' + esc(poolName(q.pPool)) + (disagg ? ' → ' + esc(poolName(q.dPool)) : '') + (q.inLink ? ' via ' + esc(poolName(q.inLink)) : '') + '</div>' +
+      '<div class="sub">Arrived ' + mmss(q.t) + (q.user >= 0 ? ' · user ' + q.user : '') + (q.session != null ? ' · session ' + esc(q.session) + ', turn ' + (q.turn + 1) + (q.retryOf ? ' (retry)' : '') : '') + ' · ' + esc(poolName(q.pPool)) + (disagg ? ' → ' + esc(poolName(q.dPool)) : '') + (q.inLink ? ' via ' + esc(poolName(q.inLink)) : '') + '</div>' +
       (q.fail ? '<div class="blind">' + esc(q.fail) + '.</div>' : '') +
       '<div class="wf">' + segs.map(g => '<div class="wrow"><span>' + g.nm + '</span><div class="track"><i style="left:' + (100 * g.a / total).toFixed(2) + '%;width:' + Math.max(0.8, 100 * (g.b - g.a) / total).toFixed(2) + '%;background:' + g.c + '"></i></div><span>' + fS(g.b - g.a) + '</span></div>').join('') + '</div>' +
       rowH('Input tokens (cached)', fInt(q.isl) + ' (' + fInt(q.cached || 0) + ')') + rowH('Output tokens', fInt(q.osl)) + (q.think ? rowH('Hidden thinking tokens', fInt(q.think)) : '') + rowH('TTFT', fS(q.ttft)) + rowH('TPOT', fMs(q.tpot)) + (q.surge ? rowH('Origin', 'extra traffic from the surge') : '') +
@@ -2327,8 +2592,15 @@ function renderOverview() {
   list.sort((a, b) => (b.fail ? 1e9 : b.ttft) - (a.fail ? 1e9 : a.ttft));
   const top = list.slice(0, 8);
   const bt = R.summary.bottleneck;
+  const H = R.health, hot = [];
+  if (H) for (const id in H.lvl) if (H.lvl[id][s]) hot.push({ id, l: H.lvl[id][s], c: H.cause[id][s] });
+  hot.sort((a, b) => b.l - a.l);
+  const nm = id => { const n = nodeById(id); return n ? n.cfg.name : id; };
+  const healthHtml = '<h3 class="sec" style="margin-top:0">Health at ' + mmss(t) + '</h3><div class="health">' + (hot.length ? hot.slice(0, 6).map(h => '<div class="row"><span><span class="hdot" style="background:' + (h.l === 2 ? 'var(--crit)' : 'var(--warn)') + '"></span><button class="linkbtn" type="button" data-selnode="' + h.id + '">' + esc(nm(h.id)) + '</button></span><span>' + esc(E.HEALTH_LABEL[h.c] || h.c) + '</span></div>').join('') : '<div class="sub">Every node is healthy this second.</div>') + '</div>';
+  const rp = R.summary.replay;
+  const rpHtml = rp ? '<h3 class="sec">Closed-loop replay</h3><div class="sub">' + fInt(rp.sessions) + ' recorded sessions, ' + fInt(rp.turns) + ' turns (' + fInt(rp.branches) + ' parallel calls). Turns ran a median ' + fS(rp.driftP50) + ' behind their recorded time (p90 ' + fS(rp.driftP90) + '): ' + (rp.driftP50 > 5 ? 'this fleet is slower than the one that recorded the log, so users would have sent less traffic than the timestamps say.' : 'close to the recorded pace.') + (rp.estimatedGaps ? ' ' + fInt(rp.estimatedGaps) + ' think times were estimated because the log has no latency for the turn before.' : '') + (rp.abandoned ? ' ' + fInt(rp.abandoned) + ' turns were never sent because their session gave up.' : '') + '</div>' : '';
   const bnHtml = bt && bt.top.length ? '<h3 class="sec" style="margin-top:0">Bottlenecks this run</h3>' + bt.top.slice(0, 3).map(b => '<div class="row"><span><button class="linkbtn" type="button" data-seekto="' + b.first + '">' + esc(b.name) + '</button>: ' + b.label + '</span><span>' + b.seconds + ' s</span></div>').join('') : '';
-  box.innerHTML = bnHtml + '<h2 style="margin-top:8px">At ' + mmss(t) + '</h2><div class="sub">' + fInt(Sr.arrivals[s]) + ' arrivals this second · TTFT p99 ' + fS(Sr.p99[s]) + ' · ' + (Sr.firsts[s] ? fPct(Sr.viol[s] / Sr.firsts[s]) : '0%') + ' over target</div>' +
+  box.innerHTML = healthHtml + bnHtml + rpHtml + '<h2 style="margin-top:8px">At ' + mmss(t) + '</h2><div class="sub">' + fInt(Sr.arrivals[s]) + ' arrivals this second · TTFT p99 ' + fS(Sr.p99[s]) + ' · ' + (Sr.firsts[s] ? fPct(Sr.viol[s] / Sr.firsts[s]) : '0%') + ' over target</div>' +
     '<h3 class="sec">Slowest requests, last 20 s</h3>' +
     (top.length ? '<ul class="reqlist">' + top.map(q => {
       const tot = Math.max(1e-6, (q.bQueue || 0) + (q.bPrefill || 0) + (q.bXfer || 0) + (q.bDwait || 0));
@@ -2345,6 +2617,7 @@ function scheduleRun(ms) { if (ms !== 0) S.dirty = true; clearTimeout(runTimer);
 function doRun() {
   const c = E.compileGraph(S.graph, traceLookup);
   S.probs = { errors: c.errors, warn: c.warn };
+  S.lint = c.errors.length ? [] : E.lintSpec(c.spec);
   renderProblems(); markProblems();
   if (c.errors.length) { $('#status').innerHTML = '<span class="bad">' + c.errors.length + ' problem' + (c.errors.length > 1 ? 's' : '') + ' to fix before it can run</span> (see the left panel)'; return; }
   let R;
@@ -2353,6 +2626,7 @@ function doRun() {
     if (S.stress && !S.baseline) { const b = E.simulate(c.spec); S.autoBase = baselineOf(b, 'Unstressed'); } else S.autoBase = null;
   } catch (err) { $('#status').textContent = 'Simulation failed: ' + err.message; return; }
   prep(R);
+  R.health = E.healthOf(R);
   S.run = R;
   if (firstRun) {
     firstRun = false;
@@ -2425,9 +2699,22 @@ function updateLive(t) {
   const R = S.run;
   if (!R) return;
   const s = clamp(Math.floor(t), 0, R.D - 1), fr = R.frames[s];
-  const slo = R.spec.slo;
+  const slo = R.spec.slo, H = R.health;
   for (const id in views) {
     const v = views[id], n = v.n, X = v.refs;
+    const hl = H && H.lvl[id] ? H.lvl[id][s] : 0, hc = hl ? H.cause[id][s] : null;
+    if (v.hl !== hl || v.hc !== hc) {
+      v.hl = hl; v.hc = hc;
+      v.g.classList.toggle('h1', hl === 1); v.g.classList.toggle('h2', hl === 2);
+      if (hl) {
+        const txt = E.HEALTH_LABEL[hc] || hc;
+        X.hbt.textContent = txt;
+        const tw = txt.length * 5.7 + 14;
+        X.hbr.setAttribute('x', -tw); X.hbr.setAttribute('width', tw); X.hbt.setAttribute('x', -7);
+        X.hbr.setAttribute('fill', hl === 2 ? 'var(--crit)' : 'var(--warn)');
+        X.hb.setAttribute('opacity', 1);
+      } else X.hb.setAttribute('opacity', 0);
+    }
     if (n.type === 'pool') {
       const f = fr.pools[id];
       if (!f) continue;
@@ -2467,7 +2754,7 @@ function updateLive(t) {
     } else if (['agent', 'chat', 'trace'].includes(n.type)) {
       const a = R.srcArr[id];
       X.t1.textContent = a ? fInt(a[s]) + ' req/s' + (R.srcUsers[id] ? ' · ' + fInt(R.srcUsers[id][s]) + ' in flight' : '') : 'not in run';
-      X.t2.textContent = n.type === 'trace' ? 'prefix cache ' + n.cfg.prefixHit + '%' : 'prefix cache ' + n.cfg.prefixHit + '% · ' + fK(n.cfg.outTokens) + ' out/turn';
+      X.t2.textContent = n.type === 'trace' ? (n.cfg.replay === 'sessions' ? 'closed loop' + (R.summary.replay ? ' · drift ' + fS(R.summary.replay.driftP50) : '') : 'replaying timestamps') : 'prefix cache ' + n.cfg.prefixHit + '% · ' + fK(n.cfg.outTokens) + ' out/turn';
     } else if (n.type === 'router') {
       const sh = R.routerShare[id];
       if (!sh) { X.t1.textContent = 'not in run'; X.t2.textContent = ''; continue; }
@@ -2485,7 +2772,8 @@ function updateLive(t) {
     const v = fl ? fl[s] / R.flowMax[id] : 0;
     ev.wire.setAttribute('stroke-width', (1.6 + 4 * v).toFixed(2));
     const lk = [ev.e.from, ev.e.to].map(id => fr.links[id]).find(x => x && x.factor < 1);
-    ev.wire.setAttribute('stroke', lk ? 'var(--crit)' : edgeColor(ev.e));
+    const th = H && H.lvl[ev.e.to] ? H.lvl[ev.e.to][s] : 0;
+    ev.wire.setAttribute('stroke', lk || th === 2 ? 'var(--crit)' : th === 1 ? 'var(--warn)' : edgeColor(ev.e));
     if (lk) ev.wire.setAttribute('stroke-dasharray', '6 4'); else ev.wire.removeAttribute('stroke-dasharray');
     ev.flow.setAttribute('opacity', v > 0.01 ? 0.9 : 0);
     ev.flow.style.strokeDashoffset = String(-(t * 30) % 120);
@@ -2544,12 +2832,13 @@ function renderKpis() {
     t1('$ / M output tok', fUsd(s.costPerMTok), '', s.costPerMTok, b.costPerMTok, true, fUsd);
     t1('Cross-site traffic', s.crossGB >= 1 ? fK(s.crossGB) + ' GB' : (s.crossGB * 1000).toFixed(0) + ' MB', '', s.crossGB, b.crossGB, true, v => fK(v) + ' GB');
     if (s.recorded && isFinite(s.recorded.errP99)) { const e = s.recorded.errP99; tiles.push(kpiTile('Recorded TTFT p99 (log)', fS(s.recorded.ttftP99), Math.abs(e) <= 0.2 ? 'good' : 'warn', 'sim ' + (e >= 0 ? '+' : '') + Math.round(e * 100) + '% vs log', '')); }
+    if (s.replay) { const rp = s.replay; tiles.push(kpiTile('Turns behind the log (p50)', fS(rp.driftP50), rp.driftP90 > 30 ? 'warn' : '', 'p90 ' + fS(rp.driftP90) + ' · ' + fInt(rp.sessions) + ' sessions' + (rp.abandoned ? ' · ' + fInt(rp.abandoned) + ' turns abandoned' : rp.retried ? ' · ' + fInt(rp.retried) + ' retried' : ''), '')); }
     t1('$ / 1k requests', fUsd(s.costPerKReq), '', s.costPerKReq, b.costPerKReq, true, fUsd);
     if (s.thinkShare > 0) tiles.push(kpiTile('Thinking share of tokens', fPct(s.thinkShare), '', 'hidden reasoning, billed', ''));
     if (s.rejected) tiles.push(kpiTile('Rejected (context > KV)', fInt(s.rejected), 'crit', '', ''));
     if (s.lost) tiles.push(kpiTile('Lost in outage', fInt(s.lost), 'crit', 'streams cut mid-answer', ''));
     const bf = s.bottleneck && s.bottleneck.first;
-    tiles.push('<div class="kpi wide ' + (bf ? 'crit' : 'good') + '"' + (bf ? ' data-seek="' + bf.t + '" title="Jump to ' + mmss(bf.t) + '"' : '') + '><div class="k">First bottleneck' + (bf ? ' · ' + mmss(bf.t) : '') + '</div><div class="v">' + (bf ? esc(bf.name) : 'None found') + '</div><div class="d">' + (bf ? bf.label + (s.bottleneck.top.length > 1 ? ' · then ' + esc(s.bottleneck.top[1].name) + ': ' + s.bottleneck.top[1].label : '') : 'no second over target') + '</div></div>');
+    tiles.push('<div class="kpi wide ' + (bf ? 'crit' : 'good') + '"' + (bf ? ' data-seek="' + bf.t + '" title="Jump to ' + mmss(bf.t) + '"' : '') + '><div class="k">First bottleneck' + (bf ? ' · ' + mmss(bf.t) : '') + '</div><div class="v">' + (bf ? esc(bf.name) : 'None found') + '</div><div class="d">' + (bf ? bf.label + (() => { const nx = s.bottleneck.top.find(x => x.id !== bf.id || x.kind !== bf.kind); return nx ? ' · most often ' + esc(nx.name) + ': ' + nx.label : ''; })() : 'no second over target') + '</div></div>');
   }
   if (s.train) {
     const t = s.train, bt = b.train || {};
