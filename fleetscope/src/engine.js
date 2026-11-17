@@ -61,6 +61,14 @@
     return { gpu: gpuKey, tp, prefill, a, b0, c, kvCap, kvBytesPerToken, wBytes, multiNode: tp > 8 };
   }
 
+  // Calibration: measured multipliers on the spec-sheet profile. prefill scales prefill throughput;
+  // decode scales every decode-step term (fixed, per-sequence and per-context-token).
+  function calibrated(P, cal) {
+    if (!cal || ((cal.prefill || 1) === 1 && (cal.decode || 1) === 1)) return P;
+    const d = cal.decode || 1;
+    return Object.assign({}, P, { prefill: P.prefill * (cal.prefill || 1), a: P.a * d, b0: P.b0 * d, c: P.c * d, calib: { prefill: cal.prefill || 1, decode: d } });
+  }
+
   // ---------- recorded traces ----------
   const TRACES = {
     chat: { label: 'Sample: chat, daily ramp with a spike' },
@@ -383,13 +391,18 @@
     const pairs = withRec.filter(r => isFinite(r.ttft));
     const rec = pairs.map(r => r.recTtft).sort((a, b) => a - b), sim = pairs.map(r => r.ttft).sort((a, b) => a - b);
     const recQ = withRec.filter(r => isFinite(r.recQueue)).map(r => r.recQueue).sort((a, b) => a - b);
+    const tp = withRec.filter(r => isFinite(r.recE2e) && r.osl > 1 && isFinite(r.tpot) && r.tpot > 0);
+    const recT = tp.map(r => (r.recE2e - r.recTtft) / (r.osl - 1)).filter(v => v > 0).sort((a, b) => a - b), simT = tp.map(r => r.tpot).sort((a, b) => a - b);
     const err = (a, b) => (b > 0 ? (a - b) / b : NaN);
     const summary = {
       requests: withRec.length, compared: pairs.length,
       ttftP50: pct(rec, 0.5), ttftP99: pct(rec, 0.99), simTtftP50: pct(sim, 0.5), simTtftP99: pct(sim, 0.99),
       errP50: err(pct(sim, 0.5), pct(rec, 0.5)), errP99: err(pct(sim, 0.99), pct(rec, 0.99)),
-      queueP99: recQ.length ? pct(recQ, 0.99) : NaN
+      queueP99: recQ.length ? pct(recQ, 0.99) : NaN,
+      tpotP50: recT.length ? pct(recT, 0.5) : NaN, tpotP99: recT.length ? pct(recT, 0.99) : NaN,
+      simTpotP50: simT.length ? pct(simT, 0.5) : NaN, simTpotP99: simT.length ? pct(simT, 0.99) : NaN
     };
+    summary.errTpotP50 = err(summary.simTpotP50, summary.tpotP50); summary.errTpotP99 = err(summary.simTpotP99, summary.tpotP99);
     return { p99, summary };
   }
 
@@ -664,7 +677,7 @@
       const p = { id: n.id, name: c.name, site: c.site, siteKind: c.siteKind, role: c.role, gpu: c.gpu,
         min: c.autoscale ? c.min : c.instances, max: c.autoscale ? Math.max(c.min, c.max, 1) : c.instances,
         auto: !!c.autoscale, coldStart: c.coldStart, upWait: c.upWait, downUtil: c.downUtil / 100, maxBatch: c.maxBatch, fabricGbps: c.fabricGbps, decode: [],
-        zone: zoneOf(c) };
+        zone: zoneOf(c), calib: (c.calibPrefill && c.calibPrefill !== 1) || (c.calibDecode && c.calibDecode !== 1) ? { prefill: c.calibPrefill || 1, decode: c.calibDecode || 1 } : null };
       if (c.role === 'prefill') {
         for (const e of outs(n.id)) for (const r of reach(e)) {
           const d = byId[r.pool];
@@ -743,7 +756,7 @@
     }
     for (const sp of spec.pools) {
       const p = Object.assign({}, sp);
-      p.P = prof(p.gpu);
+      p.P = calibrated(prof(p.gpu), p.calib);
       p.price = p.siteKind === 'neo' ? GPUS[p.gpu].rent : GPUS[p.gpu].onprem;
       Object.assign(p, { inst: [], q: new Q(), qTokens: 0, lastUp: -1e9, utilHist: [], nextId: 0, tokSec: 0, spillFrom: [], down: 0, capLoss: 0 });
       pools.push(p); byId[p.id] = p;
@@ -1336,7 +1349,7 @@
     };
   }
 
-  const api = { GPUS, MODELS, TRACES, NODE_RULES, CAUSE, profile, genTrace, scaleTrace, compileGraph, simulate, normStress, findBottleneck,
+  const api = { GPUS, MODELS, TRACES, NODE_RULES, CAUSE, profile, calibrated, genTrace, scaleTrace, compileGraph, simulate, normStress, findBottleneck,
     headroomIter, findHeadroom, healthOf, HEALTH_LABEL, costBreakdown, latencyBreakdown, blastIter, blastRadius, securityBreakdown, zoneAllowed, ZONE_LABEL, DEFAULT_POLICY, scaleFleet, sizeFleetIter, sizeFleet, adviseIter, adviseModels, compareRecorded, planSessions, lintSpec, makeRng };
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
   else root.FleetEngine = api;

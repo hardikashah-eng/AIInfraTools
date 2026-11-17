@@ -1,7 +1,7 @@
 /* FleetScope Training view: one job seen four ways (GPUs, phases, scheduling, full). Browser only. */
 (function () {
   'use strict';
-  const T = window.FleetTraining, C = window.FleetCluster, E = window.FleetEngine;
+  const T = window.FleetTraining, C = window.FleetCluster, E = window.FleetEngine, K = window.FleetCalibrate;
   const $ = (s, r) => (r || document).querySelector(s);
   const esc = s => String(s == null ? '' : s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
   const fInt = v => (isFinite(v) ? Math.round(v).toLocaleString('en-US') : '–');
@@ -24,7 +24,8 @@
   root.innerHTML = `
   <header class="toolbar">
     <div class="tb"><span class="tname" id="tName"></span>
-      <label class="btnlike" title="GPU fault log: CSV (time,node,gpu,xid), JSON lines, or syslog lines with NVRM Xid">Import fault log<input type="file" id="tFile" accept=".csv,.json,.jsonl,.log,.txt" hidden></label></div>
+      <label class="btnlike" title="GPU fault log: CSV (time,node,gpu,xid), JSON lines, or syslog lines with NVRM Xid">Import fault log<input type="file" id="tFile" accept=".csv,.json,.jsonl,.log,.txt" hidden></label>
+      <label class="btnlike" title="Step timing CSV: step, step_time and, if logged, data_time, compute, comm (seconds)">Import step timings<input type="file" id="tSteps" accept=".csv,.txt" hidden></label></div>
     <div class="tb"><button type="button" id="tPlay" class="play">&#9654; Play</button>
       <select id="tSpeed" aria-label="Playback speed"><option value="10">10×</option><option value="60" selected>60×</option><option value="300">300×</option><option value="1200">1200×</option></select>
       <span class="clock" id="tClock">0:00 / 12:00</span></div>
@@ -60,7 +61,10 @@
   function renderCfg() {
     const s = TS.spec;
     const sel = (path, v, opts) => '<select data-path="' + path + '">' + opts.map(([k, l]) => '<option value="' + k + '"' + (k === v ? ' selected' : '') + '>' + esc(l) + '</option>').join('') + '</select>';
-    let h = (TS.faultLog ? '<div class="note">Fault log: ' + TS.faultLog.events.length + ' faults on ' + TS.faultLog.byNode.length + ' nodes' + (Object.keys(TS.faultLog.xids).length ? ' (Xid ' + Object.entries(TS.faultLog.xids).sort((a, b) => b[1] - a[1]).slice(0, 3).map(([k, n]) => k + '×' + n).join(', ') + ')' : '') + '. Faults are weighted toward the GPUs that fail most in it.</div>' : '');
+    const lr = TS.faultLog && K ? K.faultRate(TS.faultLog, TS.logGpus || null) : null;
+    let h = (TS.stepFit ? '<div class="note"><b>Calibrated from ' + esc(TS.stepFit.name) + '</b> (' + TS.stepFit.measured.steps + ' steps, median ' + fS(TS.stepFit.measured.stepS) + '): kernel efficiency ' + TS.spec.kernelEff + ', comm overlapped ' + TS.spec.overlap + (TS.stepFit.dataFit ? ', dataloader rate fitted' : '') + '. Model step now ' + fS(TS.stepFit.after.busy + TS.stepFit.after.sync + TS.stepFit.after.data + TS.stepFit.after.optimizer) + '.</div>' : '') +
+      (lr ? '<div class="note">The log covers ' + lr.days.toFixed(0) + ' days on about ' + lr.gpus + ' GPUs: <b>' + lr.perGpuDay.toFixed(4) + '</b> faults per GPU-day. <button class="linkbtn" type="button" id="tUseRate">Use this rate</button></div>' : '') +
+      (TS.faultLog ? '<div class="note">Fault log: ' + TS.faultLog.events.length + ' faults on ' + TS.faultLog.byNode.length + ' nodes' + (Object.keys(TS.faultLog.xids).length ? ' (Xid ' + Object.entries(TS.faultLog.xids).sort((a, b) => b[1] - a[1]).slice(0, 3).map(([k, n]) => k + '×' + n).join(', ') + ')' : '') + '. Faults are weighted toward the GPUs that fail most in it.</div>' : '');
     h += '<h3>Job</h3><label class="frow"><span>Model</span>' + sel('model', s.model, Object.keys(E.MODELS).map(k => [k, E.MODELS[k].label])) + '</label>' +
       '<label class="frow"><span>GPU</span>' + sel('gpu', s.gpu, Object.keys(E.GPUS).map(k => [k, E.GPUS[k].label])) + '</label>' +
       row('GPUs', 'gpus', s.gpus, 8, 16384, 8) + row('Tensor parallel', 'tp', s.tp, 1, 8, 1) + row('Pipeline stages', 'pp', s.pp, 1, 64, 1) + row('Batch (M tokens/step)', 'batchMTokens', s.batchMTokens, 0.25, 64, 0.25) +
@@ -368,6 +372,22 @@
   $('#tSpeed').addEventListener('change', e => { TS.speed = +e.target.value; });
   $('#tPin').addEventListener('click', () => { TS.baseline = { label: 'pinned baseline', summary: TS.run.summary, byMix: TS.run.byMix, queueWaitS: TS.run.spec.queueWaitS }; $('#tClear').hidden = false; renderKpis(); renderHead(); });
   $('#tClear').addEventListener('click', () => { TS.baseline = null; $('#tClear').hidden = true; renderKpis(); renderHead(); });
+  $('#tSteps').addEventListener('change', e => {
+    const f = e.target.files[0]; if (!f || !K) return;
+    f.text().then(txt => {
+      try {
+        const meas = K.parseStepLog(txt), fit = K.fitTraining(T, TS.spec, meas);
+        TS.spec = T.normalizeTraining(fit.spec);
+        TS.stepFit = Object.assign({ name: f.name, dataFit: isFinite(meas.dataS) && meas.dataS > 0.01 }, fit);
+        renderCfg(); run();
+      } catch (err) { $('#tStatus').textContent = 'Could not read ' + f.name + ': ' + err.message; }
+    });
+  });
+  $('#tCfg').addEventListener('click', e => {
+    if (e.target.id !== 'tUseRate') return;
+    const lr = K.faultRate(TS.faultLog, TS.logGpus || null);
+    if (lr) { TS.spec.faultPerGpuDay = +lr.perGpuDay.toFixed(4); renderCfg(); run(); }
+  });
   $('#tFile').addEventListener('change', e => {
     const f = e.target.files[0]; if (!f) return;
     f.text().then(txt => { TS.faultLog = T.parseFaultLog(txt); if (!TS.faultLog.events.length) { $('#tStatus').textContent = 'No GPU faults found in ' + f.name; TS.faultLog = null; return; } renderCfg(); run(); });

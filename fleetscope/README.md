@@ -118,6 +118,12 @@ The **Inference** tab shows serving deployments as pods on the cluster: target r
 
 ![Inference view](docs/img/inference-contention.png)
 
+### Calibration
+
+**Calibrate** fits a pool's prefill and decode speed to measurements, then checks the spec's acceptance bar (10% at p50, 20% at p99). Measurements can come from a recorded trace, a vLLM `/metrics` snapshot or a `benchmark_serving` result. Here a `/metrics` snapshot shows the on-prem pool running slower than its spec sheet: the fit lands on prefill ×0.78 and decode ×1.34, and every metric comes inside the bar. The Training tab fits kernel efficiency, comm overlap and dataloader rate from step timings. See [docs/CALIBRATION.md](docs/CALIBRATION.md).
+
+![Calibration](docs/img/calibrate.png)
+
 ### What if… a partial outage
 
 Half of the on-prem pool fails for two and a half minutes. Down instances show red, streams cut mid-answer are counted as lost, the KPIs compare against the same graph unstressed, and the banner names where it breaks first. See [docs/STRESS.md](docs/STRESS.md).
@@ -166,6 +172,7 @@ npm run build     # inline src/ into dist/index.html
 | `src/cluster.js`, `src/cluster-ui.js` | Cluster engine (scheduler, quotas, faults, kubectl import) and the Cluster view |
 | `docs/CLUSTER.md` | The cluster model, policy knobs, and importing a real cluster |
 | `src/training.js`, `src/training-ui.js` | Training job model (phases, data loading, stragglers, checkpoints, faults) and the Training view |
+| `src/calibrate.js`, `docs/CALIBRATION.md` | Fitting pools to vLLM metrics, benchmarks and recorded traces; training step timings |
 | `docs/TRAINING.md` | The training model, the four sub-views, and fault-log import |
 | `src/inference-ui.js`, `docs/INFERENCE.md` | The Inference view and its start-up model |
 
@@ -208,4 +215,4 @@ Requests that don't fit an instance's KV cache are rejected. Training steps cost
 
 ## Known gaps
 
-No automatic calibration yet (recorded-vs-simulated TTFT is shown, but profiles are not fitted), no prefix-cache locality across instances, no preemption when KV runs out mid-decode, training modelled per step rather than per collective. The spec's build phases cover what comes next.
+Calibration fits two multipliers per pool, not every term of the model; no prefix-cache locality across instances, no preemption when KV runs out mid-decode, training modelled per step rather than per collective. The spec's build phases cover what comes next.
