@@ -93,67 +93,25 @@
     }
     return out;
   }
+  // Scales load by thinning or duplicating requests. Copies keep token counts and cache hits but
+  // drop recorded latencies and sessions, which only describe the original request.
   function scaleTrace(tr, f, seed) {
-    if (Math.abs(f - 1) < 1e-9) return tr.map(r => ({ t: r.t, isl: r.isl, osl: r.osl }));
+    if (Math.abs(f - 1) < 1e-9) return tr.map(r => Object.assign({}, r));
     const rng = makeRng((seed + 101) >>> 0);
     const out = [];
     for (const r of tr) {
       let n = Math.floor(f);
       if (rng.u() < f - n) n++;
-      for (let k = 0; k < n; k++) out.push({ t: k === 0 ? r.t : r.t + rng.u() * 0.5, isl: r.isl, osl: r.osl });
+      for (let k = 0; k < n; k++) {
+        if (k === 0) { out.push(Object.assign({}, r)); continue; }
+        const c = { t: r.t + rng.u() * 0.5, isl: r.isl, osl: r.osl };
+        if (r.cached != null) c.cached = r.cached;
+        out.push(c);
+      }
     }
     out.sort((a, b) => a.t - b.t);
     return out;
   }
-  function splitCsvLine(line) {
-    const out = []; let cur = ''; let q = false;
-    for (let i = 0; i < line.length; i++) {
-      const ch = line[i];
-      if (ch === '"') { q = !q; continue; }
-      if (ch === ',' && !q) { out.push(cur); cur = ''; continue; }
-      cur += ch;
-    }
-    out.push(cur);
-    return out.map(s => s.trim());
-  }
-  function parseTs(s, ms) {
-    s = (s || '').trim();
-    if (s === '') return NaN;
-    if (/^-?\d+(\.\d+)?([eE][+-]?\d+)?$/.test(s)) { let v = +s; if (ms || v > 1e11) v /= 1000; return v; }
-    let iso = s.replace(' ', 'T').replace(/(\.\d{3})\d+/, '$1');
-    if (!/([zZ]|[+-]\d\d:?\d\d)$/.test(iso)) iso += 'Z';
-    return Date.parse(iso) / 1000;
-  }
-  function parseTraceCSV(text) {
-    const lines = text.split(/\r?\n/).filter(l => l.trim().length);
-    if (lines.length < 2) throw new Error('The file has no data rows.');
-    const head = splitCsvLine(lines[0]).map(h => h.toLowerCase());
-    const find = names => head.findIndex(h => names.includes(h));
-    const it = find(['timestamp', 'arrival_ts', 'arrival', 'arrival_time', 'time', 't', 'ts', 'timestamp_ms', 'arrival_ms']);
-    const ii = find(['contexttokens', 'context_tokens', 'input_tokens', 'isl', 'prompt_tokens', 'input_len', 'num_prompt_tokens']);
-    const io = find(['generatedtokens', 'generated_tokens', 'output_tokens', 'osl', 'completion_tokens', 'output_len', 'num_output_tokens']);
-    if (it < 0 || ii < 0 || io < 0) throw new Error('Columns not found. The CSV needs timestamp, input-token and output-token columns, e.g. TIMESTAMP, ContextTokens, GeneratedTokens (Azure trace format) or timestamp, input_tokens, output_tokens.');
-    const ms = /ms$/.test(head[it]);
-    const rows = []; let bad = 0;
-    for (let k = 1; k < lines.length; k++) {
-      const c = splitCsvLine(lines[k]);
-      const ts = parseTs(c[it], ms), a = +c[ii], b = +c[io];
-      if (!isFinite(ts) || !(a > 0) || !(b > 0)) { bad++; continue; }
-      rows.push({ t: ts, isl: Math.round(a), osl: Math.max(1, Math.round(b)) });
-    }
-    if (!rows.length) throw new Error('No usable rows: check that timestamps and token counts are numbers or ISO dates.');
-    rows.sort((x, y) => x.t - y.t);
-    const t0 = rows[0].t, notes = [], trace = [];
-    for (const r of rows) {
-      const t = r.t - t0;
-      if (t > 1800) { notes.push('kept the first 30 minutes'); break; }
-      if (trace.length >= 40000) { notes.push('kept the first 40,000 requests'); break; }
-      trace.push({ t, isl: Math.min(r.isl, 200000), osl: Math.min(r.osl, 16000) });
-    }
-    if (bad) notes.push(bad + ' unreadable rows skipped');
-    return { trace, notes };
-  }
-
   // ---------- helpers ----------
   class Q {
     constructor() { this.a = []; this.h = 0; }
@@ -179,6 +137,32 @@
   }
 
   // ---------- simulation ----------
+  // Compares recorded TTFT (from real logs) with simulated TTFT on the same requests.
+  // Returns a per-second rolling p99 of recorded TTFT and a summary, or null summary when the trace has none.
+  function compareRecorded(reqs, D) {
+    const withRec = reqs.filter(r => isFinite(r.recTtft));
+    const p99 = new Float64Array(D).fill(NaN);
+    if (!withRec.length) return { p99, summary: null };
+    const byFirst = Array.from({ length: D }, () => []);
+    for (const r of withRec) { const s = Math.floor(r.t + r.recTtft); if (s >= 0 && s < D) byFirst[s].push(r.recTtft); }
+    for (let s = 0; s < D; s++) {
+      const w = [];
+      for (let j = Math.max(0, s - 29); j <= s; j++) for (const v of byFirst[j]) w.push(v);
+      if (w.length) { w.sort((a, b) => a - b); p99[s] = pct(w, 0.99); }
+    }
+    const pairs = withRec.filter(r => isFinite(r.ttft));
+    const rec = pairs.map(r => r.recTtft).sort((a, b) => a - b), sim = pairs.map(r => r.ttft).sort((a, b) => a - b);
+    const recQ = withRec.filter(r => isFinite(r.recQueue)).map(r => r.recQueue).sort((a, b) => a - b);
+    const err = (a, b) => (b > 0 ? (a - b) / b : NaN);
+    const summary = {
+      requests: withRec.length, compared: pairs.length,
+      ttftP50: pct(rec, 0.5), ttftP99: pct(rec, 0.99), simTtftP50: pct(sim, 0.5), simTtftP99: pct(sim, 0.99),
+      errP50: err(pct(sim, 0.5), pct(rec, 0.5)), errP99: err(pct(sim, 0.99), pct(rec, 0.99)),
+      queueP99: recQ.length ? pct(recQ, 0.99) : NaN
+    };
+    return { p99, summary };
+  }
+
   // ---------- graph compile ----------
   // graph = { nodes: [{id, type, x, y, cfg}], edges: [{id, from, to}] }
   const NODE_RULES = {
@@ -195,7 +179,7 @@
     const sloN = g.nodes.find(n => n.type === 'slo');
     if (!modelN) errors.push({ msg: 'Add a Model node: every pool serves that model.' });
     const spec = { seed: 7, model: modelN ? Object.assign({}, modelN.cfg) : null, slo: sloN ? { ttft: sloN.cfg.ttft, tpot: sloN.cfg.tpotMs / 1000 } : { ttft: 2, tpot: 0.06 },
-      sources: [], routers: [], pools: [], links: [], train: null, horizon: 600, paths: {} };
+      sources: [], routers: [], pools: [], links: [], train: null, horizon: 0, paths: {} };
     for (const n of g.nodes) if (n.type === 'link') spec.links.push({ id: n.id, name: n.cfg.name, gbps: n.cfg.gbps, rttMs: n.cfg.rttMs, egressPerGB: n.cfg.egressPerGB });
     // resolve a pool reached from an edge, possibly through one link node
     function reach(e) {
@@ -241,7 +225,7 @@
       const e = outs(n.id)[0];
       if (!e) { errors.push({ node: n.id, msg: n.cfg.name + ': wire it to a Router.' }); continue; }
       const c = n.cfg;
-      const s = { id: n.id, name: c.name, kind: n.type === 'trace' ? 'open' : n.type, router: e.to, edge: e.id, prefixHit: c.prefixHit / 100, userBase: uidBase };
+      const s = { id: n.id, name: c.name, kind: n.type === 'trace' ? 'open' : n.type, router: e.to, edge: e.id, prefixHit: c.prefixHit / 100, useRecordedCache: c.useRecordedCache !== false, userBase: uidBase };
       if (n.type === 'trace') { s.trace = traceLookup ? traceLookup(c.trace, c.scale) : []; }
       else { Object.assign(s, { users: c.users, turns: c.turns, systemTokens: c.systemTokens, contextTokens: n.type === 'agent' ? c.contextTokens : 0, turnTokens: c.turnTokens, outTokens: c.outTokens, thinkS: c.thinkS, gapS: c.gapS, duration: c.durationMin * 60 }); uidBase += c.users; }
       spec.sources.push(s);
@@ -316,7 +300,7 @@
     function mkReq(src, t, isl, osl, cached, user) {
       const r = { id: reqs.length, src: src.id, router: src.router, t, isl, osl, cached: Math.max(0, Math.min(cached, isl - 1)), user,
         site: '', pPool: '', dPool: '', inLink: '', net: 0, tEnq: NaN, tAdmit: NaN, tPrefEnd: NaN, tXferStart: NaN, tXferEnd: NaN, tFirst: NaN, tFinish: NaN,
-        gen: 0, preRem: 0, kvRes: 0, xLink: '', fail: '' };
+        gen: 0, preRem: 0, kvRes: 0, xLink: '', fail: '', recTtft: NaN, recQueue: NaN, recE2e: NaN };
       reqs.push(r);
       return r;
     }
@@ -326,7 +310,14 @@
     for (const S of spec.sources) {
       srcById[S.id] = S;
       if (S.kind === 'open') {
-        for (const x of S.trace) future.push(mkReq(S, x.t, x.isl, x.osl, Math.round(x.isl * S.prefixHit), -1));
+        for (const x of S.trace) {
+          const cached = S.useRecordedCache && x.cached != null ? x.cached : Math.round(x.isl * S.prefixHit);
+          const r = mkReq(S, x.t, x.isl, x.osl, cached, -1);
+          if (x.ttft != null) r.recTtft = x.ttft;
+          if (x.queue != null) r.recQueue = x.queue;
+          if (x.e2e != null) r.recE2e = x.e2e;
+          future.push(r);
+        }
         horizon = Math.max(horizon, S.trace.length ? S.trace[S.trace.length - 1].t : 0);
       } else {
         horizon = Math.max(horizon, S.duration);
@@ -682,6 +673,7 @@
         commShare: mean ? Math.max(0, 1 - tr.compute / mean) : NaN, tokPerS: tokS, costPerHr: tr.gpus * tr.price + trainEgress / hrs,
         daysPer100B: 1e11 / tokS / 86400, crossGB: tr.L ? tr.L.trainBytes / 1e9 : 0 };
     }
+    const recorded = compareRecorded(reqs, D);
     const summary = {
       requests: reqs.length, completed, dropped,
       slo: reqs.length ? ok / reqs.length : NaN,
@@ -691,21 +683,23 @@
       costPerMTok: outTokens ? (cost + egress) / (outTokens / 1e6) : NaN,
       crossGB, egress, duration: D, simMs: 0, train: trainSum, users: users.filter(Boolean).length
     };
+    summary.recorded = recorded.summary;
     summary.simMs = Math.round((typeof performance !== 'undefined' ? performance.now() : Date.now()) - T0);
     const slim = reqs.map(r => ({ id: r.id, src: r.src, router: r.router, t: r.t, isl: r.isl, osl: r.osl, cached: r.cached, user: r.user, site: r.site, pPool: r.pPool, dPool: r.dPool, inLink: r.inLink, xLink: r.xLink,
       tEnq: r.tEnq, tAdmit: r.tAdmit, tPrefEnd: r.tPrefEnd, tXferEnd: r.tXferEnd, tFirst: r.tFirst, tFinish: r.tFinish, net: r.net, fail: r.fail,
-      ttft: r.ttft, tpot: r.tpot, ok: r.ok, bQueue: r.bQueue, bPrefill: r.bPrefill, bXfer: r.bXfer, bDwait: r.bDwait }));
+      ttft: r.ttft, tpot: r.tpot, ok: r.ok, bQueue: r.bQueue, bPrefill: r.bPrefill, bXfer: r.bXfer, bDwait: r.bDwait,
+      recTtft: r.recTtft, recQueue: r.recQueue, recE2e: r.recE2e }));
     return {
       spec,
       pools: pools.map(p => ({ id: p.id, name: p.name, site: p.site, siteKind: p.siteKind, role: p.role, gpu: p.gpu, min: p.min, max: p.max, price: p.price, auto: p.auto, coldStart: p.coldStart, P: p.P })),
       links: linkList.map(L => ({ id: L.id, name: L.name, gbps: L.gbps, rtt: L.rtt, fabric: L.fabric, site: L.site })),
       frames, reqs: slim, train: tr ? { steps: tr.steps } : null,
-      series: { arrivals, completions, viol, firsts, activeUsers, p50, p99, tp99, bq, bp, bx, bd, gpus, util },
+      series: { arrivals, completions, viol, firsts, activeUsers, p50, p99, tp99, bq, bp, bx, bd, gpus, util, recP99: recorded.p99 },
       summary, D
     };
   }
 
-  const api = { GPUS, MODELS, TRACES, NODE_RULES, profile, genTrace, scaleTrace, parseTraceCSV, compileGraph, simulate, makeRng };
+  const api = { GPUS, MODELS, TRACES, NODE_RULES, profile, genTrace, scaleTrace, compileGraph, simulate, compareRecorded, makeRng };
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
   else root.FleetEngine = api;
 })(typeof window !== 'undefined' ? window : this);

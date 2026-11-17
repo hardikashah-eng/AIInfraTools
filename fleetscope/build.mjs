@@ -11,6 +11,7 @@ const page = read('src/index.src.html');
 const inlined = {
   '/*ENGINE*/': read('src/engine.js'),
   '/*TEMPLATES*/': read('src/templates.js'),
+  '/*INGEST*/': read('src/ingest.js'),
 };
 
 let out = page;

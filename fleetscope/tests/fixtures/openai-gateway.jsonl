@@ -1,0 +1,4 @@
+{"timestamp": 1763373600.5, "model": "gpt-oss-120b", "usage": {"prompt_tokens": 3000, "completion_tokens": 200, "prompt_tokens_details": {"cached_tokens": 2048}}, "ttft_ms": 340, "latency_ms": 2900, "user": "u1"}
+{not json
+{"timestamp": 1763373601.0, "model": "gpt-oss-120b", "status": 500}
+{"timestamp": 1763373602.25, "model": "gpt-oss-120b", "usage": {"prompt_tokens": 500, "completion_tokens": 60}, "user": "u2"}

@@ -1,0 +1,31 @@
+[
+ {
+  "request_id": "r1",
+  "call_type": "acompletion",
+  "model": "llama-70b",
+  "startTime": "2025-11-17T10:00:00.000Z",
+  "completionStartTime": "2025-11-17T10:00:00.450Z",
+  "endTime": "2025-11-17T10:00:05.000Z",
+  "prompt_tokens": 2100,
+  "completion_tokens": 300,
+  "end_user": "alice"
+ },
+ {
+  "request_id": "r2",
+  "call_type": "acompletion",
+  "model": "llama-70b",
+  "startTime": "2025-11-17T10:00:03.000Z",
+  "completionStartTime": "2025-11-17T10:00:03.200Z",
+  "endTime": "2025-11-17T10:00:04.000Z",
+  "prompt_tokens": 400,
+  "completion_tokens": 50,
+  "end_user": "bob"
+ },
+ {
+  "request_id": "r3",
+  "call_type": "aembedding",
+  "model": "embed",
+  "startTime": "2025-11-17T10:00:04.000Z",
+  "prompt_tokens": 10
+ }
+]
