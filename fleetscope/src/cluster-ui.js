@@ -282,7 +282,7 @@
     seek(Math.round((x - l) / (b.width - l - TL.r) * (R.T - 1)));
   });
   $('#cScrub').addEventListener('input', e => seek(+e.target.value));
-  function seek(k) { CS.k = clamp(k, 0, CS.run.T - 1); draw(); renderSideLive(); }
+  function seek(k) { CS.k = clamp(k, 0, CS.run.T - 1); draw(); renderSideLive(); if (window.FleetScenario) FleetScenario.setClock(CS.k * CS.run.step, 'cluster'); }
 
   // ---------- side panel ----------
   function renderSide() {
@@ -379,8 +379,17 @@
 
   let started = false;
   window.FleetClusterView = {
-    show() { root.hidden = false; readColors(); if (!started) { started = true; renderCfg(); run(); } else { layoutGrid(); drawTimeline(); drawGantt(); draw(); } },
+    show() {
+      root.hidden = false; readColors();
+      if (!started) { started = true; renderCfg(); run(); } else { layoutGrid(); drawTimeline(); drawGantt(); }
+      if (window.FleetScenario && CS.run) CS.k = clamp(Math.round(FleetScenario.clock / CS.run.step), 0, CS.run.T - 1);
+      draw(); renderSideLive();
+    },
+    snapshot: () => CS.spec,
+    restore: sp => { CS.spec = sp; CS.baseline = null; renderCfg(); if (started) run(); },
+    pin: () => { if (CS.run) { CS.baseline = { label: 'baseline (pinned for all views)', summary: CS.run.summary }; $('#cClear').hidden = false; renderKpis(); renderHead(); } },
     hide() { root.hidden = true; setPlaying(false); },
     state: CS
   };
+  if (window.FleetScenario) FleetScenario.register('cluster', window.FleetClusterView);
 })();

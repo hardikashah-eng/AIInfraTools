@@ -337,7 +337,7 @@
     seek((e.clientX - b.left - L) / (b.width - L - 6) * (cv.id === 'tPhase' ? R.spec.horizonH : TS.sched.r.spec.horizonH) * 3600);
   });
   $('#tScrub').addEventListener('input', e => seek(+e.target.value));
-  function seek(t) { TS.t = clamp(t, 0, TS.run.spec.horizonH * 3600); draw(); }
+  function seek(t) { TS.t = clamp(t, 0, TS.run.spec.horizonH * 3600); draw(); if (window.FleetScenario) FleetScenario.setClock(TS.t, 'training'); }
 
   // ---------- side ----------
   function renderSide() { $('#tSide').innerHTML = '<div id="tLive"></div>'; renderSideLive(); }
@@ -396,8 +396,12 @@
 
   let started = false;
   window.FleetTrainingView = {
-    show() { root.hidden = false; readColors(); if (!started) { started = true; renderSubs(); renderCfg(); } run(); },
+    show() { root.hidden = false; readColors(); if (!started) { started = true; renderSubs(); renderCfg(); } if (window.FleetScenario) TS.t = FleetScenario.clock; run(); },
+    snapshot: () => TS.spec,
+    restore: sp => { TS.spec = T.normalizeTraining(sp); TS.baseline = null; if (started) { renderCfg(); run(); } },
+    pin: () => { if (TS.run) { TS.baseline = { label: 'baseline (pinned for all views)', summary: TS.run.summary, byMix: TS.run.byMix, queueWaitS: TS.run.spec.queueWaitS }; $('#tClear').hidden = false; renderKpis(); renderHead(); } },
     hide() { root.hidden = true; setPlaying(false); },
     state: TS
   };
+  if (window.FleetScenario) FleetScenario.register('training', window.FleetTrainingView);
 })();

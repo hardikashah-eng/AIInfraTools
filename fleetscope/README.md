@@ -130,6 +130,12 @@ The **Inference** tab shows serving deployments as pods on the cluster: target r
 
 ![Live twin](docs/img/live-twin.png)
 
+### One scenario across the views
+
+The views share one clock and one change set. **Pin all as baseline** pins every view; the view bar then lists each change since, in any view, and can reset them all. A fleet pool can take its capacity from a cluster workload. Here the on-prem pool follows `chat-serving` after the Cluster tab gives pre-training priority over serving: the gang preempts the chat replicas, and fleet SLO attainment falls from 57% to 27%. See [docs/SCENARIO.md](docs/SCENARIO.md).
+
+![One scenario](docs/img/one-scenario.png)
+
 ### What if… a partial outage
 
 Half of the on-prem pool fails for two and a half minutes. Down instances show red, streams cut mid-answer are counted as lost, the KPIs compare against the same graph unstressed, and the banner names where it breaks first. See [docs/STRESS.md](docs/STRESS.md).
@@ -178,6 +184,7 @@ npm run build     # inline src/ into dist/index.html
 | `src/cluster.js`, `src/cluster-ui.js` | Cluster engine (scheduler, quotas, faults, kubectl import) and the Cluster view |
 | `docs/CLUSTER.md` | The cluster model, policy knobs, and importing a real cluster |
 | `src/training.js`, `src/training-ui.js` | Training job model (phases, data loading, stragglers, checkpoints, faults) and the Training view |
+| `src/scenario.js`, `docs/SCENARIO.md` | Shared clock, change set across views, and fleet pools linked to cluster workloads |
 | `src/forecast.js`, `tools/live-twin.mjs`, `docs/LIVE.md` | Forecasts, projections, predicted-breach alerts and the scheduled CLI |
 | `src/calibrate.js`, `docs/CALIBRATION.md` | Fitting pools to vLLM metrics, benchmarks and recorded traces; training step timings |
 | `docs/TRAINING.md` | The training model, the four sub-views, and fault-log import |
