@@ -320,6 +320,7 @@ button, select, input { font: inherit; color: inherit; }
     <div class="tb">
       <button type="button" id="whatifBtn" title="Stress this topology: peak load, peak sessions, outages, large contexts, headroom">What if…</button>
       <button type="button" id="advisorBtn" title="Which model and reasoning level serves this traffic at the SLO for the least">Model advisor</button>
+      <button type="button" id="calibBtn" title="Fit a pool's performance to a recorded trace, a vLLM /metrics snapshot or a benchmark_serving result">Calibrate</button>
     </div>
     <div class="status" id="status">Simulating…</div>
   </header>
@@ -366,9 +367,12 @@ button, select, input { font: inherit; color: inherit; }
 /*INGEST*/
 </script>
 <script>
+/*CALIBRATE*/
+</script>
+<script>
 (function () {
 'use strict';
-const E = window.FleetEngine, TP = window.FleetTemplates, NT = TP.NODE_TYPES, IN = window.FleetIngest;
+const E = window.FleetEngine, TP = window.FleetTemplates, NT = TP.NODE_TYPES, IN = window.FleetIngest, K = window.FleetCalibrate;
 const $ = s => document.querySelector(s);
 const NS = 'http://www.w3.org/2000/svg';
 function el(tag, attrs, parent, text) {
@@ -498,7 +502,7 @@ function cfgLine(n) {
     case 'chat': return fInt(c.users) + ' users · ' + c.turns + ' turns · ' + c.thinkS + ' s think';
     case 'trace': return (c.trace === 'uploaded' ? (traces.uploaded ? traces.uploaded.name : 'upload a CSV') : E.TRACES[c.trace].label.replace('Sample: ', '')) + ' · ' + c.scale + '×';
     case 'router': return ({ 'primary-first': 'Primary first, burst at ' + c.burstWait + ' s', 'least-wait': 'Least estimated wait', 'round-robin': 'Round robin' })[c.policy];
-    case 'pool': { const m = prof(); const tp = m ? E.profile(c.gpu, m.cfg).tp : 1; return roleName[c.role] + ' · ' + c.gpu + (tp > 1 ? ' ×' + tp : '') + ' · ' + (c.autoscale ? c.min + '–' + c.max + ' inst, ' + c.coldStart + ' s cold' : c.instances + ' inst'); }
+    case 'pool': { const m = prof(); const tp = m ? E.profile(c.gpu, m.cfg).tp : 1; return ((+c.calibPrefill || 1) !== 1 || (+c.calibDecode || 1) !== 1 ? '\u2713 calibrated · ' : '') + roleName[c.role] + ' · ' + c.gpu + (tp > 1 ? ' ×' + tp : '') + ' · ' + (c.autoscale ? c.min + '–' + c.max + ' inst, ' + c.coldStart + ' s cold' : c.instances + ' inst'); }
     case 'link': return c.gbps + ' Gbps · ' + c.rttMs + ' ms RTT · $' + c.egressPerGB + '/GB';
     case 'train': return E.MODELS[c.model].label.replace(/ \(.*\)/, '') + ' · ' + fInt(c.gpus) + ' × ' + c.gpu;
     case 'model': return c.params + 'B params' + (c.active !== c.params ? ' (' + c.active + 'B active)' : '') + ' · ' + c.wPrec.toUpperCase() + (c.thinkTokens ? ' · thinks ~' + fK(c.thinkTokens) : '');
@@ -753,6 +757,7 @@ const FIELDS = {
     { p: 'downUtil', k: 'range', label: 'Scale down below load', min: 5, max: 80, step: 5, f: v => v + '%', show: c => c.autoscale },
     { p: 'maxBatch', k: 'range', label: 'Max batch per instance', min: 8, max: 512, step: 8, f: v => v + ' seqs' },
     { p: 'fabricGbps', k: 'range', label: 'Fabric per instance (KV, sync)', min: 25, max: 3200, step: 25, f: v => v + ' Gbps' },
+    { k: 'grid', ctl: [{ p: 'calibPrefill', k: 'number', label: 'Calibrated prefill ×', min: 0.05, max: 20, step: 0.01 }, { p: 'calibDecode', k: 'number', label: 'Calibrated decode ×', min: 0.05, max: 20, step: 0.01 }] },
     { k: 'poolReadout' }
   ],
   link: [
@@ -812,6 +817,7 @@ function renderDetails() {
   formNode = null; formBound = [];
   if (S.sel && S.sel.type === 'stress') return renderStressPanel();
   if (S.sel && S.sel.type === 'advisor') return renderAdvisorPanel();
+  if (S.sel && S.sel.type === 'calib') return renderCalibPanel();
   if (S.sel && S.sel.type === 'node') {
     const n = nodeById(S.sel.id);
     if (!n) { S.sel = null; return renderDetails(); }
@@ -1184,7 +1190,7 @@ function doRun() {
   $('#status').innerHTML = '<b>' + fInt(sm.requests) + '</b> requests' + (sm.users ? ' from <b>' + fInt(sm.users) + '</b> users' : '') + ' · <b>' + mmss(R.D) + '</b> simulated in ' + sm.simMs + ' ms' + (BL() ? ' · vs <b>' + esc(BL().label) + '</b>' : '');
   $('#scrub').max = Math.max(1, R.D - 1);
   renderKpis(); buildCharts(); buildStrip(); renderBanner();
-  if (S.sel && (S.sel.type === 'stress' || S.sel.type === 'advisor')) { /* keep panel */ } else renderDetails();
+  if (S.sel && (S.sel.type === 'stress' || S.sel.type === 'advisor' || S.sel.type === 'calib')) { /* keep panel */ } else renderDetails();
   render(true);
   if (S.needFit) { S.needFit = false; requestAnimationFrame(fit); }
 }
@@ -1981,6 +1987,7 @@ function renderAnalysis() {
     return;
   }
   if (A.kind === 'error') { box.innerHTML = '<h3>' + esc(A.title) + close + '</h3><div class="warnline">' + esc(A.text) + '</div>'; return; }
+  if (A.kind === 'calib') { box.innerHTML = '<h3>Calibration' + close + '</h3>' + calibCard(A); return; }
   const bn = b => b ? mmss(b.t) + ' · ' + esc(b.name) + ': ' + b.label : '<span style="color:var(--muted)">none</span>';
   if (A.kind === 'suite') {
     const base = A.rows[0].s;
@@ -2024,6 +2031,7 @@ $('#analysis').addEventListener('click', e => {
   const t = e.target;
   const a = t.closest('[data-act]');
   if (a && a.dataset.act === 'closeAnalysis') { S.analysis = null; renderAnalysis(); return; }
+  if (a && a.dataset.act === 'calApply') { const r = S.analysis.res, n = nodeById(r.poolId); if (n) { n.cfg.calibPrefill = r.calib.prefill; n.cfg.calibDecode = r.calib.decode; renderGraph(); toast(n.cfg.name + ' calibrated'); scheduleRun(0); if (S.sel && S.sel.type === 'calib') renderCalibPanel(); } return; }
   if (a && a.dataset.act === 'cancelJob') { if (S.job) S.job.cancel = true; S.job = null; S.analysis = null; renderAnalysis(); return; }
   const su = t.closest('[data-suite]');
   if (su) { const r = S.analysis.rows[+su.dataset.suite]; if (r.st) { S.stressDraft = JSON.parse(JSON.stringify(r.st)); applyStress(r.st); } else { S.stress = null; scheduleRun(0); } return; }
@@ -2085,9 +2093,78 @@ function runAdvisor() {
   function* wrap() { let x; while (!(x = it.next()).done) yield { done: x.value.done, total: x.value.total, text: 'Sizing ' + x.value.model + (x.value.thinkTokens ? ' with ' + fK(x.value.thinkTokens) + ' thinking' : '') + '…' }; return x.value; }
   startJob('Model advisor', wrap(), res => { S.analysis = { kind: 'advisor', res, minQuality: minQ == null ? '' : minQ }; });
 }
-['click', 'input', 'change'].forEach(ev => $('#details').addEventListener(ev, e => { if (stressPanelEvents(e)) e.stopImmediatePropagation(); else if (advisorPanelEvents(e)) e.stopImmediatePropagation(); }, true));
+['click', 'input', 'change'].forEach(ev => $('#details').addEventListener(ev, e => { if (stressPanelEvents(e)) e.stopImmediatePropagation(); else if (advisorPanelEvents(e)) e.stopImmediatePropagation(); else if (calibPanelEvents(e)) e.stopImmediatePropagation(); }, true));
 $('#whatifBtn').onclick = () => { if (S.stress) S.stressDraft = JSON.parse(JSON.stringify(S.stress)); select({ type: 'stress' }); };
 $('#advisorBtn').onclick = () => select({ type: 'advisor' });
+$('#calibBtn').onclick = () => select({ type: 'calib' });
+
+// ---------- calibration ----------
+const CAL = { pool: null, source: 'recorded', windowMin: 60, instances: null, file: null, fileName: '', before: null };
+function calibPools() { return S.graph.nodes.filter(n => n.type === 'pool'); }
+function renderCalibPanel() {
+  const box = $('#details'), pools = calibPools();
+  if (!CAL.pool || !pools.some(p => p.id === CAL.pool)) CAL.pool = pools[0] ? pools[0].id : null;
+  const pn = pools.find(p => p.id === CAL.pool);
+  const rec = S.run && K.recordedTarget(S.run, CAL.pool);
+  if (CAL.instances == null && pn) CAL.instances = pn.cfg.autoscale ? Math.max(1, pn.cfg.min) : pn.cfg.instances;
+  const srcs = [['recorded', 'Recorded trace' + (rec ? '' : ' (none here)')], ['metrics', 'vLLM /metrics'], ['bench', 'benchmark_serving']];
+  box.innerHTML = '<span class="typetag" style="background:var(--accent)">Calibrate</span><h2>Fit a pool to measurements</h2>' +
+    '<div class="sub">Performance starts from spec sheets. Calibration adjusts two multipliers per pool, prefill throughput and decode step time, until simulated TTFT and TPOT match what you measured. The spec\u2019s acceptance bar is within 10% at p50 and 20% at p99.</div>' +
+    '<div class="ctl"><label for="calPool">Pool</label><select id="calPool" data-cal="pool">' + pools.map(p => '<option value="' + p.id + '"' + (p.id === CAL.pool ? ' selected' : '') + '>' + esc(p.cfg.name) + '</option>').join('') + '</select></div>' +
+    (pn ? '<div class="sub">Now: prefill ×' + (+pn.cfg.calibPrefill || 1).toFixed(2) + ', decode ×' + (+pn.cfg.calibDecode || 1).toFixed(2) + ((+pn.cfg.calibPrefill || 1) !== 1 || (+pn.cfg.calibDecode || 1) !== 1 ? ' <button class="linkbtn" type="button" data-act="calReset">Reset</button>' : ' (uncalibrated)') + '</div>' : '') +
+    '<div class="ctl"><span>Measurements from</span><div class="seg" data-calseg="source">' + srcs.map(([k, l]) => '<button type="button" data-v="' + k + '" class="' + (CAL.source === k ? 'on' : '') + '">' + l + '</button>').join('') + '</div></div>' +
+    (CAL.source === 'recorded' ? '<div class="sub">' + (rec ? fInt(rec.requests) + ' requests on this pool carry recorded TTFT' + (isFinite(rec.tpotP50) ? ' and end-to-end latency' : '') + ': p50 ' + fS(rec.ttftP50) + ', p99 ' + fS(rec.ttftP99) + '. The graph should match the fleet that served them.' : 'Upload a trace with recorded latency on the Trace replay node first, or use a metrics snapshot or benchmark result.') + '</div>'
+      : '<label class="upload">' + (CAL.source === 'metrics' ? 'Drop a <code>curl http://server:8000/metrics</code> snapshot' : 'Drop a <code>benchmark_serving.py --save-result</code> JSON') + '<input type="file" data-cal="file" accept=".txt,.prom,.json"><br><span>' + (CAL.fileName ? esc(CAL.fileName) : 'Only latency histograms, token counts and request counts are read.') + '</span></label>' +
+        (CAL.source === 'metrics' ? '<div class="ctl"><label for="calWin">Minutes the counters cover (server uptime)</label><input type="number" id="calWin" data-cal="windowMin" min="1" value="' + CAL.windowMin + '"></div>' : '') +
+        '<div class="ctl"><label for="calInst">Instances that served it</label><input type="number" id="calInst" data-cal="instances" min="1" value="' + CAL.instances + '"></div>') +
+    '<div class="btnrow"><button class="btn primary" type="button" data-act="calFit"' + ((CAL.source === 'recorded' && !rec) || (CAL.source !== 'recorded' && !CAL.file) || !pn ? ' disabled' : '') + '>Fit</button></div>';
+}
+function calibPanelEvents(e) {
+  if (!(S.sel && S.sel.type === 'calib')) return false;
+  const t = e.target;
+  if (e.type === 'change' && t.dataset.cal === 'file') {
+    const f = t.files[0]; if (!f) return true;
+    f.text().then(txt => { CAL.file = txt; CAL.fileName = f.name; renderCalibPanel(); });
+    return true;
+  }
+  if ((e.type === 'change' || e.type === 'input') && t.dataset.cal) {
+    const k = t.dataset.cal;
+    CAL[k] = k === 'pool' ? t.value : +t.value;
+    if (k === 'pool') { CAL.instances = null; renderCalibPanel(); }
+    return true;
+  }
+  if (e.type !== 'click') return false;
+  const sg = t.closest('[data-calseg] button');
+  if (sg) { CAL.source = sg.dataset.v; CAL.file = null; CAL.fileName = ''; renderCalibPanel(); return true; }
+  const a = t.closest('[data-act]');
+  if (a && a.dataset.act === 'calReset') { const n = nodeById(CAL.pool); n.cfg.calibPrefill = 1; n.cfg.calibDecode = 1; renderGraph(); scheduleRun(0); renderCalibPanel(); return true; }
+  if (a && a.dataset.act === 'calFit') { runCalibration(); return true; }
+  return false;
+}
+function runCalibration() {
+  const c = E.compileGraph(S.graph, traceLookup);
+  if (c.errors.length) { toast('Fix the problems in the left panel first.'); return; }
+  let target, opt;
+  try {
+    if (CAL.source === 'recorded') { target = K.recordedTarget(S.run, CAL.pool); opt = { useSpec: true }; }
+    else if (CAL.source === 'metrics') { target = K.fromVllmMetrics(CAL.file, { windowS: CAL.windowMin * 60 }); opt = { instances: CAL.instances }; }
+    else { target = K.fromBenchmark(CAL.file); opt = { instances: CAL.instances }; }
+  } catch (err) { S.analysis = { kind: 'error', title: 'Calibration', text: 'Could not read the measurements: ' + err.message }; renderAnalysis(); return; }
+  const it = K.fitPoolIter(c.spec, CAL.pool, target, opt);
+  startJob('Calibrating ' + nodeById(CAL.pool).cfg.name, it, res => { S.analysis = { kind: 'calib', res, name: nodeById(CAL.pool).cfg.name }; });
+}
+function calibCard(A) {
+  const r = A.res, t = r.target;
+  const row = (m, rec, b, a, ok, bar) => '<tr><td>' + m + '</td><td class="num">' + fS(rec) + '</td><td class="num">' + fS(b) + '</td><td class="num">' + fS(a) + '</td><td class="num" style="color:' + (ok ? 'var(--good)' : 'var(--crit)') + '">' + (isFinite(a) && rec ? ((a - rec) / rec >= 0 ? '+' : '') + Math.round(100 * (a - rec) / rec) + '%' : '–') + '</td><td class="num">±' + Math.round(bar * 100) + '%</td></tr>';
+  const acc = r.acceptance.rows;
+  const get = k => acc.find(x => x.metric === k) || {};
+  return '<p class="lead">Measured on <b>' + esc(A.name) + '</b> (' + esc(t.source) + (t.requests ? ', ' + fInt(t.requests) + ' requests' : '') + '). Fitted <b>prefill ×' + r.calib.prefill.toFixed(2) + '</b> and <b>decode ×' + r.calib.decode.toFixed(2) + '</b>: ' +
+    (r.acceptance.pass ? '<span style="color:var(--good)">inside the acceptance bar</span>.' : '<span style="color:var(--crit)">still outside the bar</span>' + ({ overloaded: ': the measured window was overloaded (its TTFT p99 is ' + Math.round(t.ttftP99 / t.ttftP50) + '× its p50), and queueing that deep cannot be fitted reliably. Calibrate on a window where the fleet met its SLO.', capacity: ': simulated TTFT is ' + Math.round(100 * r.after.queueShare) + '% queueing, so the graph has less capacity than the fleet that was measured. Match its instances, max batch and KV cache first, then calibrate again; speed multipliers cannot fix queueing.', limit: ': a multiplier hit its limit, so the measurements and the graph disagree by more than speed alone explains (model, GPU type or precision may differ).', tail: ': the medians match but the tail differs, which usually means routing, batching or burstiness differ from the measured fleet.' }[r.diagnosis] || '.')) +
+    (r.calib.prefill < 0.8 || r.calib.decode > 1.25 ? ' The pool is slower than its spec sheet suggests.' : r.calib.prefill > 1.25 || r.calib.decode < 0.8 ? ' The pool is faster than the spec-sheet estimate.' : '') + '</p>' +
+    '<table class="atable"><thead><tr><th>Metric</th><th>Measured</th><th>Sim before</th><th>Sim after</th><th>Error after</th><th>Bar</th></tr></thead><tbody>' +
+    [['TTFT p50', 'ttftP50', 0.1], ['TTFT p99', 'ttftP99', 0.2], ['TPOT p50', 'tpotP50', 0.1], ['TPOT p99', 'tpotP99', 0.2]].filter(([m, k]) => isFinite(t[k])).map(([m, k, bar]) => row(m, t[k], r.before[k], r.after[k], get(m).pass, bar)).join('') + '</tbody></table>' +
+    (r.diagnosis === 'capacity' ? '' : '<div class="btnrow"><button class="btn primary" type="button" data-act="calApply">Apply to ' + esc(A.name) + '</button></div>');
+}
 
 // templates
 const tplSel = $('#tpl');

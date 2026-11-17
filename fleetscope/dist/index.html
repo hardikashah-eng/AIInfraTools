@@ -320,6 +320,7 @@ button, select, input { font: inherit; color: inherit; }
     <div class="tb">
       <button type="button" id="whatifBtn" title="Stress this topology: peak load, peak sessions, outages, large contexts, headroom">What if…</button>
       <button type="button" id="advisorBtn" title="Which model and reasoning level serves this traffic at the SLO for the least">Model advisor</button>
+      <button type="button" id="calibBtn" title="Fit a pool's performance to a recorded trace, a vLLM /metrics snapshot or a benchmark_serving result">Calibrate</button>
     </div>
     <div class="status" id="status">Simulating…</div>
   </header>
@@ -418,6 +419,14 @@ button, select, input { font: inherit; color: inherit; }
     const c = kvBytesPerToken / (tp * bw);
     const kvCap = Math.max(0, Math.floor((tp * G.hbm * 1e9 * 0.9 - wBytes) / kvBytesPerToken));
     return { gpu: gpuKey, tp, prefill, a, b0, c, kvCap, kvBytesPerToken, wBytes, multiNode: tp > 8 };
+  }
+
+  // Calibration: measured multipliers on the spec-sheet profile. prefill scales prefill throughput;
+  // decode scales every decode-step term (fixed, per-sequence and per-context-token).
+  function calibrated(P, cal) {
+    if (!cal || ((cal.prefill || 1) === 1 && (cal.decode || 1) === 1)) return P;
+    const d = cal.decode || 1;
+    return Object.assign({}, P, { prefill: P.prefill * (cal.prefill || 1), a: P.a * d, b0: P.b0 * d, c: P.c * d, calib: { prefill: cal.prefill || 1, decode: d } });
   }
 
   // ---------- recorded traces ----------
@@ -742,13 +751,18 @@ button, select, input { font: inherit; color: inherit; }
     const pairs = withRec.filter(r => isFinite(r.ttft));
     const rec = pairs.map(r => r.recTtft).sort((a, b) => a - b), sim = pairs.map(r => r.ttft).sort((a, b) => a - b);
     const recQ = withRec.filter(r => isFinite(r.recQueue)).map(r => r.recQueue).sort((a, b) => a - b);
+    const tp = withRec.filter(r => isFinite(r.recE2e) && r.osl > 1 && isFinite(r.tpot) && r.tpot > 0);
+    const recT = tp.map(r => (r.recE2e - r.recTtft) / (r.osl - 1)).filter(v => v > 0).sort((a, b) => a - b), simT = tp.map(r => r.tpot).sort((a, b) => a - b);
     const err = (a, b) => (b > 0 ? (a - b) / b : NaN);
     const summary = {
       requests: withRec.length, compared: pairs.length,
       ttftP50: pct(rec, 0.5), ttftP99: pct(rec, 0.99), simTtftP50: pct(sim, 0.5), simTtftP99: pct(sim, 0.99),
       errP50: err(pct(sim, 0.5), pct(rec, 0.5)), errP99: err(pct(sim, 0.99), pct(rec, 0.99)),
-      queueP99: recQ.length ? pct(recQ, 0.99) : NaN
+      queueP99: recQ.length ? pct(recQ, 0.99) : NaN,
+      tpotP50: recT.length ? pct(recT, 0.5) : NaN, tpotP99: recT.length ? pct(recT, 0.99) : NaN,
+      simTpotP50: simT.length ? pct(simT, 0.5) : NaN, simTpotP99: simT.length ? pct(simT, 0.99) : NaN
     };
+    summary.errTpotP50 = err(summary.simTpotP50, summary.tpotP50); summary.errTpotP99 = err(summary.simTpotP99, summary.tpotP99);
     return { p99, summary };
   }
 
@@ -1023,7 +1037,7 @@ button, select, input { font: inherit; color: inherit; }
       const p = { id: n.id, name: c.name, site: c.site, siteKind: c.siteKind, role: c.role, gpu: c.gpu,
         min: c.autoscale ? c.min : c.instances, max: c.autoscale ? Math.max(c.min, c.max, 1) : c.instances,
         auto: !!c.autoscale, coldStart: c.coldStart, upWait: c.upWait, downUtil: c.downUtil / 100, maxBatch: c.maxBatch, fabricGbps: c.fabricGbps, decode: [],
-        zone: zoneOf(c) };
+        zone: zoneOf(c), calib: (c.calibPrefill && c.calibPrefill !== 1) || (c.calibDecode && c.calibDecode !== 1) ? { prefill: c.calibPrefill || 1, decode: c.calibDecode || 1 } : null };
       if (c.role === 'prefill') {
         for (const e of outs(n.id)) for (const r of reach(e)) {
           const d = byId[r.pool];
@@ -1102,7 +1116,7 @@ button, select, input { font: inherit; color: inherit; }
     }
     for (const sp of spec.pools) {
       const p = Object.assign({}, sp);
-      p.P = prof(p.gpu);
+      p.P = calibrated(prof(p.gpu), p.calib);
       p.price = p.siteKind === 'neo' ? GPUS[p.gpu].rent : GPUS[p.gpu].onprem;
       Object.assign(p, { inst: [], q: new Q(), qTokens: 0, lastUp: -1e9, utilHist: [], nextId: 0, tokSec: 0, spillFrom: [], down: 0, capLoss: 0 });
       pools.push(p); byId[p.id] = p;
@@ -1695,7 +1709,7 @@ button, select, input { font: inherit; color: inherit; }
     };
   }
 
-  const api = { GPUS, MODELS, TRACES, NODE_RULES, CAUSE, profile, genTrace, scaleTrace, compileGraph, simulate, normStress, findBottleneck,
+  const api = { GPUS, MODELS, TRACES, NODE_RULES, CAUSE, profile, calibrated, genTrace, scaleTrace, compileGraph, simulate, normStress, findBottleneck,
     headroomIter, findHeadroom, healthOf, HEALTH_LABEL, costBreakdown, latencyBreakdown, blastIter, blastRadius, securityBreakdown, zoneAllowed, ZONE_LABEL, DEFAULT_POLICY, scaleFleet, sizeFleetIter, sizeFleet, adviseIter, adviseModels, compareRecorded, planSessions, lintSpec, makeRng };
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
   else root.FleetEngine = api;
@@ -1718,7 +1732,7 @@ button, select, input { font: inherit; color: inherit; }
     router: { title: 'Router', group: 'Routing', color: 'route', inputs: true, outputs: true, w: 200,
       defaults: () => ({ name: 'Router', policy: 'primary-first', burstWait: 1.5, enforceResidency: false, owner: '', oncall: '' }) },
     pool: { title: 'GPU pool', group: 'Compute', color: 'pool', inputs: true, outputs: true, w: 290,
-      defaults: () => ({ name: 'On-prem pool', site: 'On-prem DC', siteKind: 'onprem', role: 'agg', gpu: 'H100', instances: 4, autoscale: false, min: 0, max: 8, coldStart: 90, upWait: 1, downUtil: 30, maxBatch: 256, fabricGbps: 400, zone: 'auto', owner: '', oncall: '' }) },
+      defaults: () => ({ name: 'On-prem pool', site: 'On-prem DC', siteKind: 'onprem', role: 'agg', gpu: 'H100', instances: 4, autoscale: false, min: 0, max: 8, coldStart: 90, upWait: 1, downUtil: 30, maxBatch: 256, fabricGbps: 400, zone: 'auto', owner: '', oncall: '', calibPrefill: 1, calibDecode: 1 }) },
     link: { title: 'Cross-site link', group: 'Network', color: 'link', inputs: true, outputs: true, w: 210,
       defaults: () => ({ name: 'Cloud link', gbps: 100, rttMs: 20, egressPerGB: 0.05, encrypted: true, owner: '', oncall: '' }) },
     train: { title: 'Training job', group: 'Compute', color: 'train', inputs: false, outputs: true, w: 250,
@@ -2085,9 +2099,223 @@ button, select, input { font: inherit; color: inherit; }
 
 </script>
 <script>
+/* FleetScope calibration: fit the spec-sheet performance model to measurements.
+   Sources: a recorded trace with TTFT/e2e, a vLLM /metrics snapshot, or a vLLM benchmark_serving result.
+   The fit adjusts two multipliers per pool (prefill throughput, decode step time) by re-simulating. */
+(function (root) {
+  'use strict';
+  const E = (typeof module !== 'undefined' && module.exports) ? require('./engine.js') : root.FleetEngine;
+  const pct = (a, q) => (a.length ? a[Math.min(a.length - 1, Math.max(0, Math.floor(q * a.length)))] : NaN);
+  const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
+
+  // ---------- Prometheus text exposition ----------
+  function parseProm(text) {
+    const series = [];
+    for (const raw of String(text).split(/\r?\n/)) {
+      const line = raw.trim();
+      if (!line || line[0] === '#') continue;
+      const m = line.match(/^([a-zA-Z_:][\w:]*)(\{([^}]*)\})?\s+([-+0-9.eEInfNa]+)/);
+      if (!m) continue;
+      const labels = {};
+      if (m[3]) for (const kv of m[3].match(/(\w+)="((?:[^"\\]|\\.)*)"/g) || []) { const i = kv.indexOf('='); labels[kv.slice(0, i)] = kv.slice(i + 2, -1); }
+      series.push({ name: m[1], labels, value: m[4] === '+Inf' ? Infinity : +m[4] });
+    }
+    return series;
+  }
+  // Quantiles from a cumulative histogram (Prometheus buckets), linear inside a bucket.
+  function histQuantiles(buckets, qs) {
+    const b = buckets.slice().sort((x, y) => x.le - y.le), total = b.length ? b[b.length - 1].count : 0;
+    const out = {};
+    for (const q of qs) {
+      const target = q * total;
+      let prevLe = 0, prevC = 0, v = NaN;
+      for (const x of b) {
+        if (x.count >= target) { const le = isFinite(x.le) ? x.le : prevLe * 2 || 1; v = x.count === prevC ? le : prevLe + (le - prevLe) * (target - prevC) / (x.count - prevC); break; }
+        prevLe = isFinite(x.le) ? x.le : prevLe; prevC = x.count;
+      }
+      out[q] = v;
+    }
+    return { q: out, count: total };
+  }
+  // vLLM /metrics snapshot → measured latency quantiles and load. windowS: the period the counters cover
+  // (the server's uptime, or the gap between two snapshots when `before` is given).
+  function fromVllmMetrics(text, opt) {
+    opt = opt || {};
+    const cur = parseProm(text), prev = opt.before ? parseProm(opt.before) : null;
+    const model = opt.model || null;
+    const keep = s => !model || !s.labels.model_name || s.labels.model_name === model;
+    const sum = (arr, name) => arr.filter(s => s.name === name && keep(s)).reduce((a, s) => a + s.value, 0);
+    const delta = name => sum(cur, name) - (prev ? sum(prev, name) : 0);
+    const hist = base => {
+      const by = new Map();
+      for (const s of cur) if (s.name === base + '_bucket' && keep(s)) { const le = s.labels.le === '+Inf' ? Infinity : +s.labels.le; by.set(le, (by.get(le) || 0) + s.value); }
+      if (prev) for (const s of prev) if (s.name === base + '_bucket' && keep(s)) { const le = s.labels.le === '+Inf' ? Infinity : +s.labels.le; by.set(le, (by.get(le) || 0) - s.value); }
+      return [...by].map(([le, count]) => ({ le, count }));
+    };
+    const ttft = histQuantiles(hist('vllm:time_to_first_token_seconds'), [0.5, 0.9, 0.99]);
+    const tpot = histQuantiles(hist('vllm:time_per_output_token_seconds'), [0.5, 0.9, 0.99]);
+    const reqs = delta('vllm:request_success_total') || delta('vllm:e2e_request_latency_seconds_count') || ttft.count;
+    const prompt = delta('vllm:prompt_tokens_total'), gen = delta('vllm:generation_tokens_total');
+    const windowS = opt.windowS || 3600;
+    if (!ttft.count) throw new Error('No vllm:time_to_first_token_seconds histogram found');
+    return {
+      source: 'vLLM /metrics', requests: reqs, windowS, rate: reqs / windowS,
+      islMean: reqs ? prompt / reqs : NaN, oslMean: reqs ? gen / reqs : NaN,
+      ttftP50: ttft.q[0.5], ttftP99: ttft.q[0.99], tpotP50: tpot.q[0.5], tpotP99: tpot.q[0.99],
+      running: sum(cur, 'vllm:num_requests_running'), kvUsage: sum(cur, 'vllm:gpu_cache_usage_perc') || sum(cur, 'vllm:kv_cache_usage_perc')
+    };
+  }
+  // vLLM benchmarks/benchmark_serving.py --save-result JSON.
+  function fromBenchmark(json) {
+    const j = typeof json === 'string' ? JSON.parse(json) : json;
+    const ms = v => (v == null ? NaN : v / 1000);
+    const isl = j.input_lens || null, osl = j.output_lens || null;
+    const completed = j.completed || (isl ? isl.length : 0);
+    const out = {
+      source: 'benchmark_serving', requests: completed, windowS: j.duration, rate: j.request_throughput || completed / j.duration,
+      islMean: j.total_input_tokens && completed ? j.total_input_tokens / completed : isl ? isl.reduce((a, b) => a + b, 0) / isl.length : NaN,
+      oslMean: j.total_output_tokens && completed ? j.total_output_tokens / completed : osl ? osl.reduce((a, b) => a + b, 0) / osl.length : NaN,
+      ttftP50: ms(j.median_ttft_ms), ttftP99: ms(j.p99_ttft_ms), tpotP50: ms(j.median_tpot_ms), tpotP99: ms(j.p99_tpot_ms),
+      maxConcurrency: j.max_concurrency || null, isl, osl, ttfts: j.ttfts || null
+    };
+    if (!isFinite(out.ttftP50) || !isFinite(out.tpotP50)) throw new Error('The result has no median_ttft_ms / median_tpot_ms');
+    return out;
+  }
+  // A trace that reproduces a measured load: Poisson arrivals at the measured rate, prompt and output sizes
+  // from the benchmark's own lists or log-normal around the measured means.
+  function traceFor(target, opt) {
+    opt = opt || {};
+    const rng = E.makeRng((opt.seed || 17) >>> 0), dur = Math.min(opt.maxS || 600, target.windowS || 600), rate = target.rate || 1;
+    const rows = [];
+    let i = 0;
+    for (let t = 0; t < dur; t += -Math.log(1 - rng.u()) / rate, i++) {
+      // log-normal with the measured mean: median = mean / e^(σ²/2)
+      const isl = target.isl ? target.isl[i % target.isl.length] : Math.max(16, Math.round(rng.logn((target.islMean || 1000) / Math.exp(0.245), 0.7)));
+      const osl = target.osl ? target.osl[i % target.osl.length] : Math.max(2, Math.round(rng.logn((target.oslMean || 200) / Math.exp(0.18), 0.6)));
+      rows.push({ t, isl, osl, cached: 0 });
+    }
+    return rows;
+  }
+
+  // ---------- fitting ----------
+  function measure(R, poolId) {
+    const rs = R.reqs.filter(q => (q.pPool === poolId || q.dPool === poolId) && isFinite(q.ttft));
+    const tt = rs.map(q => q.ttft).sort((a, b) => a - b), tp = rs.filter(q => q.osl > 1 && isFinite(q.tpot) && q.tpot > 0).map(q => q.tpot).sort((a, b) => a - b);
+    const mean = (a, f) => (a.length ? a.reduce((x, q) => x + (f(q) || 0), 0) / a.length : 0);
+    const queueShare = rs.length ? mean(rs, q => Math.max(0, q.bQueue)) / Math.max(1e-9, mean(rs, q => q.ttft)) : 0;
+    return { n: rs.length, ttftP50: pct(tt, 0.5), ttftP99: pct(tt, 0.99), tpotP50: pct(tp, 0.5), tpotP99: pct(tp, 0.99), queueShare };
+  }
+  // The measured side of a recorded trace already in the spec (requests with recTtft / recE2e).
+  function recordedTarget(R, poolId) {
+    const rs = R.reqs.filter(q => (!poolId || q.pPool === poolId) && isFinite(q.recTtft));
+    if (!rs.length) return null;
+    const tt = rs.map(q => q.recTtft).sort((a, b) => a - b);
+    const tp = rs.filter(q => isFinite(q.recE2e) && q.osl > 1).map(q => (q.recE2e - q.recTtft) / (q.osl - 1)).filter(v => v > 0).sort((a, b) => a - b);
+    return { source: 'recorded trace', requests: rs.length, ttftP50: pct(tt, 0.5), ttftP99: pct(tt, 0.99), tpotP50: pct(tp, 0.5), tpotP99: pct(tp, 0.99) };
+  }
+  function acceptance(target, sim) {
+    const e = (a, b) => (isFinite(a) && isFinite(b) && b > 0 ? (a - b) / b : NaN);
+    const rows = [
+      { metric: 'TTFT p50', rec: target.ttftP50, sim: sim.ttftP50, err: e(sim.ttftP50, target.ttftP50), bar: 0.10 },
+      { metric: 'TTFT p99', rec: target.ttftP99, sim: sim.ttftP99, err: e(sim.ttftP99, target.ttftP99), bar: 0.20 },
+      { metric: 'TPOT p50', rec: target.tpotP50, sim: sim.tpotP50, err: e(sim.tpotP50, target.tpotP50), bar: 0.10 },
+      { metric: 'TPOT p99', rec: target.tpotP99, sim: sim.tpotP99, err: e(sim.tpotP99, target.tpotP99), bar: 0.20 }
+    ].filter(r => isFinite(r.rec));
+    for (const r of rows) r.pass = isFinite(r.err) && Math.abs(r.err) <= r.bar;
+    return { rows, pass: rows.length > 0 && rows.every(r => r.pass) };
+  }
+  // A spec that serves the measured load on one pool alone: same model, the pool as drawn, a synthetic trace.
+  function benchSpec(spec, poolId, target, opt) {
+    const s = JSON.parse(JSON.stringify(spec, (k, v) => (k === 'trace' ? undefined : v)));
+    const pool = s.pools.find(p => p.id === poolId);
+    if (!pool) throw new Error('No pool ' + poolId);
+    if (opt && opt.instances) { pool.min = pool.max = opt.instances; pool.auto = false; }
+    pool.decode = []; pool.role = 'agg';
+    s.pools = [pool]; s.links = []; s.train = null;
+    s.routers = [{ id: 'calib-rt', name: 'Calibration router', policy: 'least-wait', burstWait: 1, targets: [{ pool: poolId, link: null, edges: [] }] }];
+    s.sources = [{ id: 'calib-src', name: 'Measured load', kind: 'open', router: 'calib-rt', edge: '', prefixHit: 0, useRecordedCache: true, userBase: 0, replay: 'timestamps', cls: 'internal', trace: traceFor(target, opt) }];
+    return s;
+  }
+  // Fits {prefill, decode} for one pool. spec: a compiled spec; target: measured quantiles.
+  // When the target came from the spec's own recorded trace, the spec is simulated as is; otherwise on benchSpec.
+  function* fitPoolIter(spec, poolId, target, opt) {
+    opt = opt || {};
+    const base = opt.useSpec ? JSON.parse(JSON.stringify(spec)) : benchSpec(spec, poolId, target, opt);
+    const pool = base.pools.find(p => p.id === poolId);
+    let cal = Object.assign({ prefill: 1, decode: 1 }, pool.calib || {});
+    const history = [];
+    const runWith = c => { pool.calib = c; const R = E.simulate(base); return measure(R, poolId); };
+    const before = runWith(Object.assign({}, cal));
+    history.push({ cal: Object.assign({}, cal), sim: before });
+    const iters = opt.iters || 10;
+    for (let i = 0; i < iters; i++) {
+      yield { done: i + 1, total: iters, text: 'Iteration ' + (i + 1) + ': prefill ×' + cal.prefill.toFixed(2) + ', decode ×' + cal.decode.toFixed(2) };
+      const last = history[history.length - 1].sim;
+      const dErr = isFinite(target.tpotP50) && last.tpotP50 > 0 ? target.tpotP50 / last.tpotP50 : 1;
+      // TTFT left after decode is fixed mostly scales with prefill time; damped because queueing is non-linear
+      const pErr = isFinite(target.ttftP50) && target.ttftP50 > 0 ? last.ttftP50 / target.ttftP50 : 1;
+      if (Math.abs(dErr - 1) < 0.02 && Math.abs(pErr - 1) < 0.03) break;
+      cal = { decode: clamp(cal.decode * Math.pow(dErr, 0.9), 0.2, 5), prefill: clamp(cal.prefill * Math.pow(pErr, 0.7), 0.1, 10) };
+      history.push({ cal: Object.assign({}, cal), sim: runWith(cal) });
+    }
+    const best = history.reduce((b, h) => { const sc = x => Math.abs(Math.log((x.sim.ttftP50 || 1) / (target.ttftP50 || 1))) + (isFinite(target.tpotP50) ? Math.abs(Math.log((x.sim.tpotP50 || 1) / target.tpotP50)) : 0); return sc(h) < sc(b) ? h : b; });
+    const acc = acceptance(target, best.sim);
+    // When simulated TTFT is mostly queueing, speed multipliers cannot close the gap: the graph has less capacity
+    // than the fleet that was measured (instances, max batch, KV cache), so say that instead of forcing a fit.
+    const diagnosis = acc.pass ? 'fit' : target.ttftP99 > 8 * target.ttftP50 ? 'overloaded' : best.sim.queueShare > 0.5 && best.sim.ttftP50 > (target.ttftP50 || 0) * 1.3 ? 'capacity' : (best.cal.prefill >= 9.9 || best.cal.prefill <= 0.11 || best.cal.decode >= 4.9 || best.cal.decode <= 0.21) ? 'limit' : 'tail';
+    return { poolId, target, before, after: best.sim, calib: { prefill: +best.cal.prefill.toFixed(3), decode: +best.cal.decode.toFixed(3) }, history,
+      acceptanceBefore: acceptance(target, before), acceptance: acc, diagnosis };
+  }
+  const fitPool = (spec, poolId, target, opt) => { const it = fitPoolIter(spec, poolId, target, opt); let x; do x = it.next(); while (!x.done); return x.value; };
+
+  // ---------- training ----------
+  // Step timing CSV (from a training loop or the PyTorch profiler): step, step_time and, when logged, data_time,
+  // compute (forward+backward) and comm (exposed all-reduce) in seconds. Returns medians.
+  function parseStepLog(text) {
+    const lines = String(text).split(/\r?\n/).filter(l => l.trim());
+    const head = lines.shift().split(',').map(h => h.trim().toLowerCase());
+    const col = names => head.findIndex(h => names.includes(h));
+    const ix = { step: col(['step', 'iteration']), total: col(['step_time', 'step_time_s', 'iter_time', 'time']), data: col(['data_time', 'data', 'dataloader_time']), compute: col(['compute', 'fwd_bwd', 'forward_backward', 'compute_time']), comm: col(['comm', 'allreduce', 'comm_time', 'sync']) };
+    if (ix.total < 0) throw new Error('Need a step_time column');
+    const rows = lines.map(l => l.split(',').map(x => +x));
+    const med = k => { if (ix[k] < 0) return NaN; const v = rows.map(r => r[ix[k]]).filter(isFinite).sort((a, b) => a - b); return pct(v, 0.5); };
+    return { steps: rows.length, stepS: med('total'), dataS: med('data'), computeS: med('compute'), commS: med('comm') };
+  }
+  // Fits kernel efficiency (compute), comm overlap and dataloader rate to measured step timings.
+  function fitTraining(T, spec, meas) {
+    const s = T.normalizeTraining(spec), m0 = T.stepModel(s, s.mixes[0]);
+    const out = Object.assign({}, spec);
+    const comp = isFinite(meas.computeS) ? meas.computeS : meas.stepS - (meas.dataS || 0) - (meas.commS || 0);
+    if (comp > 0) out.kernelEff = +clamp(s.kernelEff * (m0.compute + m0.tpOver + m0.bubble) / comp, 0.05, 0.95).toFixed(3);
+    if (isFinite(meas.commS) && m0.comm > 0) out.overlap = +clamp(1 - meas.commS / m0.comm, 0, 1).toFixed(3);
+    if (isFinite(meas.dataS) && meas.dataS > 0.01 && m0.cpu > 0) {
+      // exposed data time d = raw − busy → raw = d + compute; scale the worker rate so the model's raw time matches
+      const raw = meas.dataS + comp, mix = Object.assign({}, s.mixes[0]);
+      mix.samplesPerWorkerS = +(mix.samplesPerWorkerS * m0.cpu / raw).toFixed(4);
+      out.mixes = [mix].concat(s.mixes.slice(1));
+    }
+    const fitted = T.stepModel(T.normalizeTraining(out), (out.mixes || s.mixes)[0]);
+    return { spec: out, before: m0, after: fitted, measured: meas };
+  }
+  // Fault rate per GPU-day from a fault log with timestamps, over the GPUs the log covers.
+  function faultRate(log, gpusCovered) {
+    const ts = log.events.map(e => Date.parse(e.t)).filter(isFinite).sort((a, b) => a - b);
+    if (ts.length < 2) return null;
+    const days = Math.max(1, (ts[ts.length - 1] - ts[0]) / 86400000);
+    const gpus = gpusCovered || Math.max(8, log.byNode.length * 8);
+    return { faults: ts.length, days, gpus, perGpuDay: ts.length / (gpus * days) };
+  }
+
+  const api = { parseProm, histQuantiles, fromVllmMetrics, fromBenchmark, traceFor, recordedTarget, measure, acceptance, benchSpec, fitPoolIter, fitPool, parseStepLog, fitTraining, faultRate };
+  if (typeof module !== 'undefined' && module.exports) module.exports = api;
+  else root.FleetCalibrate = api;
+})(typeof window !== 'undefined' ? window : this);
+
+</script>
+<script>
 (function () {
 'use strict';
-const E = window.FleetEngine, TP = window.FleetTemplates, NT = TP.NODE_TYPES, IN = window.FleetIngest;
+const E = window.FleetEngine, TP = window.FleetTemplates, NT = TP.NODE_TYPES, IN = window.FleetIngest, K = window.FleetCalibrate;
 const $ = s => document.querySelector(s);
 const NS = 'http://www.w3.org/2000/svg';
 function el(tag, attrs, parent, text) {
@@ -2217,7 +2445,7 @@ function cfgLine(n) {
     case 'chat': return fInt(c.users) + ' users · ' + c.turns + ' turns · ' + c.thinkS + ' s think';
     case 'trace': return (c.trace === 'uploaded' ? (traces.uploaded ? traces.uploaded.name : 'upload a CSV') : E.TRACES[c.trace].label.replace('Sample: ', '')) + ' · ' + c.scale + '×';
     case 'router': return ({ 'primary-first': 'Primary first, burst at ' + c.burstWait + ' s', 'least-wait': 'Least estimated wait', 'round-robin': 'Round robin' })[c.policy];
-    case 'pool': { const m = prof(); const tp = m ? E.profile(c.gpu, m.cfg).tp : 1; return roleName[c.role] + ' · ' + c.gpu + (tp > 1 ? ' ×' + tp : '') + ' · ' + (c.autoscale ? c.min + '–' + c.max + ' inst, ' + c.coldStart + ' s cold' : c.instances + ' inst'); }
+    case 'pool': { const m = prof(); const tp = m ? E.profile(c.gpu, m.cfg).tp : 1; return ((+c.calibPrefill || 1) !== 1 || (+c.calibDecode || 1) !== 1 ? '\u2713 calibrated · ' : '') + roleName[c.role] + ' · ' + c.gpu + (tp > 1 ? ' ×' + tp : '') + ' · ' + (c.autoscale ? c.min + '–' + c.max + ' inst, ' + c.coldStart + ' s cold' : c.instances + ' inst'); }
     case 'link': return c.gbps + ' Gbps · ' + c.rttMs + ' ms RTT · $' + c.egressPerGB + '/GB';
     case 'train': return E.MODELS[c.model].label.replace(/ \(.*\)/, '') + ' · ' + fInt(c.gpus) + ' × ' + c.gpu;
     case 'model': return c.params + 'B params' + (c.active !== c.params ? ' (' + c.active + 'B active)' : '') + ' · ' + c.wPrec.toUpperCase() + (c.thinkTokens ? ' · thinks ~' + fK(c.thinkTokens) : '');
@@ -2472,6 +2700,7 @@ const FIELDS = {
     { p: 'downUtil', k: 'range', label: 'Scale down below load', min: 5, max: 80, step: 5, f: v => v + '%', show: c => c.autoscale },
     { p: 'maxBatch', k: 'range', label: 'Max batch per instance', min: 8, max: 512, step: 8, f: v => v + ' seqs' },
     { p: 'fabricGbps', k: 'range', label: 'Fabric per instance (KV, sync)', min: 25, max: 3200, step: 25, f: v => v + ' Gbps' },
+    { k: 'grid', ctl: [{ p: 'calibPrefill', k: 'number', label: 'Calibrated prefill ×', min: 0.05, max: 20, step: 0.01 }, { p: 'calibDecode', k: 'number', label: 'Calibrated decode ×', min: 0.05, max: 20, step: 0.01 }] },
     { k: 'poolReadout' }
   ],
   link: [
@@ -2531,6 +2760,7 @@ function renderDetails() {
   formNode = null; formBound = [];
   if (S.sel && S.sel.type === 'stress') return renderStressPanel();
   if (S.sel && S.sel.type === 'advisor') return renderAdvisorPanel();
+  if (S.sel && S.sel.type === 'calib') return renderCalibPanel();
   if (S.sel && S.sel.type === 'node') {
     const n = nodeById(S.sel.id);
     if (!n) { S.sel = null; return renderDetails(); }
@@ -2903,7 +3133,7 @@ function doRun() {
   $('#status').innerHTML = '<b>' + fInt(sm.requests) + '</b> requests' + (sm.users ? ' from <b>' + fInt(sm.users) + '</b> users' : '') + ' · <b>' + mmss(R.D) + '</b> simulated in ' + sm.simMs + ' ms' + (BL() ? ' · vs <b>' + esc(BL().label) + '</b>' : '');
   $('#scrub').max = Math.max(1, R.D - 1);
   renderKpis(); buildCharts(); buildStrip(); renderBanner();
-  if (S.sel && (S.sel.type === 'stress' || S.sel.type === 'advisor')) { /* keep panel */ } else renderDetails();
+  if (S.sel && (S.sel.type === 'stress' || S.sel.type === 'advisor' || S.sel.type === 'calib')) { /* keep panel */ } else renderDetails();
   render(true);
   if (S.needFit) { S.needFit = false; requestAnimationFrame(fit); }
 }
@@ -3700,6 +3930,7 @@ function renderAnalysis() {
     return;
   }
   if (A.kind === 'error') { box.innerHTML = '<h3>' + esc(A.title) + close + '</h3><div class="warnline">' + esc(A.text) + '</div>'; return; }
+  if (A.kind === 'calib') { box.innerHTML = '<h3>Calibration' + close + '</h3>' + calibCard(A); return; }
   const bn = b => b ? mmss(b.t) + ' · ' + esc(b.name) + ': ' + b.label : '<span style="color:var(--muted)">none</span>';
   if (A.kind === 'suite') {
     const base = A.rows[0].s;
@@ -3743,6 +3974,7 @@ $('#analysis').addEventListener('click', e => {
   const t = e.target;
   const a = t.closest('[data-act]');
   if (a && a.dataset.act === 'closeAnalysis') { S.analysis = null; renderAnalysis(); return; }
+  if (a && a.dataset.act === 'calApply') { const r = S.analysis.res, n = nodeById(r.poolId); if (n) { n.cfg.calibPrefill = r.calib.prefill; n.cfg.calibDecode = r.calib.decode; renderGraph(); toast(n.cfg.name + ' calibrated'); scheduleRun(0); if (S.sel && S.sel.type === 'calib') renderCalibPanel(); } return; }
   if (a && a.dataset.act === 'cancelJob') { if (S.job) S.job.cancel = true; S.job = null; S.analysis = null; renderAnalysis(); return; }
   const su = t.closest('[data-suite]');
   if (su) { const r = S.analysis.rows[+su.dataset.suite]; if (r.st) { S.stressDraft = JSON.parse(JSON.stringify(r.st)); applyStress(r.st); } else { S.stress = null; scheduleRun(0); } return; }
@@ -3804,9 +4036,78 @@ function runAdvisor() {
   function* wrap() { let x; while (!(x = it.next()).done) yield { done: x.value.done, total: x.value.total, text: 'Sizing ' + x.value.model + (x.value.thinkTokens ? ' with ' + fK(x.value.thinkTokens) + ' thinking' : '') + '…' }; return x.value; }
   startJob('Model advisor', wrap(), res => { S.analysis = { kind: 'advisor', res, minQuality: minQ == null ? '' : minQ }; });
 }
-['click', 'input', 'change'].forEach(ev => $('#details').addEventListener(ev, e => { if (stressPanelEvents(e)) e.stopImmediatePropagation(); else if (advisorPanelEvents(e)) e.stopImmediatePropagation(); }, true));
+['click', 'input', 'change'].forEach(ev => $('#details').addEventListener(ev, e => { if (stressPanelEvents(e)) e.stopImmediatePropagation(); else if (advisorPanelEvents(e)) e.stopImmediatePropagation(); else if (calibPanelEvents(e)) e.stopImmediatePropagation(); }, true));
 $('#whatifBtn').onclick = () => { if (S.stress) S.stressDraft = JSON.parse(JSON.stringify(S.stress)); select({ type: 'stress' }); };
 $('#advisorBtn').onclick = () => select({ type: 'advisor' });
+$('#calibBtn').onclick = () => select({ type: 'calib' });
+
+// ---------- calibration ----------
+const CAL = { pool: null, source: 'recorded', windowMin: 60, instances: null, file: null, fileName: '', before: null };
+function calibPools() { return S.graph.nodes.filter(n => n.type === 'pool'); }
+function renderCalibPanel() {
+  const box = $('#details'), pools = calibPools();
+  if (!CAL.pool || !pools.some(p => p.id === CAL.pool)) CAL.pool = pools[0] ? pools[0].id : null;
+  const pn = pools.find(p => p.id === CAL.pool);
+  const rec = S.run && K.recordedTarget(S.run, CAL.pool);
+  if (CAL.instances == null && pn) CAL.instances = pn.cfg.autoscale ? Math.max(1, pn.cfg.min) : pn.cfg.instances;
+  const srcs = [['recorded', 'Recorded trace' + (rec ? '' : ' (none here)')], ['metrics', 'vLLM /metrics'], ['bench', 'benchmark_serving']];
+  box.innerHTML = '<span class="typetag" style="background:var(--accent)">Calibrate</span><h2>Fit a pool to measurements</h2>' +
+    '<div class="sub">Performance starts from spec sheets. Calibration adjusts two multipliers per pool, prefill throughput and decode step time, until simulated TTFT and TPOT match what you measured. The spec\u2019s acceptance bar is within 10% at p50 and 20% at p99.</div>' +
+    '<div class="ctl"><label for="calPool">Pool</label><select id="calPool" data-cal="pool">' + pools.map(p => '<option value="' + p.id + '"' + (p.id === CAL.pool ? ' selected' : '') + '>' + esc(p.cfg.name) + '</option>').join('') + '</select></div>' +
+    (pn ? '<div class="sub">Now: prefill ×' + (+pn.cfg.calibPrefill || 1).toFixed(2) + ', decode ×' + (+pn.cfg.calibDecode || 1).toFixed(2) + ((+pn.cfg.calibPrefill || 1) !== 1 || (+pn.cfg.calibDecode || 1) !== 1 ? ' <button class="linkbtn" type="button" data-act="calReset">Reset</button>' : ' (uncalibrated)') + '</div>' : '') +
+    '<div class="ctl"><span>Measurements from</span><div class="seg" data-calseg="source">' + srcs.map(([k, l]) => '<button type="button" data-v="' + k + '" class="' + (CAL.source === k ? 'on' : '') + '">' + l + '</button>').join('') + '</div></div>' +
+    (CAL.source === 'recorded' ? '<div class="sub">' + (rec ? fInt(rec.requests) + ' requests on this pool carry recorded TTFT' + (isFinite(rec.tpotP50) ? ' and end-to-end latency' : '') + ': p50 ' + fS(rec.ttftP50) + ', p99 ' + fS(rec.ttftP99) + '. The graph should match the fleet that served them.' : 'Upload a trace with recorded latency on the Trace replay node first, or use a metrics snapshot or benchmark result.') + '</div>'
+      : '<label class="upload">' + (CAL.source === 'metrics' ? 'Drop a <code>curl http://server:8000/metrics</code> snapshot' : 'Drop a <code>benchmark_serving.py --save-result</code> JSON') + '<input type="file" data-cal="file" accept=".txt,.prom,.json"><br><span>' + (CAL.fileName ? esc(CAL.fileName) : 'Only latency histograms, token counts and request counts are read.') + '</span></label>' +
+        (CAL.source === 'metrics' ? '<div class="ctl"><label for="calWin">Minutes the counters cover (server uptime)</label><input type="number" id="calWin" data-cal="windowMin" min="1" value="' + CAL.windowMin + '"></div>' : '') +
+        '<div class="ctl"><label for="calInst">Instances that served it</label><input type="number" id="calInst" data-cal="instances" min="1" value="' + CAL.instances + '"></div>') +
+    '<div class="btnrow"><button class="btn primary" type="button" data-act="calFit"' + ((CAL.source === 'recorded' && !rec) || (CAL.source !== 'recorded' && !CAL.file) || !pn ? ' disabled' : '') + '>Fit</button></div>';
+}
+function calibPanelEvents(e) {
+  if (!(S.sel && S.sel.type === 'calib')) return false;
+  const t = e.target;
+  if (e.type === 'change' && t.dataset.cal === 'file') {
+    const f = t.files[0]; if (!f) return true;
+    f.text().then(txt => { CAL.file = txt; CAL.fileName = f.name; renderCalibPanel(); });
+    return true;
+  }
+  if ((e.type === 'change' || e.type === 'input') && t.dataset.cal) {
+    const k = t.dataset.cal;
+    CAL[k] = k === 'pool' ? t.value : +t.value;
+    if (k === 'pool') { CAL.instances = null; renderCalibPanel(); }
+    return true;
+  }
+  if (e.type !== 'click') return false;
+  const sg = t.closest('[data-calseg] button');
+  if (sg) { CAL.source = sg.dataset.v; CAL.file = null; CAL.fileName = ''; renderCalibPanel(); return true; }
+  const a = t.closest('[data-act]');
+  if (a && a.dataset.act === 'calReset') { const n = nodeById(CAL.pool); n.cfg.calibPrefill = 1; n.cfg.calibDecode = 1; renderGraph(); scheduleRun(0); renderCalibPanel(); return true; }
+  if (a && a.dataset.act === 'calFit') { runCalibration(); return true; }
+  return false;
+}
+function runCalibration() {
+  const c = E.compileGraph(S.graph, traceLookup);
+  if (c.errors.length) { toast('Fix the problems in the left panel first.'); return; }
+  let target, opt;
+  try {
+    if (CAL.source === 'recorded') { target = K.recordedTarget(S.run, CAL.pool); opt = { useSpec: true }; }
+    else if (CAL.source === 'metrics') { target = K.fromVllmMetrics(CAL.file, { windowS: CAL.windowMin * 60 }); opt = { instances: CAL.instances }; }
+    else { target = K.fromBenchmark(CAL.file); opt = { instances: CAL.instances }; }
+  } catch (err) { S.analysis = { kind: 'error', title: 'Calibration', text: 'Could not read the measurements: ' + err.message }; renderAnalysis(); return; }
+  const it = K.fitPoolIter(c.spec, CAL.pool, target, opt);
+  startJob('Calibrating ' + nodeById(CAL.pool).cfg.name, it, res => { S.analysis = { kind: 'calib', res, name: nodeById(CAL.pool).cfg.name }; });
+}
+function calibCard(A) {
+  const r = A.res, t = r.target;
+  const row = (m, rec, b, a, ok, bar) => '<tr><td>' + m + '</td><td class="num">' + fS(rec) + '</td><td class="num">' + fS(b) + '</td><td class="num">' + fS(a) + '</td><td class="num" style="color:' + (ok ? 'var(--good)' : 'var(--crit)') + '">' + (isFinite(a) && rec ? ((a - rec) / rec >= 0 ? '+' : '') + Math.round(100 * (a - rec) / rec) + '%' : '–') + '</td><td class="num">±' + Math.round(bar * 100) + '%</td></tr>';
+  const acc = r.acceptance.rows;
+  const get = k => acc.find(x => x.metric === k) || {};
+  return '<p class="lead">Measured on <b>' + esc(A.name) + '</b> (' + esc(t.source) + (t.requests ? ', ' + fInt(t.requests) + ' requests' : '') + '). Fitted <b>prefill ×' + r.calib.prefill.toFixed(2) + '</b> and <b>decode ×' + r.calib.decode.toFixed(2) + '</b>: ' +
+    (r.acceptance.pass ? '<span style="color:var(--good)">inside the acceptance bar</span>.' : '<span style="color:var(--crit)">still outside the bar</span>' + ({ overloaded: ': the measured window was overloaded (its TTFT p99 is ' + Math.round(t.ttftP99 / t.ttftP50) + '× its p50), and queueing that deep cannot be fitted reliably. Calibrate on a window where the fleet met its SLO.', capacity: ': simulated TTFT is ' + Math.round(100 * r.after.queueShare) + '% queueing, so the graph has less capacity than the fleet that was measured. Match its instances, max batch and KV cache first, then calibrate again; speed multipliers cannot fix queueing.', limit: ': a multiplier hit its limit, so the measurements and the graph disagree by more than speed alone explains (model, GPU type or precision may differ).', tail: ': the medians match but the tail differs, which usually means routing, batching or burstiness differ from the measured fleet.' }[r.diagnosis] || '.')) +
+    (r.calib.prefill < 0.8 || r.calib.decode > 1.25 ? ' The pool is slower than its spec sheet suggests.' : r.calib.prefill > 1.25 || r.calib.decode < 0.8 ? ' The pool is faster than the spec-sheet estimate.' : '') + '</p>' +
+    '<table class="atable"><thead><tr><th>Metric</th><th>Measured</th><th>Sim before</th><th>Sim after</th><th>Error after</th><th>Bar</th></tr></thead><tbody>' +
+    [['TTFT p50', 'ttftP50', 0.1], ['TTFT p99', 'ttftP99', 0.2], ['TPOT p50', 'tpotP50', 0.1], ['TPOT p99', 'tpotP99', 0.2]].filter(([m, k]) => isFinite(t[k])).map(([m, k, bar]) => row(m, t[k], r.before[k], r.after[k], get(m).pass, bar)).join('') + '</tbody></table>' +
+    (r.diagnosis === 'capacity' ? '' : '<div class="btnrow"><button class="btn primary" type="button" data-act="calApply">Apply to ' + esc(A.name) + '</button></div>');
+}
 
 // templates
 const tplSel = $('#tpl');
@@ -4974,7 +5275,7 @@ window.addEventListener('resize', () => {});
 /* FleetScope Training view: one job seen four ways (GPUs, phases, scheduling, full). Browser only. */
 (function () {
   'use strict';
-  const T = window.FleetTraining, C = window.FleetCluster, E = window.FleetEngine;
+  const T = window.FleetTraining, C = window.FleetCluster, E = window.FleetEngine, K = window.FleetCalibrate;
   const $ = (s, r) => (r || document).querySelector(s);
   const esc = s => String(s == null ? '' : s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
   const fInt = v => (isFinite(v) ? Math.round(v).toLocaleString('en-US') : '–');
@@ -4997,7 +5298,8 @@ window.addEventListener('resize', () => {});
   root.innerHTML = `
   <header class="toolbar">
     <div class="tb"><span class="tname" id="tName"></span>
-      <label class="btnlike" title="GPU fault log: CSV (time,node,gpu,xid), JSON lines, or syslog lines with NVRM Xid">Import fault log<input type="file" id="tFile" accept=".csv,.json,.jsonl,.log,.txt" hidden></label></div>
+      <label class="btnlike" title="GPU fault log: CSV (time,node,gpu,xid), JSON lines, or syslog lines with NVRM Xid">Import fault log<input type="file" id="tFile" accept=".csv,.json,.jsonl,.log,.txt" hidden></label>
+      <label class="btnlike" title="Step timing CSV: step, step_time and, if logged, data_time, compute, comm (seconds)">Import step timings<input type="file" id="tSteps" accept=".csv,.txt" hidden></label></div>
     <div class="tb"><button type="button" id="tPlay" class="play">&#9654; Play</button>
       <select id="tSpeed" aria-label="Playback speed"><option value="10">10×</option><option value="60" selected>60×</option><option value="300">300×</option><option value="1200">1200×</option></select>
       <span class="clock" id="tClock">0:00 / 12:00</span></div>
@@ -5033,7 +5335,10 @@ window.addEventListener('resize', () => {});
   function renderCfg() {
     const s = TS.spec;
     const sel = (path, v, opts) => '<select data-path="' + path + '">' + opts.map(([k, l]) => '<option value="' + k + '"' + (k === v ? ' selected' : '') + '>' + esc(l) + '</option>').join('') + '</select>';
-    let h = (TS.faultLog ? '<div class="note">Fault log: ' + TS.faultLog.events.length + ' faults on ' + TS.faultLog.byNode.length + ' nodes' + (Object.keys(TS.faultLog.xids).length ? ' (Xid ' + Object.entries(TS.faultLog.xids).sort((a, b) => b[1] - a[1]).slice(0, 3).map(([k, n]) => k + '×' + n).join(', ') + ')' : '') + '. Faults are weighted toward the GPUs that fail most in it.</div>' : '');
+    const lr = TS.faultLog && K ? K.faultRate(TS.faultLog, TS.logGpus || null) : null;
+    let h = (TS.stepFit ? '<div class="note"><b>Calibrated from ' + esc(TS.stepFit.name) + '</b> (' + TS.stepFit.measured.steps + ' steps, median ' + fS(TS.stepFit.measured.stepS) + '): kernel efficiency ' + TS.spec.kernelEff + ', comm overlapped ' + TS.spec.overlap + (TS.stepFit.dataFit ? ', dataloader rate fitted' : '') + '. Model step now ' + fS(TS.stepFit.after.busy + TS.stepFit.after.sync + TS.stepFit.after.data + TS.stepFit.after.optimizer) + '.</div>' : '') +
+      (lr ? '<div class="note">The log covers ' + lr.days.toFixed(0) + ' days on about ' + lr.gpus + ' GPUs: <b>' + lr.perGpuDay.toFixed(4) + '</b> faults per GPU-day. <button class="linkbtn" type="button" id="tUseRate">Use this rate</button></div>' : '') +
+      (TS.faultLog ? '<div class="note">Fault log: ' + TS.faultLog.events.length + ' faults on ' + TS.faultLog.byNode.length + ' nodes' + (Object.keys(TS.faultLog.xids).length ? ' (Xid ' + Object.entries(TS.faultLog.xids).sort((a, b) => b[1] - a[1]).slice(0, 3).map(([k, n]) => k + '×' + n).join(', ') + ')' : '') + '. Faults are weighted toward the GPUs that fail most in it.</div>' : '');
     h += '<h3>Job</h3><label class="frow"><span>Model</span>' + sel('model', s.model, Object.keys(E.MODELS).map(k => [k, E.MODELS[k].label])) + '</label>' +
       '<label class="frow"><span>GPU</span>' + sel('gpu', s.gpu, Object.keys(E.GPUS).map(k => [k, E.GPUS[k].label])) + '</label>' +
       row('GPUs', 'gpus', s.gpus, 8, 16384, 8) + row('Tensor parallel', 'tp', s.tp, 1, 8, 1) + row('Pipeline stages', 'pp', s.pp, 1, 64, 1) + row('Batch (M tokens/step)', 'batchMTokens', s.batchMTokens, 0.25, 64, 0.25) +
@@ -5341,6 +5646,22 @@ window.addEventListener('resize', () => {});
   $('#tSpeed').addEventListener('change', e => { TS.speed = +e.target.value; });
   $('#tPin').addEventListener('click', () => { TS.baseline = { label: 'pinned baseline', summary: TS.run.summary, byMix: TS.run.byMix, queueWaitS: TS.run.spec.queueWaitS }; $('#tClear').hidden = false; renderKpis(); renderHead(); });
   $('#tClear').addEventListener('click', () => { TS.baseline = null; $('#tClear').hidden = true; renderKpis(); renderHead(); });
+  $('#tSteps').addEventListener('change', e => {
+    const f = e.target.files[0]; if (!f || !K) return;
+    f.text().then(txt => {
+      try {
+        const meas = K.parseStepLog(txt), fit = K.fitTraining(T, TS.spec, meas);
+        TS.spec = T.normalizeTraining(fit.spec);
+        TS.stepFit = Object.assign({ name: f.name, dataFit: isFinite(meas.dataS) && meas.dataS > 0.01 }, fit);
+        renderCfg(); run();
+      } catch (err) { $('#tStatus').textContent = 'Could not read ' + f.name + ': ' + err.message; }
+    });
+  });
+  $('#tCfg').addEventListener('click', e => {
+    if (e.target.id !== 'tUseRate') return;
+    const lr = K.faultRate(TS.faultLog, TS.logGpus || null);
+    if (lr) { TS.spec.faultPerGpuDay = +lr.perGpuDay.toFixed(4); renderCfg(); run(); }
+  });
   $('#tFile').addEventListener('change', e => {
     const f = e.target.files[0]; if (!f) return;
     f.text().then(txt => { TS.faultLog = T.parseFaultLog(txt); if (!TS.faultLog.events.length) { $('#tStatus').textContent = 'No GPU faults found in ' + f.name; TS.faultLog = null; return; } renderCfg(); run(); });

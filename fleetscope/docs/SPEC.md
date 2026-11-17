@@ -194,6 +194,10 @@ Until a scenario's profiles have been checked against measurements, the player l
 
 Sites with VM-only telemetry can be calibrated only on request-level latency and VM metrics, not on fabric counters. Their pools keep a "partially calibrated" badge.
 
+## Calibration (built)
+
+Pools carry prefill and decode multipliers fitted by re-simulation to a recorded trace, a vLLM `/metrics` snapshot or a `benchmark_serving` result, with the acceptance check above and a diagnosis when a fit can't pass. Training fits kernel efficiency, overlap and dataloader rate from step timings, and fault rates from Xid logs. Details: [CALIBRATION.md](CALIBRATION.md).
+
 ## Build phases
 
 1. **Prototype (done):** a browser-only node editor and player on the tier-1 engine, with agent, chat, trace and training nodes, seven templates and baseline compare. Profiles come from spec sheets, not measurements.
