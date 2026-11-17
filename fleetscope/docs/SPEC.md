@@ -138,6 +138,12 @@ Planners ask "what happens if…" more often than "what happens". Stress overlay
 
 The model advisor right-sizes the fleet for each candidate model and reasoning level and ranks the ones that meet the SLO by cost per 1,000 requests. Quality scores come from the team's own evals and act as a floor. Reasoning is modelled as hidden thinking tokens: they delay the first visible token (unless streamed), hold KV cache, and are billed. So reasoning models are compared per answer, not per token. See [STRESS.md](STRESS.md).
 
+## Closed-loop replay, health and potential issues
+
+- **Closed-loop replay.** Recorded traces with session ids replay as sessions: each turn waits for the simulated previous turn plus the recorded think time; overlapping turns are parallel branches; a failed turn retries once after 5 s or ends the session. Drift (simulated minus recorded issue time) is reported as p50 and p90. Details: [TRACES.md](TRACES.md#closed-loop-replay).
+- **Health.** `healthOf(run)` gives every node a level per second (0 healthy, 1 strained, 2 failing) and a cause. Pools: instances down, KV ≥ 95% with a queue, oldest queued request older than the TTFT target (failing); KV or load ≥ 85%, queue wait over a third of the target, cold starts with a queue (strained). Links: degraded or ≥ 90% used (failing), ≥ 70% (strained). Routers inherit strain from their targets; traffic sources fail when over 10% of their first tokens miss the target that second. The node blamed for an SLO breach is always failing. The canvas colours frames, badges and incoming wires from this.
+- **Potential issues.** `lintSpec(spec)` runs before simulation on the compiled graph and a traffic estimate (mean and 10-second peak rate, mean prompt, longest context): contexts over an instance's KV cache, KV under 20k tokens, instances spanning nodes, an empty burst pool with a cold start of a minute or more, peak prefill demand above 80% of pool capacity, peak KV transfer demand above 70% of a link, training sharing a link with KV transfers, and a single pool behind a router.
+
 ## Metrics and outputs
 
 SLO attainment and cost per million tokens are the two headline numbers for every run. Everything else explains them.
