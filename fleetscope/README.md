@@ -84,6 +84,20 @@ Turn on **Enforce data residency** on the router and nothing leaves on-prem, but
 
 ![Ownership lens](docs/img/lens-ownership.png)
 
+### Cluster view: Kubernetes scheduling
+
+The **Cluster** tab switches to the Kubernetes layer: node pools and IB domains drawn GPU by GPU, Kueue-style queues with quotas, and inference, training and batch workloads. A scheduler policy (bin-pack or spread, gang, topology-aware, preemption, borrowing, FIFO order) decides who gets which GPU. On the sample cluster under spread placement, inference and evaluation pods land on every node. The 160-GPU pre-training gang never finds room in one IB domain; 2,347 GPU-hours sit stranded and allocation is 38%. See [docs/CLUSTER.md](docs/CLUSTER.md).
+
+![Cluster view, spread](docs/img/cluster-spread.png)
+
+**Compare policies** runs every single policy change side by side. Bin-pack starts all three training jobs and lifts allocation to 61%. Strict FIFO starts none.
+
+![Policy comparison](docs/img/cluster-compare.png)
+
+Clicking Bin-pack applies it and compares against the configured policy: no stranded GPUs, 2.5 h less training wait. Faulted GPUs show red, and the most-faulting nodes and GPUs are ranked. A real cluster can be imported from `kubectl get nodes,pods,clusterqueues,localqueues -A -o json`.
+
+![Cluster view, bin-pack](docs/img/cluster-binpack.png)
+
 ### What if… a partial outage
 
 Half of the on-prem pool fails for two and a half minutes. Down instances show red, streams cut mid-answer are counted as lost, the KPIs compare against the same graph unstressed, and the banner names where it breaks first. See [docs/STRESS.md](docs/STRESS.md).
@@ -129,6 +143,8 @@ npm run build     # inline src/ into dist/index.html
 | `tests/` | Engine tests (determinism, causal ordering, conservation, per-template behaviour, profile maths), import tests against fixtures for each log format, stress tests, and closed-loop replay and lint tests |
 | `docs/SPEC.md` | Product spec: goals, architecture, data model, engine, player, calibration, phases |
 | `docs/TRACES.md` | How to capture and import real traces, and how recorded-vs-simulated comparison works |
+| `src/cluster.js`, `src/cluster-ui.js` | Cluster engine (scheduler, quotas, faults, kubectl import) and the Cluster view |
+| `docs/CLUSTER.md` | The cluster model, policy knobs, and importing a real cluster |
 
 ## Nodes
 

@@ -12,6 +12,8 @@ const inlined = {
   '/*ENGINE*/': read('src/engine.js'),
   '/*TEMPLATES*/': read('src/templates.js'),
   '/*INGEST*/': read('src/ingest.js'),
+  '/*CLUSTER*/': read('src/cluster.js'),
+  '/*CLUSTERUI*/': read('src/cluster-ui.js'),
 };
 
 let out = page;

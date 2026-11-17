@@ -160,6 +160,12 @@ A tab bar above the canvas switches what node colours, badges and wires mean. Ea
 
 **Data residency model.** Sources have a data class (public, internal, confidential). Pools have a trust zone (private, dedicated cloud, shared cloud; by default private on-prem and shared in a neocloud). Links can be encrypted. The policy on the SLO node says where confidential data may run (private only, or private and dedicated) and where internal data may run (anywhere, private and dedicated, or private only), and whether non-public data must cross encrypted links only. A router set to enforce residency only routes to targets whose pool, link and (for prefill) some decode pool are allowed. Requests with no allowed target are blocked and counted. The lint flags routers that can send restricted data outside its zones, enforced routers with no allowed pool, and unencrypted links carrying restricted data.
 
+## Cluster layer (Kubernetes)
+
+A second view simulates scheduling at pod and GPU granularity, separately from the request-level fleet engine. It covers node pools with IB domains, queues with quotas and priorities, and inference (daily replica cycle), training (gangs with checkpoints) and batch workloads. The scheduler has placement, gang, topology, preemption, borrowing and queue-order knobs, and GPUs fail and get repaired. It reports allocation, stranded and allocated-but-idle GPU-hours, why each workload waited, preemptions, faults and lost work. It can compare policies side by side and import a cluster from `kubectl` JSON. Details: [CLUSTER.md](CLUSTER.md).
+
+Next: a Training view with GPU-centric, phase-centric, scheduling-centric and full sub-views, and an Inference view. They will share this cluster model and the fleet engine.
+
 ## Metrics and outputs
 
 SLO attainment and cost per million tokens are the two headline numbers for every run. Everything else explains them.
