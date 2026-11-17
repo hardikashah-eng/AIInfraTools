@@ -1,0 +1,34 @@
+# Plans FleetScope scenarios on pull requests that change them, and comments the plan on the PR.
+# The job fails when a check in the plan fails (thresholds in each scenario's thresholds.json).
+name: FleetScope plan
+on:
+  pull_request:
+    paths:
+      - 'fleetscope/scenarios/**'
+permissions:
+  contents: read
+  pull-requests: write
+jobs:
+  plan:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Plan scenarios against the base branch
+        working-directory: fleetscope
+        run: |
+          set +e
+          node tools/fleetscope-plan.mjs --git "origin/${{ github.base_ref }}" --scenarios scenarios --out plan.md
+          echo "PLAN_EXIT=$?" >> "$GITHUB_ENV"
+      - name: Comment the plan
+        working-directory: fleetscope
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh pr comment "${{ github.event.pull_request.number }}" --body-file plan.md --edit-last || gh pr comment "${{ github.event.pull_request.number }}" --body-file plan.md
+      - name: Fail when a check fails
+        if: env.PLAN_EXIT != '0'
+        run: exit 1
