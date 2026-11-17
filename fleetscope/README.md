@@ -98,6 +98,20 @@ Clicking Bin-pack applies it and compares against the configured policy: no stra
 
 ![Cluster view, bin-pack](docs/img/cluster-binpack.png)
 
+### Training view: GPUs, phases, scheduling, full view
+
+The **Training** tab follows one job step by step and shows it four ways: by GPU, by phase of the step, by scheduling, and all at once with a headline naming the bottleneck. For Llama 3.3 70B on 160 H100s, one GPU 12% slow holds every step and costs 9% of wall time. Switching to a video-and-image data mix at hour 4 exposes 3 s of decode per step. One GPU fault moves the job to a hot spare and costs 43 minutes. See [docs/TRAINING.md](docs/TRAINING.md).
+
+![Training, full view](docs/img/training-full.png)
+
+The GPU view at one instant: 158 GPUs wait while the slow one finishes its share of the step.
+
+![Training, GPUs](docs/img/training-gpu.png)
+
+The scheduling view checks constraints and runs the job through the Cluster tab's scheduler.
+
+![Training, scheduling](docs/img/training-sched.png)
+
 ### What if… a partial outage
 
 Half of the on-prem pool fails for two and a half minutes. Down instances show red, streams cut mid-answer are counted as lost, the KPIs compare against the same graph unstressed, and the banner names where it breaks first. See [docs/STRESS.md](docs/STRESS.md).
@@ -145,6 +159,8 @@ npm run build     # inline src/ into dist/index.html
 | `docs/TRACES.md` | How to capture and import real traces, and how recorded-vs-simulated comparison works |
 | `src/cluster.js`, `src/cluster-ui.js` | Cluster engine (scheduler, quotas, faults, kubectl import) and the Cluster view |
 | `docs/CLUSTER.md` | The cluster model, policy knobs, and importing a real cluster |
+| `src/training.js`, `src/training-ui.js` | Training job model (phases, data loading, stragglers, checkpoints, faults) and the Training view |
+| `docs/TRAINING.md` | The training model, the four sub-views, and fault-log import |
 
 ## Nodes
 
