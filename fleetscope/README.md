@@ -136,6 +136,12 @@ The views share one clock and one change set. **Pin all as baseline** pins every
 
 ![One scenario](docs/img/one-scenario.png)
 
+### CI gate and reports
+
+Scenarios in `scenarios/` are planned on every pull request that changes them. The workflow runs base and head, lists what changed and who owns it, comments the plan on the PR, and fails when a threshold is crossed. **Report** in the browser plans the current setup against the pinned baseline. Here, two more on-prem instances plus bin-pack placement lift SLO met from 56.9% to 83.4% and GPU allocation from 38% to 61%. See [docs/CI.md](docs/CI.md).
+
+![Plan report](docs/img/plan-report.png)
+
 ### What if… a partial outage
 
 Half of the on-prem pool fails for two and a half minutes. Down instances show red, streams cut mid-answer are counted as lost, the KPIs compare against the same graph unstressed, and the banner names where it breaks first. See [docs/STRESS.md](docs/STRESS.md).
@@ -184,6 +190,7 @@ npm run build     # inline src/ into dist/index.html
 | `src/cluster.js`, `src/cluster-ui.js` | Cluster engine (scheduler, quotas, faults, kubectl import) and the Cluster view |
 | `docs/CLUSTER.md` | The cluster model, policy knobs, and importing a real cluster |
 | `src/training.js`, `src/training-ui.js` | Training job model (phases, data loading, stragglers, checkpoints, faults) and the Training view |
+| `src/plan.js`, `tools/fleetscope-plan.mjs`, `scenarios/`, `docs/CI.md` | Plans base vs head scenarios for CI and the Report button |
 | `src/scenario.js`, `docs/SCENARIO.md` | Shared clock, change set across views, and fleet pools linked to cluster workloads |
 | `src/forecast.js`, `tools/live-twin.mjs`, `docs/LIVE.md` | Forecasts, projections, predicted-breach alerts and the scheduled CLI |
 | `src/calibrate.js`, `docs/CALIBRATION.md` | Fitting pools to vLLM metrics, benchmarks and recorded traces; training step timings |

@@ -18,6 +18,7 @@ const inlined = {
   '/*CLUSTER*/': read('src/cluster.js'),
   '/*CLUSTERUI*/': read('src/cluster-ui.js'),
   '/*TRAINING*/': read('src/training.js'),
+  '/*PLAN*/': read('src/plan.js'),
   '/*TRAININGUI*/': read('src/training-ui.js'),
   '/*INFERENCEUI*/': read('src/inference-ui.js'),
 };
