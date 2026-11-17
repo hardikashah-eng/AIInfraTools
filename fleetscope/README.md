@@ -124,6 +124,12 @@ The **Inference** tab shows serving deployments as pods on the cluster: target r
 
 ![Calibration](docs/img/calibrate.png)
 
+### Live twin
+
+**Live** forecasts traffic from metrics history (Prometheus or an export) with a daily pattern and trend. It runs the forecast through the graph, lists predicted breaches with where and why, and scores past forecasts against what happened. Run `tools/live-twin.mjs` on a schedule to post the same alerts to Slack or Lark. See [docs/LIVE.md](docs/LIVE.md).
+
+![Live twin](docs/img/live-twin.png)
+
 ### What if… a partial outage
 
 Half of the on-prem pool fails for two and a half minutes. Down instances show red, streams cut mid-answer are counted as lost, the KPIs compare against the same graph unstressed, and the banner names where it breaks first. See [docs/STRESS.md](docs/STRESS.md).
@@ -172,6 +178,7 @@ npm run build     # inline src/ into dist/index.html
 | `src/cluster.js`, `src/cluster-ui.js` | Cluster engine (scheduler, quotas, faults, kubectl import) and the Cluster view |
 | `docs/CLUSTER.md` | The cluster model, policy knobs, and importing a real cluster |
 | `src/training.js`, `src/training-ui.js` | Training job model (phases, data loading, stragglers, checkpoints, faults) and the Training view |
+| `src/forecast.js`, `tools/live-twin.mjs`, `docs/LIVE.md` | Forecasts, projections, predicted-breach alerts and the scheduled CLI |
 | `src/calibrate.js`, `docs/CALIBRATION.md` | Fitting pools to vLLM metrics, benchmarks and recorded traces; training step timings |
 | `docs/TRAINING.md` | The training model, the four sub-views, and fault-log import |
 | `src/inference-ui.js`, `docs/INFERENCE.md` | The Inference view and its start-up model |

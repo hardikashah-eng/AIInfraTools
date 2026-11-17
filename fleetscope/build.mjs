@@ -13,6 +13,7 @@ const inlined = {
   '/*TEMPLATES*/': read('src/templates.js'),
   '/*INGEST*/': read('src/ingest.js'),
   '/*CALIBRATE*/': read('src/calibrate.js'),
+  '/*FORECAST*/': read('src/forecast.js'),
   '/*CLUSTER*/': read('src/cluster.js'),
   '/*CLUSTERUI*/': read('src/cluster-ui.js'),
   '/*TRAINING*/': read('src/training.js'),

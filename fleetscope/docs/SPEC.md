@@ -198,6 +198,10 @@ Sites with VM-only telemetry can be calibrated only on request-level latency and
 
 Pools carry prefill and decode multipliers fitted by re-simulation to a recorded trace, a vLLM `/metrics` snapshot or a `benchmark_serving` result, with the acceptance check above and a diagnosis when a fit can't pass. Training fits kernel efficiency, overlap and dataloader rate from step timings, and fault rates from Xid logs. Details: [CALIBRATION.md](CALIBRATION.md).
 
+## Live twin (built)
+
+Request-rate history is forecast with Holt-Winters and an 80% band, projected through the graph, and turned into minute-level breach alerts that name the node and cause. Forecasts are backtested against what happened. A CLI runs it on a schedule and posts to Slack or Lark. Details: [LIVE.md](LIVE.md).
+
 ## Build phases
 
 1. **Prototype (done):** a browser-only node editor and player on the tier-1 engine, with agent, chat, trace and training nodes, seven templates and baseline compare. Profiles come from spec sheets, not measurements.
