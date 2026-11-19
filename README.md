@@ -1,6 +1,6 @@
 # MiscTools
 
-Small tools and prototypes. Each tool lives in its own folder with its own README.
+Tools that help capacity building in AIInfra. Each tool lives in its own folder with its own README.
 
 | Tool | What it is |
 | --- | --- |
