@@ -1,4 +1,4 @@
-# MiscTools
+# AIInfraTools
 
 Tools that help capacity building in AIInfra. Each tool lives in its own folder with its own README.
 
