@@ -1,0 +1,1466 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Inference Sizer</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans+Condensed:wght@500;600&family=IBM+Plex+Sans:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+/* Layout: sticky input rail on the left, results read top-down on the right: verdict → topology → SLO check → charts → detail. */
+:root {
+  --bg: #eef1f0; --surface: #fbfcfc; --sunk: #e4e9e8; --ink: #142321; --muted: #566664; --line: #d3dbd9;
+  --accent: #0e6a70; --accent-ink: #ffffff;
+  --prefill: #c4581b; --decode: #0e6a70; --agg: #4b5fa8; --spare: #9aa7a5;
+  --good: #1f7a3a; --warn: #a86200; --bad: #b3261e;
+  --f-display: "IBM Plex Sans Condensed", "Arial Narrow", system-ui, sans-serif;
+  --f-body: "IBM Plex Sans", system-ui, -apple-system, "Segoe UI", sans-serif;
+  --f-mono: "IBM Plex Mono", ui-monospace, "SFMono-Regular", Menlo, monospace;
+  color-scheme: light;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #0e1615; --surface: #15201f; --sunk: #1b2928; --ink: #e3ebe9; --muted: #93a3a0; --line: #283634;
+    --accent: #4fbfc5; --accent-ink: #062022;
+    --prefill: #f08a50; --decode: #4fbfc5; --agg: #8ea2ef; --spare: #5d6b69;
+    --good: #5cc27a; --warn: #e0a040; --bad: #f0786e; color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #0e1615; --surface: #15201f; --sunk: #1b2928; --ink: #e3ebe9; --muted: #93a3a0; --line: #283634;
+  --accent: #4fbfc5; --accent-ink: #062022;
+  --prefill: #f08a50; --decode: #4fbfc5; --agg: #8ea2ef; --spare: #5d6b69;
+  --good: #5cc27a; --warn: #e0a040; --bad: #f0786e; color-scheme: dark;
+}
+* { box-sizing: border-box; }
+html, body { margin: 0; }
+body { background: var(--bg); color: var(--ink); font: 14px/1.5 var(--f-body); }
+h1, h2, h3 { font-family: var(--f-display); font-weight: 600; text-wrap: balance; margin: 0; letter-spacing: 0.01em; }
+h1 { font-size: 26px; }
+h2 { font-size: 18px; }
+h3 { font-size: 14px; text-transform: uppercase; letter-spacing: 0.06em; color: var(--muted); }
+.num, td.n, .mono { font-family: var(--f-mono); font-variant-numeric: tabular-nums; }
+a { color: var(--accent); }
+
+header.top { display: flex; flex-wrap: wrap; align-items: baseline; justify-content: space-between; gap: 8px 24px; padding: 18px 24px 14px; border-bottom: 1px solid var(--line); background: var(--surface); }
+header.top p { margin: 2px 0 0; color: var(--muted); font-size: 13px; }
+.spec { font-family: var(--f-mono); font-size: 12px; color: var(--muted); }
+
+.layout { display: grid; grid-template-columns: 360px minmax(0, 1fr); gap: 0; }
+aside.inputs { border-right: 1px solid var(--line); background: var(--surface); padding: 16px 18px 40px; position: sticky; top: 0; align-self: start; max-height: 100vh; overflow-y: auto; }
+main.results { padding: 20px 24px 60px; display: flex; flex-direction: column; gap: 20px; min-width: 0; }
+@media (max-width: 900px) {
+  .layout { grid-template-columns: 1fr; }
+  aside.inputs { position: static; max-height: none; border-right: 0; border-bottom: 1px solid var(--line); }
+  main.results { padding: 16px; }
+  header.top { padding: 14px 16px; }
+}
+
+fieldset { border: 0; padding: 0; margin: 0 0 18px; }
+legend { font-family: var(--f-display); font-weight: 600; font-size: 15px; padding: 0; margin-bottom: 8px; display: flex; align-items: center; gap: 8px; }
+legend .idx { font-family: var(--f-mono); font-size: 11px; color: var(--muted); font-weight: 400; }
+.grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 10px 12px; }
+.field { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
+.field.wide { grid-column: 1 / -1; }
+.field label { font-size: 12px; color: var(--muted); }
+.field .hint { font-size: 11.5px; color: var(--muted); }
+.field .hint.warn { color: var(--warn); }
+input[type=number], select { width: 100%; font: 500 13.5px var(--f-mono); color: var(--ink); background: var(--bg); border: 1px solid var(--line); border-radius: 6px; padding: 6px 8px; }
+select { font-family: var(--f-body); }
+input:focus-visible, select:focus-visible, button:focus-visible, summary:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+.unitwrap { position: relative; }
+.unitwrap .u { position: absolute; right: 9px; top: 50%; transform: translateY(-50%); font-size: 11px; color: var(--muted); pointer-events: none; }
+.unitwrap input { padding-right: 46px; }
+.chk { flex-direction: row; align-items: center; gap: 8px; }
+.chk label { color: var(--ink); font-size: 13px; }
+.chips { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 2px; }
+.chip { font: 500 11.5px var(--f-mono); border: 1px solid var(--line); background: var(--surface); color: var(--ink); border-radius: 999px; padding: 2px 9px; cursor: pointer; }
+.chip:hover { border-color: var(--accent); color: var(--accent); }
+.chip.on { background: var(--accent); color: var(--accent-ink); border-color: var(--accent); }
+details.sub { border: 1px solid var(--line); border-radius: 8px; padding: 0 10px; margin-top: 10px; background: var(--bg); }
+details.sub > summary { cursor: pointer; padding: 8px 0; font-size: 12.5px; font-weight: 500; }
+details.sub[open] > summary { border-bottom: 1px solid var(--line); margin-bottom: 10px; }
+details.sub .grid2 { padding-bottom: 12px; }
+.btnrow { display: flex; gap: 8px; flex-wrap: wrap; }
+button { font: 500 13px var(--f-body); border-radius: 6px; padding: 7px 12px; cursor: pointer; border: 1px solid var(--line); background: var(--surface); color: var(--ink); }
+button.primary { background: var(--accent); color: var(--accent-ink); border-color: var(--accent); }
+button:hover { border-color: var(--accent); }
+
+.card { background: var(--surface); border: 1px solid var(--line); border-radius: 10px; padding: 16px 18px; min-width: 0; }
+.card > h2 { margin-bottom: 10px; }
+.card .sub { color: var(--muted); font-size: 13px; margin: -4px 0 12px; max-width: 75ch; }
+
+.verdict { border-top: 4px solid var(--accent); }
+.verdict.fail { border-top-color: var(--bad); }
+.vhead { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 10px; align-items: flex-start; }
+.vhead .what { font-family: var(--f-display); font-size: 22px; font-weight: 600; }
+.vhead .why { color: var(--muted); margin-top: 2px; max-width: 70ch; }
+.pill { display: inline-flex; align-items: center; gap: 6px; font: 500 11.5px var(--f-mono); padding: 2px 8px; border-radius: 999px; border: 1px solid currentColor; white-space: nowrap; }
+.pill.good { color: var(--good); } .pill.warn { color: var(--warn); } .pill.bad { color: var(--bad); } .pill.neutral { color: var(--muted); }
+.kpis { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 10px; margin-top: 14px; }
+.kpi { background: var(--bg); border-radius: 8px; padding: 10px 12px; }
+.kpi .k { font-size: 12px; color: var(--muted); }
+.kpi .v { font: 500 26px/1.15 var(--f-mono); font-variant-numeric: tabular-nums; margin-top: 2px; }
+.kpi .v small { font-size: 13px; color: var(--muted); font-weight: 400; }
+.kpi .d { font-size: 12px; color: var(--muted); }
+.kpi.main .v { color: var(--accent); }
+.warns { display: flex; flex-direction: column; gap: 6px; margin-top: 12px; }
+.warnline { border-left: 3px solid var(--warn); padding: 4px 10px; background: var(--bg); font-size: 13px; }
+.warnline.bad { border-left-color: var(--bad); }
+
+.pools { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 10px; margin-bottom: 14px; }
+.pool { border: 1px solid var(--line); border-left: 5px solid var(--decode); border-radius: 8px; padding: 10px 12px; }
+.pool.p { border-left-color: var(--prefill); } .pool.a { border-left-color: var(--agg); } .pool.s { border-left-color: var(--spare); }
+.pool .t { font-family: var(--f-display); font-weight: 600; font-size: 15px; }
+.pool .l { font: 500 13px var(--f-mono); margin: 2px 0 4px; }
+.pool ul { margin: 0; padding-left: 16px; color: var(--muted); font-size: 12.5px; }
+
+.rack { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 8px; }
+.node { border: 1px solid var(--line); border-radius: 6px; padding: 6px; background: var(--bg); }
+.node .nh { display: flex; justify-content: space-between; font: 11px var(--f-mono); color: var(--muted); margin-bottom: 5px; }
+.gpus { display: grid; grid-template-columns: repeat(8, 1fr); gap: 3px; }
+.gpu { aspect-ratio: 1 / 1.35; border-radius: 3px; background: var(--sunk); display: flex; align-items: flex-end; justify-content: center; font: 9px var(--f-mono); color: var(--accent-ink); padding-bottom: 2px; overflow: hidden; }
+.gpu.p { background: var(--prefill); color: #fff; } .gpu.d { background: var(--decode); color: var(--accent-ink); } .gpu.a { background: var(--agg); color: #fff; }
+.gpu.s { background: repeating-linear-gradient(135deg, var(--spare) 0 3px, transparent 3px 6px); border: 1px solid var(--spare); }
+.gpu.gl { box-shadow: inset 2px 0 0 var(--surface); }
+.legend { display: flex; flex-wrap: wrap; gap: 14px; margin-top: 10px; font-size: 12px; color: var(--muted); }
+.legend span { display: inline-flex; align-items: center; gap: 6px; }
+.legend i { width: 12px; height: 12px; border-radius: 3px; display: inline-block; }
+
+.two { display: grid; grid-template-columns: repeat(auto-fit, minmax(340px, 1fr)); gap: 20px; }
+table { width: 100%; border-collapse: collapse; font-size: 13px; }
+th, td { text-align: left; padding: 7px 8px; border-bottom: 1px solid var(--line); vertical-align: top; }
+th { font-weight: 500; color: var(--muted); font-size: 12px; }
+td.n, th.n { text-align: right; }
+tr.chosen td { background: color-mix(in srgb, var(--accent) 10%, transparent); }
+tr.chosen td:first-child { box-shadow: inset 3px 0 0 var(--accent); }
+.tablewrap { overflow-x: auto; }
+.muted { color: var(--muted); }
+.x { color: var(--muted); font-size: 12px; }
+
+.membar { display: flex; height: 26px; border-radius: 5px; overflow: hidden; border: 1px solid var(--line); }
+.membar div { height: 100%; }
+.memlegend { display: grid; grid-template-columns: auto 1fr auto; gap: 4px 10px; margin-top: 10px; font-size: 12.5px; align-items: center; }
+.memlegend i { width: 11px; height: 11px; border-radius: 2px; display: inline-block; }
+dl.kv { display: grid; grid-template-columns: 1fr auto; gap: 5px 14px; margin: 0; font-size: 13px; }
+dl.kv dt { color: var(--muted); }
+dl.kv dd { margin: 0; text-align: right; font-family: var(--f-mono); font-variant-numeric: tabular-nums; }
+dl.kv .sep { grid-column: 1 / -1; border-top: 1px solid var(--line); margin: 4px 0; }
+
+svg.chart { width: 100%; height: auto; display: block; overflow: visible; }
+svg.chart text { fill: var(--muted); font: 11px var(--f-mono); }
+svg.chart .grid { stroke: var(--line); stroke-width: 1; }
+.method { font-size: 13px; }
+.method ol { padding-left: 20px; margin: 6px 0; display: flex; flex-direction: column; gap: 6px; max-width: 90ch; }
+.method code { font-family: var(--f-mono); font-size: 12px; background: var(--bg); padding: 1px 4px; border-radius: 3px; }
+.toast { font-size: 12px; color: var(--good); min-height: 1em; }
+.note { font-size: 12.5px; color: var(--muted); margin: 0 0 10px; }
+.note code, .sub code { font-family: var(--f-mono); font-size: 11.5px; }
+.lbl { font-size: 12px; color: var(--muted); display: block; margin: 8px 0 3px; }
+textarea { width: 100%; font: 12px/1.45 var(--f-mono); color: var(--ink); background: var(--bg); border: 1px solid var(--line); border-radius: 6px; padding: 8px; resize: vertical; }
+input[type=text] { width: 100%; font: 13px var(--f-body); color: var(--ink); background: var(--surface); border: 1px solid var(--line); border-radius: 6px; padding: 6px 8px; }
+.saver { border-top: 1px solid var(--line); padding: 10px 0 12px; display: flex; flex-direction: column; gap: 6px; }
+.saver > label { font-size: 12px; color: var(--muted); }
+.saverow { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+.saverow input { flex: 1 1 160px; }
+.msg { font-size: 12.5px; min-height: 0; }
+.msg.good { color: var(--good); } .msg.bad, .msg .bad { color: var(--bad); }
+.field[hidden] { display: none; }
+.eyebrow { font: 500 12px var(--f-mono); color: var(--muted); margin-bottom: 2px; }
+.toast.bad { color: var(--bad); }
+.rack.wide { grid-template-columns: repeat(auto-fill, minmax(320px, 1fr)); }
+.rack.wide .gpu { aspect-ratio: 1 / 1.2; font-size: 8px; }
+.legend i.hatch { background: repeating-linear-gradient(135deg, var(--spare) 0 3px, transparent 3px 6px); border: 1px solid var(--spare); }
+.legend i.dots { background: none; border-top: 2px dotted var(--muted); height: 0; border-radius: 0; }
+.overlay { position: fixed; inset: 0; background: color-mix(in srgb, var(--ink) 40%, transparent); display: flex; align-items: center; justify-content: center; padding: 16px; z-index: 10; }
+.overlay[hidden] { display: none; }
+.dlg { background: var(--surface); border: 1px solid var(--line); border-radius: 10px; padding: 16px 18px; width: min(760px, 100%); max-height: calc(100% - 32px); overflow: auto; display: flex; flex-direction: column; gap: 10px; }
+.dlg .dh { display: flex; justify-content: space-between; align-items: center; gap: 10px; }
+.dlg .sub { margin: 0; color: var(--muted); font-size: 13px; }
+.dlg .msg { color: var(--muted); }
+@media (prefers-reduced-motion: reduce) { * { transition: none !important; } }
+</style>
+</head>
+<body>
+<header class="top">
+  <div>
+    <h1>Inference Sizer</h1>
+    <p>How many GPUs serve a model at your latency targets, and how to lay them out. Part of MiscTools, next to FleetScope.</p>
+  </div>
+  <div class="spec" id="spec"></div>
+</header>
+<div class="layout">
+  <aside class="inputs" id="inputs" aria-label="Inputs"></aside>
+  <main class="results" id="results" aria-live="polite"></main>
+</div>
+<div class="overlay" id="dialog" hidden></div>
+<script>
+/* Inference Sizer catalog: GPUs and models, spec-sheet import/export, and Hugging Face config.json parsing.
+   Plain data plus validation, so the browser page, the CLI and FleetScope can share it. */
+(function (root) {
+  'use strict';
+
+  // ---------- schemas ----------
+  // Every field a GPU or model entry may carry, with its unit, range and a one-line meaning.
+  // The UI builds its edit forms from these, and imports are checked against them.
+  const GPU_FIELDS = [
+    { k: 'label', type: 'text', label: 'Name', required: true },
+    { k: 'vendor', type: 'text', label: 'Vendor' },
+    { k: 'hbmGB', label: 'HBM per GPU', unit: 'GB', min: 1, max: 4096, required: true, hint: 'Memory the GPU exposes (e.g. 180 for HGX B200).' },
+    { k: 'hbmTBs', label: 'HBM bandwidth', unit: 'TB/s', min: 0.1, max: 100, required: true },
+    { k: 'tfBf16', label: 'BF16 dense', unit: 'TFLOPS', min: 1, max: 1e6, required: true, hint: 'Dense, not the "with sparsity" figure.' },
+    { k: 'tfFp8', label: 'FP8 dense', unit: 'TFLOPS', min: 0, max: 1e6, hint: '0 if the GPU has no FP8 tensor cores.' },
+    { k: 'tfFp4', label: 'FP4 dense', unit: 'TFLOPS', min: 0, max: 1e6, hint: '0 if the GPU has no FP4 tensor cores.' },
+    { k: 'scaleUpGBs', label: 'GPU-to-GPU link, per direction', unit: 'GB/s', min: 1, max: 1e5, required: true, hint: 'NVLink / Infinity Fabric. Half the bidirectional figure.' },
+    { k: 'domain', label: 'GPUs per scale-up domain', unit: 'GPUs', min: 1, max: 576, required: true, hint: '8 for an HGX server, 72 for an NVL72 rack.' },
+    { k: 'nicGbps', label: 'Scale-out NIC per GPU', unit: 'Gb/s', min: 1, max: 1e4, required: true },
+    { k: 'nodeKW', label: 'Power per domain (max)', unit: 'kW', min: 0, max: 2000 },
+    { k: 'price', label: 'Price', unit: '$/GPU-hr', min: 0, max: 1000, hint: 'Placeholder unless you set your own.' },
+    { k: 'source', type: 'text', label: 'Spec sheet URL' },
+  ];
+  const MODEL_FIELDS = [
+    { k: 'name', type: 'text', label: 'Name', required: true },
+    { k: 'total', label: 'Total params', unit: 'B', min: 0.01, max: 1e5, required: true },
+    { k: 'active', label: 'Active params per token', unit: 'B', min: 0.01, max: 1e5, required: true },
+    { k: 'layers', label: 'Layers', min: 1, max: 1000, int: true, required: true },
+    { k: 'hidden', label: 'Hidden size', min: 64, max: 1e6, int: true, required: true },
+    { k: 'qHeads', label: 'Query heads', min: 1, max: 4096, int: true, required: true },
+    { k: 'kvHeads', label: 'KV heads', min: 1, max: 4096, int: true, required: true },
+    { k: 'headDim', label: 'Head dim', min: 8, max: 4096, int: true, required: true },
+    { k: 'attn', type: 'enum', opts: ['gqa', 'mla'], label: 'Attention', required: true },
+    { k: 'mlaLatent', label: 'MLA KV latent (kv_lora_rank)', min: 1, max: 1e5, int: true },
+    { k: 'mlaRope', label: 'MLA RoPE dim', min: 0, max: 1e4, int: true },
+    { k: 'mlaNope', label: 'MLA QK no-PE dim', min: 0, max: 1e4, int: true },
+    { k: 'mlaV', label: 'MLA V head dim', min: 1, max: 1e4, int: true },
+    { k: 'experts', label: 'Routed experts (0 = dense)', min: 0, max: 1e5, int: true },
+    { k: 'topk', label: 'Experts per token', min: 0, max: 1e4, int: true },
+    { k: 'swaFrac', label: 'Share of sliding-window layers', min: 0, max: 1 },
+    { k: 'swaWindow', label: 'Sliding window', unit: 'tokens', min: 0, max: 1e8, int: true },
+    { k: 'maxCtx', label: 'Max context', unit: 'tokens', min: 256, max: 1e8, int: true, required: true },
+    { k: 'wprec', type: 'enum', opts: ['bf16', 'fp8', 'fp4'], label: 'Default weight precision' },
+    { k: 'source', type: 'text', label: 'Model card URL' },
+  ];
+
+  // ---------- built-in GPUs ----------
+  // Per-GPU dense figures. HGX/DGX system totals divided by 8 (or 72 for NVL72); "with sparsity" figures halved.
+  // Prices are placeholder on-demand rents (matching FleetScope's table where it has the GPU), not quotes.
+  const GPUS = [
+    { id: 'B200', label: 'NVIDIA B200 (HGX, 8-GPU)', vendor: 'NVIDIA', hbmGB: 180, hbmTBs: 8, tfBf16: 2250, tfFp8: 4500, tfFp4: 9000, scaleUpGBs: 900, domain: 8, nicGbps: 400, nodeKW: 14.3, price: 5.5,
+      source: 'https://www.nvidia.com/en-us/data-center/dgx-b200/' },
+    { id: 'B300', label: 'NVIDIA B300 (HGX, 8-GPU)', vendor: 'NVIDIA', hbmGB: 262, hbmTBs: 8, tfBf16: 2250, tfFp8: 4500, tfFp4: 13500, scaleUpGBs: 900, domain: 8, nicGbps: 800, nodeKW: 14.5, price: 7.0,
+      source: 'https://www.nvidia.com/en-us/data-center/hgx/' },
+    { id: 'GB200-NVL72', label: 'NVIDIA GB200 NVL72 (72-GPU rack)', vendor: 'NVIDIA', hbmGB: 186, hbmTBs: 8, tfBf16: 2500, tfFp8: 5000, tfFp4: 10000, scaleUpGBs: 900, domain: 72, nicGbps: 400, nodeKW: 120, price: 6.0,
+      source: 'https://www.nvidia.com/en-us/data-center/gb200-nvl72/' },
+    { id: 'H200', label: 'NVIDIA H200 SXM (8-GPU)', vendor: 'NVIDIA', hbmGB: 141, hbmTBs: 4.8, tfBf16: 989, tfFp8: 1979, tfFp4: 0, scaleUpGBs: 450, domain: 8, nicGbps: 400, nodeKW: 10.2, price: 3.5,
+      source: 'https://www.nvidia.com/en-us/data-center/h200/' },
+    { id: 'H100', label: 'NVIDIA H100 SXM (8-GPU)', vendor: 'NVIDIA', hbmGB: 80, hbmTBs: 3.35, tfBf16: 989, tfFp8: 1979, tfFp4: 0, scaleUpGBs: 450, domain: 8, nicGbps: 400, nodeKW: 10.2, price: 2.4,
+      source: 'https://www.nvidia.com/en-us/data-center/h100/' },
+    { id: 'A100', label: 'NVIDIA A100 80GB SXM (8-GPU)', vendor: 'NVIDIA', hbmGB: 80, hbmTBs: 2.0, tfBf16: 312, tfFp8: 0, tfFp4: 0, scaleUpGBs: 300, domain: 8, nicGbps: 200, nodeKW: 6.5, price: 1.6,
+      source: 'https://www.nvidia.com/en-us/data-center/a100/' },
+    { id: 'L40S', label: 'NVIDIA L40S (PCIe, 8 per server)', vendor: 'NVIDIA', hbmGB: 48, hbmTBs: 0.864, tfBf16: 362, tfFp8: 733, tfFp4: 0, scaleUpGBs: 32, domain: 8, nicGbps: 200, nodeKW: 5, price: 1.1,
+      source: 'https://www.nvidia.com/en-us/data-center/l40s/' },
+    { id: 'MI300X', label: 'AMD Instinct MI300X (8-GPU)', vendor: 'AMD', hbmGB: 192, hbmTBs: 5.3, tfBf16: 1307, tfFp8: 2615, tfFp4: 0, scaleUpGBs: 448, domain: 8, nicGbps: 400, nodeKW: 10, price: 2.6,
+      source: 'https://www.amd.com/en/products/accelerators/instinct/mi300/mi300x.html' },
+  ];
+
+  // ---------- built-in models ----------
+  const MLA = { attn: 'mla', kvHeads: 1, headDim: 128, mlaLatent: 512, mlaRope: 64, mlaNope: 128, mlaV: 128 };
+  const G = { attn: 'gqa', experts: 0, topk: 0, swaFrac: 0, swaWindow: 0 };
+  const MODELS = [
+    Object.assign({ id: 'llama31-8b', name: 'Llama 3.1 8B', total: 8.03, active: 8.03, layers: 32, hidden: 4096, qHeads: 32, kvHeads: 8, headDim: 128, maxCtx: 131072, wprec: 'fp8', source: 'https://huggingface.co/meta-llama/Llama-3.1-8B-Instruct' }, G),
+    Object.assign({ id: 'qwen3-32b', name: 'Qwen3 32B', total: 32.8, active: 32.8, layers: 64, hidden: 5120, qHeads: 64, kvHeads: 8, headDim: 128, maxCtx: 131072, wprec: 'fp8', source: 'https://huggingface.co/Qwen/Qwen3-32B' }, G),
+    Object.assign({ id: 'llama33-70b', name: 'Llama 3.3 70B', total: 70.6, active: 70.6, layers: 80, hidden: 8192, qHeads: 64, kvHeads: 8, headDim: 128, maxCtx: 131072, wprec: 'fp8', source: 'https://huggingface.co/meta-llama/Llama-3.3-70B-Instruct' }, G),
+    Object.assign({ id: 'qwen25-72b', name: 'Qwen2.5 72B', total: 72.7, active: 72.7, layers: 80, hidden: 8192, qHeads: 64, kvHeads: 8, headDim: 128, maxCtx: 131072, wprec: 'fp8', source: 'https://huggingface.co/Qwen/Qwen2.5-72B-Instruct' }, G),
+    Object.assign({ id: 'llama31-405b', name: 'Llama 3.1 405B', total: 405.9, active: 405.9, layers: 126, hidden: 16384, qHeads: 128, kvHeads: 8, headDim: 128, maxCtx: 131072, wprec: 'fp8', source: 'https://huggingface.co/meta-llama/Llama-3.1-405B-Instruct' }, G),
+    Object.assign({}, G, { id: 'gpt-oss-120b', name: 'gpt-oss-120b (MoE)', total: 116.8, active: 5.1, layers: 36, hidden: 2880, qHeads: 64, kvHeads: 8, headDim: 64, experts: 128, topk: 4, swaFrac: 0.5, swaWindow: 128, maxCtx: 131072, wprec: 'fp4', source: 'https://huggingface.co/openai/gpt-oss-120b' }),
+    Object.assign({}, G, { id: 'mixtral-8x22b', name: 'Mixtral 8x22B (MoE)', total: 141, active: 39, layers: 56, hidden: 6144, qHeads: 48, kvHeads: 8, headDim: 128, experts: 8, topk: 2, maxCtx: 65536, wprec: 'fp8', source: 'https://huggingface.co/mistralai/Mixtral-8x22B-Instruct-v0.1' }),
+    Object.assign({}, G, { id: 'qwen3-235b', name: 'Qwen3 235B-A22B (MoE)', total: 235, active: 22, layers: 94, hidden: 4096, qHeads: 64, kvHeads: 4, headDim: 128, experts: 128, topk: 8, maxCtx: 131072, wprec: 'fp8', source: 'https://huggingface.co/Qwen/Qwen3-235B-A22B' }),
+    Object.assign({}, G, { id: 'llama4-maverick', name: 'Llama 4 Maverick 400B (MoE)', total: 400, active: 17, layers: 48, hidden: 5120, qHeads: 40, kvHeads: 8, headDim: 128, experts: 128, topk: 1, swaFrac: 0.75, swaWindow: 8192, maxCtx: 1048576, wprec: 'fp8', source: 'https://huggingface.co/meta-llama/Llama-4-Maverick-17B-128E-Instruct' }),
+    Object.assign({}, G, { id: 'qwen3-coder-480b', name: 'Qwen3-Coder 480B-A35B (MoE)', total: 480, active: 35, layers: 62, hidden: 6144, qHeads: 96, kvHeads: 8, headDim: 128, experts: 160, topk: 8, maxCtx: 262144, wprec: 'fp8', source: 'https://huggingface.co/Qwen/Qwen3-Coder-480B-A35B-Instruct' }),
+    Object.assign({}, G, MLA, { id: 'deepseek-v3', name: 'DeepSeek-V3 / R1 671B (MoE, MLA)', total: 671, active: 37, layers: 61, hidden: 7168, qHeads: 128, experts: 256, topk: 8, maxCtx: 131072, wprec: 'fp8', source: 'https://huggingface.co/deepseek-ai/DeepSeek-V3' }),
+    Object.assign({}, G, MLA, { id: 'kimi-k2', name: 'Kimi K2 1T (MoE, MLA)', total: 1040, active: 32, layers: 61, hidden: 7168, qHeads: 64, experts: 384, topk: 8, maxCtx: 131072, wprec: 'fp8', source: 'https://huggingface.co/moonshotai/Kimi-K2-Instruct' }),
+  ];
+  const MODEL_DEFAULTS = { attn: 'gqa', experts: 0, topk: 0, swaFrac: 0, swaWindow: 0, mlaLatent: 512, mlaRope: 64, mlaNope: 128, mlaV: 128, wprec: 'fp8' };
+  const GPU_DEFAULTS = { tfFp8: 0, tfFp4: 0, nodeKW: 0, price: 0, vendor: '' };
+
+  // ---------- validation ----------
+  const slug = s => String(s || '').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '').slice(0, 60) || 'item';
+  function check(entry, fields, defaults, kind) {
+    const errors = [];
+    if (!entry || typeof entry !== 'object' || Array.isArray(entry)) return { ok: false, errors: [kind + ' entry must be an object.'] };
+    const out = Object.assign({}, defaults);
+    const nameKey = kind === 'GPU' ? 'label' : 'name';
+    out.id = entry.id ? String(entry.id).replace(/[^A-Za-z0-9._-]+/g, '-').slice(0, 60) : slug(entry[nameKey]);
+    for (const f of fields) {
+      let v = entry[f.k];
+      if (v === undefined || v === null || v === '') {
+        if (f.required) errors.push(`${kind} "${entry[nameKey] || entry.id || '?'}": missing ${f.label} (${f.k}).`);
+        continue;
+      }
+      if (f.type === 'text') { out[f.k] = String(v).slice(0, 300); continue; }
+      if (f.type === 'enum') {
+        v = String(v).toLowerCase();
+        if (!f.opts.includes(v)) { errors.push(`${kind} "${entry[nameKey] || out.id}": ${f.k} must be one of ${f.opts.join(', ')}.`); continue; }
+        out[f.k] = v; continue;
+      }
+      v = Number(v);
+      if (!isFinite(v)) { errors.push(`${kind} "${entry[nameKey] || out.id}": ${f.k} must be a number.`); continue; }
+      if (f.int) v = Math.round(v);
+      if (v < f.min || v > f.max) { errors.push(`${kind} "${entry[nameKey] || out.id}": ${f.k} = ${v} is outside ${f.min}–${f.max}${f.unit ? ' ' + f.unit : ''}.`); continue; }
+      out[f.k] = v;
+    }
+    if (kind === 'Model' && out.active > out.total) errors.push(`Model "${out.name}": active params (${out.active}B) exceed total (${out.total}B).`);
+    if (kind === 'Model' && out.experts > 0 && !(out.topk > 0 && out.topk < out.experts)) errors.push(`Model "${out.name}": experts per token must be between 1 and ${out.experts - 1}.`);
+    if (kind === 'Model' && out.experts > 0 && out.active >= out.total) errors.push(`Model "${out.name}": an MoE model needs active params below total params.`);
+    return { ok: errors.length === 0, errors, value: out };
+  }
+  const validateGPU = g => check(g, GPU_FIELDS, GPU_DEFAULTS, 'GPU');
+  const validateModel = m => check(m, MODEL_FIELDS, MODEL_DEFAULTS, 'Model');
+
+  // ---------- spec sheets ----------
+  // A spec sheet is JSON: { "kind": "inference-sizer/catalog", "version": 1, "gpus": [...], "models": [...] }.
+  // An entry whose id matches a built-in one replaces it ("update via spec sheet"); new ids are added.
+  // A single GPU or model object, or a Hugging Face config.json, is also accepted.
+  const SHEET_KIND = 'inference-sizer/catalog';
+  function parseSheet(text) {
+    let j;
+    try { j = typeof text === 'string' ? JSON.parse(text) : text; } catch (e) { return { ok: false, errors: ['Not valid JSON: ' + e.message], gpus: [], models: [] }; }
+    const res = { ok: true, errors: [], gpus: [], models: [], notes: [] };
+    if (!j || typeof j !== 'object') return { ok: false, errors: ['Expected a JSON object.'], gpus: [], models: [] };
+    let gpus = [], models = [];
+    if (Array.isArray(j.gpus) || Array.isArray(j.models)) { gpus = j.gpus || []; models = j.models || []; }
+    else if (isHFConfig(j)) { const m = fromHFConfig(j); models = [m.model]; res.notes.push(...m.notes); }
+    else if ('hbmGB' in j || 'tfBf16' in j) gpus = [j];
+    else if ('layers' in j || 'qHeads' in j) models = [j];
+    else return { ok: false, errors: ['Could not recognise this file. Use a spec sheet with "gpus" and/or "models" arrays, a single GPU or model entry, or a Hugging Face config.json.'], gpus: [], models: [] };
+    for (const g of gpus) { const r = validateGPU(g); if (r.ok) res.gpus.push(r.value); else res.errors.push(...r.errors); }
+    for (const m of models) { const r = validateModel(m); if (r.ok) res.models.push(r.value); else res.errors.push(...r.errors); }
+    res.ok = res.errors.length === 0 && (res.gpus.length + res.models.length) > 0;
+    if (!res.gpus.length && !res.models.length && !res.errors.length) { res.ok = false; res.errors.push('The file holds no GPUs or models.'); }
+    return res;
+  }
+  function makeSheet(gpus, models) {
+    const strip = o => { const c = Object.assign({}, o); delete c.builtin; delete c.custom; return c; };
+    return { kind: SHEET_KIND, version: 1, gpus: (gpus || []).map(strip), models: (models || []).map(strip) };
+  }
+  // Built-ins overlaid with user entries (same id replaces).
+  function merge(builtin, custom) {
+    const out = builtin.map(x => Object.assign({ builtin: true }, x));
+    for (const c of custom || []) {
+      const i = out.findIndex(x => x.id === c.id);
+      const e = Object.assign({ custom: true }, c);
+      if (i >= 0) out[i] = Object.assign(e, { overrides: true }); else out.push(e);
+    }
+    return out;
+  }
+
+  // ---------- Hugging Face config.json ----------
+  function isHFConfig(j) {
+    const c = j.text_config || j;
+    return ('num_hidden_layers' in c || 'n_layer' in c) && ('hidden_size' in c || 'n_embd' in c || 'd_model' in c);
+  }
+  const first = (o, keys, d) => { for (const k of keys) if (o[k] !== undefined && o[k] !== null) return o[k]; return d; };
+  // Reads architecture fields and estimates parameter counts from the layer shapes (embeddings, attention, MLP/experts).
+  function fromHFConfig(j) {
+    const notes = [];
+    const c = j.text_config ? Object.assign({}, j.text_config) : j;
+    if (j.text_config) notes.push('Read the text model from text_config.');
+    const layers = +first(c, ['num_hidden_layers', 'n_layer', 'num_layers']);
+    const hidden = +first(c, ['hidden_size', 'n_embd', 'd_model']);
+    const qHeads = +first(c, ['num_attention_heads', 'n_head', 'num_heads']);
+    let kvHeads = +first(c, ['num_key_value_heads', 'num_kv_heads', 'n_head_kv'], c.multi_query ? 1 : qHeads);
+    const headDim = +first(c, ['head_dim'], Math.round(hidden / qHeads));
+    const V = +first(c, ['vocab_size', 'padded_vocab_size'], 32000);
+    const inter = +first(c, ['intermediate_size', 'ffn_hidden_size', 'n_inner'], 4 * hidden);
+    const experts = +first(c, ['num_local_experts', 'n_routed_experts', 'num_experts', 'moe_num_experts'], 0) || 0;
+    const topk = experts ? +first(c, ['num_experts_per_tok', 'experts_per_token', 'moe_top_k', 'num_experts_per_token', 'top_k'], 2) : 0;
+    const moeInter = +first(c, ['moe_intermediate_size', 'expert_intermediate_size'], inter);
+    const denseInter = +first(c, ['intermediate_size_mlp'], inter);
+    const mla = c.kv_lora_rank != null;
+    const mlaLatent = mla ? +c.kv_lora_rank : 512, mlaRope = mla ? +first(c, ['qk_rope_head_dim'], 64) : 64;
+    const mlaNope = mla ? +first(c, ['qk_nope_head_dim'], 128) : 128, mlaV = mla ? +first(c, ['v_head_dim'], 128) : 128;
+    if (mla) kvHeads = 1;
+    // sliding window
+    let swaFrac = 0, swaWindow = 0;
+    if (Array.isArray(c.layer_types) && c.sliding_window) {
+      const n = c.layer_types.filter(t => /slid/i.test(String(t))).length;
+      swaFrac = +(n / c.layer_types.length).toFixed(3); swaWindow = +c.sliding_window;
+    } else if (c.sliding_window && c.use_sliding_window === true) { swaFrac = 1; swaWindow = +c.sliding_window; }
+    else if (c.attention_chunk_size && c.no_rope_layers) {
+      const n = c.no_rope_layers.filter(x => x).length;
+      swaFrac = +(n / c.no_rope_layers.length).toFixed(3); swaWindow = +c.attention_chunk_size;
+      notes.push('Chunked-attention layers modelled as sliding-window layers.');
+    }
+    if (c.sliding_window && !swaFrac) notes.push('sliding_window is set but not enabled for these layers; KV is sized for full attention.');
+    // context
+    let maxCtx = +first(c, ['max_position_embeddings', 'n_positions', 'seq_length', 'max_sequence_length'], 4096);
+    const rs = c.rope_scaling;
+    if (rs && rs.factor && rs.original_max_position_embeddings) maxCtx = Math.max(maxCtx, Math.round(rs.factor * rs.original_max_position_embeddings));
+    // which layers are MoE
+    let moeLayers = experts ? layers : 0;
+    if (experts && c.first_k_dense_replace != null) moeLayers = layers - c.first_k_dense_replace;
+    if (experts && c.interleave_moe_layer_step > 1) moeLayers = Math.floor(layers / c.interleave_moe_layer_step);
+    if (experts && c.decoder_sparse_step > 1) moeLayers = Math.floor(layers / c.decoder_sparse_step);
+    if (experts && Array.isArray(c.mlp_only_layers)) moeLayers -= c.mlp_only_layers.length;
+    if (experts && Array.isArray(c.moe_layers)) moeLayers = c.moe_layers.length;
+    const denseLayers = layers - moeLayers;
+    // attention params per layer
+    let attnP;
+    if (mla) {
+      const qk = mlaNope + mlaRope;
+      const qP = c.q_lora_rank ? hidden * c.q_lora_rank + c.q_lora_rank * qHeads * qk : hidden * qHeads * qk;
+      attnP = qP + hidden * (mlaLatent + mlaRope) + mlaLatent * qHeads * (mlaNope + mlaV) + qHeads * mlaV * hidden;
+    } else attnP = hidden * qHeads * headDim * 2 + hidden * kvHeads * headDim * 2;
+    const gated = !(c.hidden_act === 'gelu' && /gpt2|bloom|opt/.test(c.model_type || ''));
+    const mlp = n => (gated ? 3 : 2) * hidden * n;
+    const sharedN = +first(c, ['n_shared_experts', 'num_shared_experts'], 0) || 0;
+    const sharedInter = c.shared_expert_intermediate_size ? +c.shared_expert_intermediate_size : sharedN * moeInter;
+    const llama4Shared = /llama4/.test(c.model_type || '') && experts ? mlp(moeInter) : 0;
+    const expertP = mlp(moeInter);
+    const tied = j.tie_word_embeddings === true || c.tie_word_embeddings === true;
+    const emb = V * hidden * (tied ? 1 : 2);
+    const perMoE = experts * expertP + (sharedInter ? mlp(sharedInter) : 0) + llama4Shared + hidden * experts;
+    const total = emb + layers * attnP + denseLayers * mlp(denseInter) + moeLayers * perMoE;
+    const active = total - moeLayers * (experts - topk) * expertP;
+    notes.push('Parameter counts are estimated from layer shapes; check them against the model card.');
+    const name = String(first(j, ['_name_or_path', 'name_or_path'], '') || '').split('/').pop() || (c.model_type ? c.model_type + ' ' + (total / 1e9).toFixed(0) + 'B' : 'Imported model');
+    const model = {
+      name, total: +(total / 1e9).toFixed(2), active: +(active / 1e9).toFixed(2), layers, hidden, qHeads, kvHeads, headDim,
+      attn: mla ? 'mla' : 'gqa', mlaLatent, mlaRope, mlaNope, mlaV, experts, topk, swaFrac, swaWindow, maxCtx,
+      wprec: /fp8|float8/i.test(JSON.stringify(j.quantization_config || '')) ? 'fp8' : /mxfp4|nvfp4|fp4/i.test(JSON.stringify(j.quantization_config || '')) ? 'fp4' : 'fp8',
+    };
+    return { model, notes };
+  }
+
+  const api = { GPU_FIELDS, MODEL_FIELDS, GPUS, MODELS, MODEL_DEFAULTS, GPU_DEFAULTS, SHEET_KIND, validateGPU, validateModel, parseSheet, makeSheet, merge, fromHFConfig, isHFConfig, slug };
+  if (typeof module !== 'undefined' && module.exports) module.exports = api; else root.SizerCatalog = api;
+})(this);
+
+</script>
+<script>
+/* Inference Sizer model: how many GPUs, in what layout, serve a model at TTFT/TPOT targets.
+   First-order roofline per layout, M/D/1 queueing for prefill, disaggregated vs aggregated serving.
+   Pure functions over one flat input object `s` (model + GPU + traffic + targets + assumptions). See docs/METHOD.md. */
+(function (root) {
+  'use strict';
+
+  // Engine and traffic defaults. Model and GPU fields come from the catalog entry the user picks.
+  const SETTINGS = {
+    kvprec: 'fp8', ctx: 32768,
+    conc: 500, dau: 50000, rpu: 20, peakFactor: 3, concSource: 'max',
+    avgIn: 2000, peakIn: 16000, avgOut: 400, peakOut: 2000,
+    ttft: 1000, tpot: 30,
+    mode: 'auto', kvPolicy: 'paged', prefixHit: 0,
+    memUtil: 0.9, reserveGB: 8,
+    effPrefill: 0.40, effDecodeBW: 0.65, effDecodeComp: 0.30, stepMs: 1.5,
+    maxSeqPerGPU: 256, headroom: 15, nPlus1: true, kvMaxUtil: 0.9, sloMargin: 10,
+  };
+
+  function derive(s) {
+    const bpp = { bf16: 2, fp8: 1.0, fp4: 0.5625 }[s.wprec] || 1;
+    const kvb = { bf16: 2, fp8: 1 }[s.kvprec] || 1;
+    const isMoE = s.experts > 0 && s.topk > 0 && s.topk < s.experts && s.active < s.total;
+    let Eall = 0, dense = s.total;
+    if (isMoE) { Eall = Math.min((s.total - s.active) / (1 - s.topk / s.experts), s.total * 0.98); dense = s.total - Eall; }
+    const mla = s.attn === 'mla';
+    const lat = s.mlaLatent || 512, rope = s.mlaRope == null ? 64 : s.mlaRope, nope = s.mlaNope == null ? 128 : s.mlaNope, vh = s.mlaV || 128;
+    const swaLayers = s.swaWindow > 0 ? Math.round(s.layers * (s.swaFrac || 0)) : 0;
+    // tensor-core rate for the weight precision; fall back when the GPU lacks that precision
+    const tf = { bf16: s.tfBf16, fp8: s.tfFp8 || s.tfBf16, fp4: s.tfFp4 || s.tfFp8 || s.tfBf16 }[s.wprec] || s.tfBf16;
+    const computeFallback = (s.wprec === 'fp4' && !s.tfFp4) ? (s.tfFp8 ? 'fp8' : 'bf16') : (s.wprec === 'fp8' && !s.tfFp8) ? 'bf16' : null;
+    return {
+      bpp, kvb, isMoE, mla, computeFallback,
+      Wd: dense * 1e9 * bpp, We: Eall * 1e9 * bpp,
+      denseP: dense * 1e9, activeP: (isMoE ? s.active : s.total) * 1e9,
+      kvTokLayer: mla ? (lat + rope) * kvb : 2 * s.kvHeads * s.headDim * kvb,
+      swaLayers, fullLayers: s.layers - swaLayers, win: s.swaWindow || 0,
+      // attention FLOPs per (query token, context token) per layer
+      Apre: mla ? s.qHeads * (2 * (nope + rope) + 2 * vh) : 4 * s.qHeads * s.headDim,
+      Adec: mla ? s.qHeads * (2 * (lat + rope) + 2 * lat) : 4 * s.qHeads * s.headDim,
+      Fw: tf * 1e12, Fa: s.tfBf16 * 1e12,
+      BW: s.hbmTBs * 1e12, nvl: s.scaleUpGBs * 1e9 * 0.8, nic: s.nicGbps / 8 * 1e9 * 0.8,
+      hbm: s.hbmGB * 1e9 * s.memUtil, reserve: s.reserveGB * 1e9,
+      D: Math.max(1, Math.round(s.domain || 8)),
+    };
+  }
+
+  function kvBytes(md, L) {
+    const w = md.win || L;
+    return md.kvTokLayer * (md.fullLayers * L + md.swaLayers * Math.min(L, w));
+  }
+  function attnPre(md, Lc, L) {
+    const W = md.win;
+    const f = x => x * x / 2;
+    const g = x => x <= W ? x * x / 2 : W * W / 2 + W * (x - W);
+    return md.Apre * (md.fullLayers * (f(L) - f(Lc)) + md.swaLayers * (g(L) - g(Lc)));
+  }
+  function attnDec(md, L) { return md.Adec * (md.fullLayers * L + md.swaLayers * Math.min(L, md.win || L)); }
+
+  // ---------- parallel layouts ----------
+  // Instances of g GPUs. Inside one scale-up domain (D GPUs): TP, or TP+EP for MoE, or DP-attention+EP for MLA.
+  // Larger than a domain: dense models pipeline across domains (TP=D × PP), MoE models use wide EP.
+  function configs(s, md) {
+    const out = [], D = md.D;
+    for (const g of [1, 2, 4, 8, 16, 32, 64]) {
+      const inDomain = g <= D;
+      if (!inDomain && g % D !== 0) continue;
+      let kind;
+      if (!md.isMoE) { if (g > 32 && !inDomain) continue; kind = inDomain ? 'TP' : 'TPPP'; }
+      else if (md.mla) kind = 'DPEP';
+      else kind = inDomain ? 'TPEP' : 'DPEP';
+      out.push({ g, kind, pp: kind === 'TPPP' ? g / D : 1, tpl: kind === 'TPPP' ? D : g });
+    }
+    return out;
+  }
+  function decodeLabel(c) {
+    if (c.g === 1) return '1 GPU';
+    if (c.kind === 'TP') return 'TP' + c.g;
+    if (c.kind === 'TPPP') return 'TP' + c.tpl + ' × PP' + c.pp;
+    if (c.kind === 'TPEP') return 'TP' + c.g + ' · EP' + c.g;
+    return 'DP' + c.g + ' attn · EP' + c.g;
+  }
+
+  // ---------- memory (decode-side layout) ----------
+  function memInfo(s, md, c) {
+    let wGPU, rep, cap, single;
+    if (c.kind === 'DPEP') { wGPU = md.Wd + md.We / c.g; rep = 1; }
+    else { wGPU = (md.Wd + md.We) / c.g; rep = md.mla ? c.tpl : Math.max(1, c.tpl / s.kvHeads); }
+    const avail = md.hbm - md.reserve - wGPU;
+    if (c.kind === 'DPEP') { cap = avail * c.g; single = avail; }
+    else { cap = avail * c.g / rep; single = cap; }
+    const ctxBytes = kvBytes(md, s.ctx);
+    const perSeq = s.kvPolicy === 'reserve' ? ctxBytes : kvBytes(md, Math.min(s.ctx, s.avgIn + s.avgOut)) * 1.1;
+    const fitsW = avail > 2e9;
+    const fitsCtx = fitsW && single >= ctxBytes;
+    const Bmem = fitsW ? Math.floor(cap * (s.kvMaxUtil || 1) / perSeq) : 0;
+    return { wGPU, rep, avail, cap, single, ctxBytes, perSeq, fitsW, fitsCtx, Bmem };
+  }
+
+  function allreduce(s, md, tp, tokens) {
+    if (tp <= 1) return 0;
+    const bw = tp <= md.D ? md.nvl : md.nic;
+    return 2 * s.layers * (8e-6 + 2 * (tp - 1) / tp * tokens * s.hidden * 2 / bw);
+  }
+
+  // One decode step with B sequences (per micro-batch when pipelined).
+  function decodeStep(s, md, c, B) {
+    const L = Math.min(s.ctx, s.avgIn + s.avgOut / 2);
+    const kvL = kvBytes(md, L);
+    const frac = md.isMoE ? 1 - Math.pow(1 - s.topk / s.experts, B) : 1;
+    const linF = 2 * md.activeP * B, atF = B * attnDec(md, L);
+    let bytes, gl = c.g, comm = 0;
+    if (c.kind === 'DPEP') {
+      const imb = c.g > 1 ? 1.15 : 1;
+      bytes = md.Wd + md.We * frac / c.g * imb + (B / c.g) * kvL;
+      const tok = (B / c.g) * s.topk * s.hidden * 1.5;
+      if (c.g > 1) comm = c.g <= md.D ? 2 * s.layers * (10e-6 + tok / md.nvl) : 2 * s.layers * (25e-6 + tok / md.nic) * 0.6;
+    } else {
+      const rep = md.mla ? c.tpl : Math.max(1, c.tpl / s.kvHeads);
+      gl = c.tpl;
+      bytes = (md.Wd + md.We * frac) / gl + B * kvL * rep / gl;
+      comm = allreduce(s, md, gl, B) * (c.kind === 'TPEP' ? 1.3 : 1);
+      if (c.kind === 'TPPP') comm += (c.pp - 1) * (15e-6 + B * s.hidden * 2 / md.nic);
+    }
+    const tm = bytes / (md.BW * s.effDecodeBW);
+    const tc = linF / gl / (md.Fw * s.effDecodeComp) + atF / gl / (md.Fa * s.effDecodeComp);
+    const ovh = s.stepMs / 1000;
+    return { t: Math.max(tm, tc) + comm + ovh, tm, tc, comm, ovh, bytes, bound: tm >= tc ? 'memory' : 'compute' };
+  }
+
+  function decodeCap(s, md, c, mi) {
+    return Math.max(0, Math.min(Math.floor(mi.Bmem / c.pp), s.maxSeqPerGPU * c.tpl));
+  }
+  // Largest per-micro-batch B whose step time stays within the TPOT target.
+  function bmax(s, md, c, mi, tpotS) {
+    const cap = decodeCap(s, md, c, mi);
+    if (cap < 1) return { B: 0, limit: 'memory' };
+    if (decodeStep(s, md, c, 1).t > tpotS) return { B: 0, limit: 'latency' };
+    if (decodeStep(s, md, c, cap).t <= tpotS) return { B: cap, limit: cap === Math.floor(mi.Bmem / c.pp) ? 'kv-memory' : 'seq-cap' };
+    let lo = 1, hi = cap;
+    while (hi - lo > 1) { const mid = (lo + hi) >> 1; if (decodeStep(s, md, c, mid).t <= tpotS) lo = mid; else hi = mid; }
+    return { B: lo, limit: 'tpot' };
+  }
+
+  // ---------- prefill: TP inside a domain, context parallel (CP) across domains, EP for MoE ----------
+  function preCfg(md, c) { const tp = Math.min(c.g, md.D); return { g: c.g, tp, cp: Math.max(1, Math.round(c.g / tp)) }; }
+  function prefillLabel(c, md) {
+    const p = preCfg(md, c);
+    let l = p.g === 1 ? '1 GPU' : 'TP' + p.tp + (p.cp > 1 ? ' × CP' + p.cp : '');
+    if (md.isMoE && p.g > 1) l += ' · EP' + p.g;
+    return l;
+  }
+  function prefillTime(s, md, c, Lnew, Lc, n) {
+    const p = preCfg(md, c);
+    const lin = 2 * md.activeP * Lnew * n;
+    const at = n * attnPre(md, Lc, Lc + Lnew);
+    const par = p.cp > 1 ? 0.85 : 1;
+    const tc = lin / p.g / (md.Fw * s.effPrefill * par) + at / p.g / (md.Fa * s.effPrefill * par);
+    const tm = (md.Wd / p.tp + md.We / p.g) / (md.BW * s.effDecodeBW);
+    const tokens = Lnew * n;
+    let comm = allreduce(s, md, p.tp, tokens / p.cp) * 0.5;
+    if (md.isMoE && p.g > 1) comm += 2 * s.layers * (10e-6 + tokens / p.g * s.topk * s.hidden * 1.5 / (p.g > md.D ? md.nic : md.nvl)) * 0.5;
+    if (p.cp > 1) comm += (kvBytes(md, Lc + Lnew) * n * (p.cp - 1) / p.cp / (p.tp * md.nic) + s.layers * 20e-6) * 0.5;
+    return Math.max(tc, tm) + comm + 0.004;
+  }
+  function prefillStats(s, md, c) {
+    const hit = s.prefixHit / 100;
+    const aIn = Math.min(s.avgIn, s.ctx), pIn = Math.min(s.peakIn, s.ctx);
+    const Lavg = Math.max(1, aIn * (1 - hit)), LcA = aIn * hit;
+    const Lpk = Math.max(1, pIn * (1 - hit)), LcP = pIn * hit;
+    const budget = Math.max(Lavg, 8192);
+    const n = budget / Lavg;
+    const tBatch = prefillTime(s, md, c, Lavg, LcA, n);
+    const cap = n * Lavg / tBatch; // new prompt tokens / s
+    const Speak = prefillTime(s, md, c, Lpk, LcP, 1);
+    const p = preCfg(md, c);
+    const wGPU = md.Wd / p.tp + md.We / p.g;
+    const rep = md.mla ? p.tp : Math.max(1, p.tp / s.kvHeads);
+    const avail = md.hbm - md.reserve - wGPU;
+    const fits = avail > 2e9 && kvBytes(md, pIn) * rep / p.g * 2 <= avail;
+    return { cap, Sbatch: tBatch, Speak, Lavg, Lpk, fits, wGPU, avail };
+  }
+  function kvXfer(s, md, gP, L) { return kvBytes(md, L) / (Math.min(md.D, gP) * md.nic) + 0.002; }
+  const mdWait = (rho, S) => rho * S / (2 * (1 - rho));
+
+  // ---------- load ----------
+  // Cs   concurrent decode streams to hold at the TPOT target (from "concurrent sessions")
+  // Dtok output tokens/s to deliver (from DAU traffic)
+  // lam  request arrivals/s driving prefill
+  function computeLoad(s) {
+    const dur = s.avgOut * s.tpot / 1000 + s.ttft / 1000;
+    const lamDau = s.dau * s.rpu / 86400 * s.peakFactor;
+    const lamConc = s.conc / dur;
+    const useC = s.concSource !== 'dau', useD = s.concSource !== 'conc';
+    const h = 1 + s.headroom / 100;
+    const lam0 = Math.max(useC ? lamConc : 0, useD ? lamDau : 0);
+    const binding = !useD ? 'concurrency' : !useC ? 'DAU' : (lamDau * dur > s.conc ? 'DAU' : 'concurrency');
+    return { dur, lamDau, lamConc, h, binding, Cs: useC ? s.conc * h : 0, Dtok: useD ? lamDau * s.avgOut * h : 0, lam: lam0 * h, lam0 };
+  }
+  // Smallest per-micro-batch B whose throughput pp*B/t(B) reaches `rate`.
+  function minBforRate(c, tfun, rate, capBm) {
+    if (rate <= 0) return 1;
+    const thr = B => c.pp * B / tfun(B);
+    if (thr(capBm) < rate) return Infinity;
+    let lo = 0, hi = capBm;
+    while (hi - lo > 1) { const mid = (lo + hi) >> 1; if (thr(mid) >= rate) hi = mid; else lo = mid; }
+    return hi;
+  }
+
+  // ---------- sizing ----------
+  const fmtMs = t => { const ms = t * 1000; return ms >= 100 ? Math.round(ms) + ' ms' : ms.toFixed(1) + ' ms'; };
+
+  function sizeDisagg(s, md, load, cfgs) {
+    const m = 1 - (s.sloMargin || 0) / 100, T = s.ttft / 1000 * m, P = s.tpot / 1000 * m; // size to targets less the safety margin
+    const pre = cfgs.map(c => {
+      const ps = prefillStats(s, md, c);
+      const xa = kvXfer(s, md, c.g, Math.min(s.avgIn, s.ctx)), xp = kvXfer(s, md, c.g, Math.min(s.peakIn, s.ctx));
+      const r = { c, label: prefillLabel(c, md), ps, xferAvg: xa, xferPeak: xp, feasible: false, why: '' };
+      if (!ps.fits) { r.why = 'weights + prompt KV do not fit'; return r; }
+      if (ps.Speak + xp > T) { r.why = 'peak prompt TTFT ' + fmtMs(ps.Speak + xp) + ' > target'; return r; }
+      const budget = T - xa, S = ps.Sbatch;
+      if (S >= budget) { r.why = 'avg prompt service time exceeds TTFT budget'; return r; }
+      const x = (budget - S) / S, rhoMax = Math.min(0.85, 2 * x / (1 + 2 * x));
+      const need = load.lam * ps.Lavg;
+      const N = Math.max(1, Math.ceil(need / (ps.cap * rhoMax)));
+      const rho = need / (N * ps.cap);
+      Object.assign(r, { feasible: true, N, gpus: N * c.g, rho, rhoMax, ttftAvg: S + mdWait(rho, S) + xa, ttftPeak: ps.Speak + xp });
+      return r;
+    });
+    const dec = cfgs.map(c => {
+      const mi = memInfo(s, md, c);
+      const r = { c, label: decodeLabel(c), mi, feasible: false, why: '' };
+      if (!mi.fitsW) { r.why = 'weights do not fit'; return r; }
+      if (!mi.fitsCtx) { r.why = 'one full-context sequence does not fit'; return r; }
+      const bm = bmax(s, md, c, mi, P);
+      r.bm = bm;
+      if (bm.B < 1) { r.why = bm.limit === 'latency' ? 'TPOT floor ' + fmtMs(decodeStep(s, md, c, 1).t) + ' > target' : 'no KV room'; return r; }
+      const Binst = bm.B * c.pp;
+      const tfun = B => decodeStep(s, md, c, B).t;
+      const thrInst = Binst / tfun(bm.B);
+      const N = Math.max(1, Math.ceil(load.Cs / Binst), Math.ceil(load.Dtok / thrInst));
+      const Bm = Math.max(1, Math.ceil(load.Cs / N / c.pp), minBforRate(c, tfun, load.Dtok / N, bm.B));
+      const st = decodeStep(s, md, c, Bm), Bop = Bm * c.pp;
+      Object.assign(r, { feasible: true, N, gpus: N * c.g, Binst, Bop, st, tpotOp: st.t, thrInst, kvUse: Bop * mi.perSeq / 1.1 / mi.cap });
+      return r;
+    });
+    const best = arr => arr.filter(r => r.feasible).sort((a, b) => a.gpus - b.gpus || a.c.g - b.c.g)[0] || null;
+    return { pre, dec, P: best(pre), D: best(dec) };
+  }
+
+  // Aggregated: each step carries the decode batch plus a prefill chunk sized to keep the step within TPOT.
+  function sizeAgg(s, md, load, cfgs) {
+    const m = 1 - (s.sloMargin || 0) / 100, T = s.ttft / 1000 * m, P = s.tpot / 1000 * m; // size to targets less the safety margin
+    const rows = cfgs.map(c => {
+      const mi = memInfo(s, md, c);
+      const r = { c, label: decodeLabel(c), mi, feasible: false, why: '' };
+      if (!mi.fitsW) { r.why = 'weights do not fit'; return r; }
+      if (!mi.fitsCtx) { r.why = 'one full-context sequence does not fit'; return r; }
+      const capBm = decodeCap(s, md, c, mi), capB = capBm * c.pp;
+      if (capB < 1) { r.why = 'no KV room'; return r; }
+      const ps = prefillStats(s, md, c);
+      if (!ps.fits) { r.why = 'weights + prompt KV do not fit'; return r; }
+      if (ps.Speak + s.stepMs / 1000 > T) { r.why = 'peak prompt TTFT ' + fmtMs(ps.Speak) + ' > target'; return r; }
+      if (decodeStep(s, md, c, 1).t > P) { r.why = 'TPOT floor ' + fmtMs(decodeStep(s, md, c, 1).t) + ' > target'; return r; }
+      const Nmin = Math.max(1, Math.ceil(load.Cs / capB));
+      const Nmax = Math.max(Nmin * 64, 4096);
+      for (let N = Nmin; N <= Nmax; N++) {
+        const fp0 = load.lam * ps.Lavg / N / ps.cap;
+        if (fp0 >= 0.85) continue;
+        const tAvgF = B => { const q = decodeStep(s, md, c, B); return Math.max(q.tm, q.tc / (1 - fp0)) * 1.1 + q.comm + q.ovh; };
+        const Bm = Math.max(1, Math.ceil(load.Cs / N / c.pp), minBforRate(c, tAvgF, load.Dtok / N, capBm));
+        if (!isFinite(Bm) || Bm > capBm) continue;
+        const st = decodeStep(s, md, c, Bm);
+        const Pcore = (P - st.comm - st.ovh) / 1.1;
+        if (Math.max(st.tm, st.tc) >= Pcore) continue;
+        const chunk = (Pcore - st.tc) * ps.cap;
+        const mu = chunk / P;
+        const rArr = load.lam * ps.Lavg / N;
+        const rho = rArr / mu;
+        if (rho >= 0.85) continue;
+        const S = ps.Lavg / mu;
+        const ttftAvg = S + mdWait(rho, S) + P, ttftPeak = ps.Lpk / mu + P;
+        if (ttftAvg > T || ttftPeak > T) continue;
+        const tAvg = Math.min(P, tAvgF(Bm)), Bop = Bm * c.pp;
+        Object.assign(r, { feasible: true, N, gpus: N * c.g, Bop, st, tpotOp: tAvg, ttftAvg, ttftPeak, fp: fp0, rho, chunk, ps, kvUse: Bop * mi.perSeq / 1.1 / mi.cap, thrInst: Bop / tAvg });
+        return r;
+      }
+      r.why = 'no instance count meets both targets';
+      return r;
+    });
+    const best = rows.filter(r => r.feasible).sort((a, b) => a.gpus - b.gpus || a.c.g - b.c.g)[0] || null;
+    return { rows, best };
+  }
+
+  // Nodes (scale-up domains) needed: instances that span domains take whole domains; smaller ones pack first-fit-decreasing.
+  function packNodes(pools, D) {
+    const items = [];
+    let whole = 0;
+    for (const p of pools) for (let i = 0; i < p.N; i++) { if (p.g >= D) whole += Math.ceil(p.g / D); else items.push(p.g); }
+    items.sort((a, b) => b - a);
+    const bins = [];
+    for (const g of items) { const b = bins.findIndex(x => x + g <= D); if (b >= 0) bins[b] += g; else bins.push(g); }
+    return whole + bins.length;
+  }
+
+  function plan(s, opts) {
+    opts = opts || {};
+    const md = derive(s);
+    const load = computeLoad(s);
+    const cfgs = configs(s, md);
+    const dis = sizeDisagg(s, md, load, cfgs);
+    const agg = sizeAgg(s, md, load, cfgs);
+    const D = md.D;
+    // N+1: room for one more instance of the largest layout, using free GPUs in existing nodes first
+    const spareFor = pools => s.nPlus1 ? packNodes(pools.concat([{ N: 1, g: Math.max(...pools.map(p => p.g)) }]), D) - packNodes(pools, D) : 0;
+    let disOpt = null, aggOpt = null;
+    if (dis.P && dis.D) {
+      const pools = [{ N: dis.P.N, g: dis.P.c.g }, { N: dis.D.N, g: dis.D.c.g }];
+      const nodes = packNodes(pools, D), sp = spareFor(pools);
+      disOpt = { mode: 'disagg', gpus: dis.P.gpus + dis.D.gpus, nodes, spareNodes: sp, totalNodes: nodes + sp };
+    }
+    if (agg.best) {
+      const pools = [{ N: agg.best.N, g: agg.best.c.g }];
+      const nodes = packNodes(pools, D), sp = spareFor(pools);
+      aggOpt = { mode: 'agg', gpus: agg.best.gpus, nodes, spareNodes: sp, totalNodes: nodes + sp };
+    }
+    const plural = n => n === 1 ? '' : 's', U = D > 8 ? 'rack' : 'node';
+    let chosen = null, reason = '';
+    if (s.mode === 'disagg') { chosen = disOpt; reason = 'Disaggregated serving selected.'; }
+    else if (s.mode === 'agg') { chosen = aggOpt; reason = 'Aggregated serving selected.'; }
+    else if (disOpt && (!aggOpt || disOpt.totalNodes < aggOpt.totalNodes * 0.9)) {
+      chosen = disOpt;
+      reason = aggOpt ? `Disaggregated prefill/decode needs ${aggOpt.totalNodes - disOpt.totalNodes} fewer ${U}${plural(aggOpt.totalNodes - disOpt.totalNodes)} than aggregated (${disOpt.totalNodes} vs ${aggOpt.totalNodes}).` : 'Aggregated serving cannot meet both targets on any layout; splitting prefill and decode can.';
+    } else if (aggOpt) {
+      chosen = aggOpt;
+      reason = disOpt ? (aggOpt.totalNodes <= disOpt.totalNodes ? `Aggregated serving with chunked prefill fits in ${aggOpt.totalNodes} ${U}${plural(aggOpt.totalNodes)} (disaggregated: ${disOpt.totalNodes}), with fewer moving parts.` : `Disaggregation would save under 10% (${disOpt.totalNodes} vs ${aggOpt.totalNodes} ${U}s); aggregated is simpler to run.`) : 'Only aggregated serving meets both targets.';
+    } else if (disOpt) { chosen = disOpt; reason = 'Only disaggregated serving meets both targets.'; }
+    const res = { s, md, load, cfgs, dis, agg, disOpt, aggOpt, chosen, reason };
+    if (chosen) { chosen.nodeGPUs = D; chosen.provGPUs = chosen.totalNodes * D; chosen.kw = chosen.totalNodes * (s.nodeKW || 0); }
+    res.tpotFloor = Math.min(...cfgs.map(c => memInfo(s, md, c).fitsW ? decodeStep(s, md, c, 1).t : Infinity));
+    res.ttftFloor = Math.min(...cfgs.map(c => { const p = prefillStats(s, md, c); return p.fits ? p.Speak : Infinity; }));
+    const reqDay = s.dau * s.rpu;
+    res.econ = { reqDay, inDay: reqDay * s.avgIn, outDay: reqDay * s.avgOut };
+    if (chosen) {
+      const costDay = chosen.provGPUs * 24 * (s.price || 0);
+      res.econ.costDay = costDay;
+      res.econ.perMOut = res.econ.outDay > 0 ? costDay / (res.econ.outDay / 1e6) : NaN;
+      res.econ.avgVsPeak = load.lam > 0 ? (reqDay / 86400) / load.lam : NaN;
+    }
+    if (!opts.noSens) {
+      res.sens = [10, 15, 20, 25, 30, 40, 50, 60, 80, 100].map(tp => {
+        const r = plan(Object.assign({}, s, { tpot: tp }), { noSens: true });
+        return { tpot: tp, gpus: r.chosen ? r.chosen.provGPUs : null };
+      });
+    }
+    return res;
+  }
+
+  const api = { SETTINGS, plan, derive, kvBytes, decodeStep, memInfo, prefillStats, configs, computeLoad, decodeLabel, prefillLabel, decodeCap, packNodes };
+  if (typeof module !== 'undefined' && module.exports) module.exports = api; else root.SizerModel = api;
+})(this);
+
+</script>
+<script>
+/* Export an Inference Sizer result as a FleetScope graph (../fleetscope), so the steady-state answer can be
+   replayed over time: bursts, cold starts, links and failures. Load it with "Load graph JSON" in FleetScope,
+   or drop it into fleetscope/scenarios/<name>/graph.json for the CI plan. */
+(function (root) {
+  'use strict';
+
+  // GPUs and models FleetScope knows by key (fleetscope/src/engine.js GPUS and MODELS).
+  const FS_GPUS = { A100: 'A100', L40S: 'L40S', H100: 'H100', H200: 'H200', MI300X: 'MI300X', B200: 'B200', B300: 'B300', 'GB200-NVL72': 'GB200' };
+  const FS_MODELS = { 'llama31-8b': 'llama-8b', 'llama33-70b': 'llama-70b', 'llama31-405b': 'llama-405b', 'deepseek-v3': 'moe-671b' };
+  // FleetScope's chat source draws prompt additions and output lengths from log-normals (sigma 0.8 and 0.7);
+  // these factors turn the sizer's means into the medians it expects.
+  const MEAN_OVER_MEDIAN_IN = Math.exp(0.8 * 0.8 / 2), MEAN_OVER_MEDIAN_OUT = Math.exp(0.7 * 0.7 / 2), GAP_S = 30, MEAN_GAP_S = GAP_S * Math.exp(0.6 * 0.6 / 2);
+
+  function toGraph(r, opts) {
+    opts = opts || {};
+    const s = r.s, errors = [], notes = [];
+    if (!r.chosen) return { ok: false, errors: ['There is no recommended layout to export. Change the inputs until a layout meets the targets.'] };
+    const gpu = FS_GPUS[s.gpu];
+    if (!gpu) errors.push(`FleetScope has no profile for "${s.gpuLabel || s.gpu}". Pick one of ${Object.keys(FS_GPUS).join(', ')}, or add the GPU to the GPUS table in fleetscope/src/engine.js.`);
+    if (s.total > 2000) errors.push('FleetScope models up to 2,000B parameters.');
+    if (errors.length) return { ok: false, errors };
+
+    const mla = s.attn === 'mla';
+    const key = FS_MODELS[s.model] || 'custom';
+    if (s.wprec === 'fp4') notes.push('FleetScope has no FP4 path; the model is exported with FP8 weights, so FleetScope will be more conservative.');
+    if (s.swaWindow > 0 && s.swaFrac > 0) notes.push('FleetScope sizes KV for full attention on every layer; sliding-window savings are not carried over.');
+    notes.push('FleetScope picks prompt and output lengths from log-normal distributions with these means, so peak prompts come from the distribution\'s tail rather than your peak figures.');
+
+    // Traffic: single-turn chat sessions arriving at the sized peak rate (without headroom), gaps between sessions ~30 s.
+    const lam = r.load.lam0;
+    const cycle = MEAN_GAP_S + s.ttft / 1000 + s.avgOut * s.tpot / 1000;
+    const users = Math.max(1, Math.round(lam * cycle));
+    const hit = Math.min(95, s.prefixHit || 0) / 100;
+    const aIn = Math.min(s.avgIn, s.ctx);
+    const systemTokens = Math.round(aIn * hit);
+    const turnTokens = Math.max(16, Math.round((aIn - systemTokens) / MEAN_OVER_MEDIAN_IN));
+    const outTokens = Math.max(4, Math.round(s.avgOut / MEAN_OVER_MEDIAN_OUT));
+
+    const nodes = [], edges = [];
+    const add = (id, type, x, y, cfg) => nodes.push({ id, type, x, y, cfg });
+    add('model', 'model', 40, 20, {
+      name: 'Model', key, label: s.modelLabel || s.model, wPrec: s.wprec === 'bf16' ? 'bf16' : 'fp8', kvPrec: s.kvprec,
+      thinkTokens: 0, thinkKeep: false, specK: 0, specAccept: 0.7,
+      params: +s.total, active: +s.active, layers: s.layers, kvHeads: mla ? 0 : s.kvHeads, headDim: mla ? 0 : s.headDim, mla: mla ? (s.mlaLatent || 512) + (s.mlaRope == null ? 64 : s.mlaRope) : 0,
+    });
+    add('slo', 'slo', 310, 20, { name: 'SLO targets', ttft: s.ttft / 1000, tpotMs: s.tpot, thinkingStreamed: false, confidentialIn: 'private', internalIn: 'any', requireEncryption: true });
+    add('src', 'chat', 40, 250, {
+      name: 'Sized traffic', users, turns: 1, systemTokens, contextTokens: 0, turnTokens, outTokens, thinkS: 5, gapS: GAP_S,
+      prefixHit: hit > 0 ? 100 : 0, durationMin: opts.durationMin || 10, dataClass: 'internal', owner: '', oncall: '',
+    });
+    add('rt', 'router', 330, 250, { name: 'Router', policy: 'least-wait', burstWait: 1.5, affinity: 'ideal', enforceResidency: false, owner: '', oncall: '' });
+    edges.push({ id: 'e:src>rt', from: 'src', to: 'rt' });
+
+    const D = r.md.D;
+    const pool = (id, name, role, row, x) => {
+      const g = row.c.g;
+      add(id, 'pool', x, 180, {
+        name, site: opts.site || 'On-prem DC', siteKind: 'onprem', role, gpu, tp: g, instances: row.N, autoscale: false, min: 0, max: Math.max(8, row.N),
+        coldStart: 90, upWait: 1, downUtil: 30, maxBatch: Math.max(8, Math.round(role === 'prefill' ? 256 : (row.Binst || row.Bop || 256))),
+        fabricGbps: s.nicGbps * Math.min(g, D), zone: 'auto', owner: '', oncall: '', calibPrefill: 1, calibDecode: 1, clusterWorkload: '', clusterAtH: 0,
+        offloadGB: 0, offloadGBs: 50, loraAdapters: 0, loraSlots: 8,
+      });
+    };
+    if (r.chosen.mode === 'disagg') {
+      pool('pre', `Prefill ${r.dis.P.N} × ${r.dis.P.label}`, 'prefill', r.dis.P, 620);
+      pool('dec', `Decode ${r.dis.D.N} × ${r.dis.D.label}`, 'decode', r.dis.D, 940);
+      edges.push({ id: 'e:rt>pre', from: 'rt', to: 'pre' }, { id: 'e:pre>dec', from: 'pre', to: 'dec' });
+    } else {
+      pool('agg', `Serving ${r.agg.best.N} × ${r.agg.best.label}`, 'agg', r.agg.best, 620);
+      edges.push({ id: 'e:rt>agg', from: 'rt', to: 'agg' });
+    }
+    if (r.chosen.spareNodes) notes.push('The N+1 spare is not exported: FleetScope pools hold serving instances only. Use its Reliability lens to test losing an instance.');
+    return { ok: true, graph: { nodes, edges }, notes, users };
+  }
+
+  const api = { toGraph, FS_GPUS, FS_MODELS };
+  if (typeof module !== 'undefined' && module.exports) module.exports = api; else root.SizerFleetScope = api;
+})(this);
+
+</script>
+<script>
+/* Inference Sizer page: inputs, catalog management, results. Uses window.SizerCatalog, SizerModel, SizerFleetScope. */
+(function () {
+'use strict';
+const C = window.SizerCatalog, M = window.SizerModel, X = window.SizerFleetScope;
+const STORE = 'inference-sizer:state:v1', CAT = 'inference-sizer:catalog:v1';
+const EDITED = '__edited';
+const $ = (sel, el) => (el || document).querySelector(sel);
+const esc = v => String(v == null ? '' : v).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+const load = k => { try { return JSON.parse(localStorage.getItem(k) || 'null'); } catch (e) { return null; } };
+const save = (k, v) => { try { localStorage.setItem(k, JSON.stringify(v)); } catch (e) {} };
+
+// ---------- formatting ----------
+const fInt = n => isFinite(n) ? Math.round(n).toLocaleString('en-US') : '–';
+const f1 = n => isFinite(n) ? (Math.abs(n) >= 100 ? Math.round(n).toLocaleString('en-US') : n.toFixed(1)) : '–';
+const fMs = t => isFinite(t) ? (t * 1000 >= 100 ? Math.round(t * 1000).toLocaleString('en-US') : (t * 1000).toFixed(1)) + ' ms' : '–';
+const fTok = n => !isFinite(n) ? '–' : n >= 1e12 ? (n / 1e12).toFixed(2) + 'T' : n >= 1e9 ? (n / 1e9).toFixed(2) + 'B' : n >= 1e6 ? (n / 1e6).toFixed(1) + 'M' : n >= 1e4 ? (n / 1e3).toFixed(1) + 'K' : fInt(n);
+const fGB = b => !isFinite(b) ? '–' : b >= 1e12 ? (b / 1e12).toFixed(2) + ' TB' : b >= 1e9 ? (b / 1e9).toFixed(1) + ' GB' : b >= 1e6 ? (b / 1e6).toFixed(0) + ' MB' : (b / 1e3).toFixed(0) + ' KB';
+const fCtx = n => n >= 1048576 && n % 1048576 === 0 ? (n / 1048576) + 'M' : n >= 1024 ? Math.round(n / 1024) + 'K' : String(n);
+const fUSD = n => !isFinite(n) ? '–' : n >= 1000 ? '$' + Math.round(n).toLocaleString('en-US') : '$' + n.toFixed(2);
+const pct = n => isFinite(n) ? Math.round(n * 100) + '%' : '–';
+
+// ---------- catalog ----------
+let userCat = load(CAT);
+if (!userCat || !Array.isArray(userCat.gpus) || !Array.isArray(userCat.models)) userCat = { gpus: [], models: [] };
+let gpus, models;
+function refreshCatalog() { gpus = C.merge(C.GPUS, userCat.gpus); models = C.merge(C.MODELS, userCat.models); save(CAT, userCat); }
+refreshCatalog();
+const MODEL_KEYS = C.MODEL_FIELDS.map(f => f.k).filter(k => !['name', 'source', 'wprec'].includes(k));
+const GPU_KEYS = C.GPU_FIELDS.map(f => f.k).filter(k => !['label', 'vendor', 'source', 'price'].includes(k));
+function modelValues(m) { const o = {}; MODEL_KEYS.forEach(k => o[k] = m[k] != null ? m[k] : C.MODEL_DEFAULTS[k]); o.wprec = m.wprec || 'fp8'; o.modelLabel = m.name; return o; }
+function gpuValues(g) { const o = {}; GPU_KEYS.forEach(k => o[k] = g[k] != null ? g[k] : (C.GPU_DEFAULTS[k] || 0)); o.price = g.price || 0; o.gpuLabel = g.label; return o; }
+function defaults() {
+  const m = models.find(x => x.id === 'llama33-70b') || models[0], g = gpus.find(x => x.id === 'B200') || gpus[0];
+  return Object.assign({}, M.SETTINGS, modelValues(m), gpuValues(g), { model: m.id, gpu: g.id });
+}
+let state = defaults();
+(() => {
+  const saved = load(STORE);
+  if (saved && typeof saved === 'object') Object.keys(state).forEach(k => { if (k in saved) state[k] = saved[k]; });
+  if (state.model !== EDITED && !models.find(m => m.id === state.model)) Object.assign(state, modelValues(models[0]), { model: models[0].id });
+  if (state.gpu !== EDITED && !gpus.find(g => g.id === state.gpu)) Object.assign(state, gpuValues(gpus[0]), { gpu: gpus[0].id });
+})();
+
+// ---------- input schema ----------
+const PCT = new Set(['memUtil', 'effPrefill', 'effDecodeBW', 'effDecodeComp', 'kvMaxUtil', 'swaFrac']);
+const archFields = C.MODEL_FIELDS.filter(f => MODEL_KEYS.includes(f.k)).map(f => Object.assign({}, f, f.k === 'swaFrac' ? { unit: '%', max: 100 } : {}, f.k === 'attn' ? { type: 'sel', opts: [['gqa', 'GQA / MHA'], ['mla', 'MLA (DeepSeek-style)']] } : {}, /^mla/.test(f.k) ? { mlaOnly: true } : {}));
+const gpuFields = C.GPU_FIELDS.filter(f => GPU_KEYS.includes(f.k)).map(f => Object.assign({}, f));
+const GROUPS = [
+  { title: 'Model', id: 'model', fields: [
+    { k: 'model', label: 'Model to serve', type: 'sel', opts: () => catOpts(models, 'name', 'Your models'), wide: true },
+    { k: 'wprec', label: 'Weight precision', type: 'sel', opts: [['bf16', 'BF16'], ['fp8', 'FP8'], ['fp4', 'FP4 (NVFP4 / MXFP4)']] },
+    { k: 'kvprec', label: 'KV cache precision', type: 'sel', opts: [['bf16', 'BF16'], ['fp8', 'FP8']] },
+    { k: 'ctx', label: 'Context window (max tokens per request)', unit: 'tokens', step: 1024, min: 1024, wide: true, chips: [8192, 32768, 65536, 131072, 262144] },
+  ], sub: { title: 'Architecture: edit, or save as a new model', fields: archFields, saver: 'model' } },
+  { title: 'GPU', id: 'gpu', fields: [
+    { k: 'gpu', label: 'GPU', type: 'sel', opts: () => catOpts(gpus, 'label', 'Your GPUs'), wide: true },
+  ], sub: { title: 'Spec sheet: edit, or save as a new GPU', fields: gpuFields, saver: 'gpu' } },
+  { title: 'Traffic', fields: [
+    { k: 'conc', label: 'Concurrent sessions (peak)', step: 10, min: 0 },
+    { k: 'dau', label: 'Daily active users', step: 1000, min: 0 },
+    { k: 'rpu', label: 'Requests per user per day', step: 1, min: 0 },
+    { k: 'peakFactor', label: 'Peak-to-average traffic', unit: '×', step: 0.5, min: 1 },
+    { k: 'concSource', label: 'Size for', type: 'sel', wide: true, opts: [['max', 'Whichever is larger: sessions or DAU'], ['conc', 'Concurrent sessions only'], ['dau', 'DAU traffic only']] },
+  ] },
+  { title: 'Tokens per request', fields: [
+    { k: 'avgIn', label: 'Avg input', unit: 'tokens', step: 100, min: 1 },
+    { k: 'peakIn', label: 'Peak input', unit: 'tokens', step: 1000, min: 1 },
+    { k: 'avgOut', label: 'Avg output', unit: 'tokens', step: 50, min: 1 },
+    { k: 'peakOut', label: 'Peak output', unit: 'tokens', step: 500, min: 1 },
+    { k: 'prefixHit', label: 'Prefix-cache hit rate', unit: '%', step: 5, min: 0, max: 95, wide: true },
+  ] },
+  { title: 'Latency targets', fields: [
+    { k: 'ttft', label: 'TTFT', unit: 'ms', step: 50, min: 50 },
+    { k: 'tpot', label: 'TPOT', unit: 'ms', step: 1, min: 2 },
+  ] },
+  { title: 'Serving', fields: [
+    { k: 'mode', label: 'Serving architecture', type: 'sel', wide: true, opts: [['auto', 'Pick the cheaper option'], ['disagg', 'Disaggregated prefill / decode'], ['agg', 'Aggregated (chunked prefill)']] },
+    { k: 'kvPolicy', label: 'KV cache allocation', type: 'sel', wide: true, opts: [['paged', 'Paged: actual tokens per request'], ['reserve', 'Reserve the full context window per session']] },
+    { k: 'headroom', label: 'Capacity headroom', unit: '%', step: 5, min: 0 },
+    { k: 'price', label: 'GPU price', unit: '$/hr', step: 0.25, min: 0 },
+    { k: 'nPlus1', label: 'Keep room for one spare instance (N+1)', type: 'chk', wide: true },
+  ], sub: { title: 'Engine assumptions', fields: [
+    { k: 'memUtil', label: 'HBM usable by engine', unit: '%', step: 1, min: 50, max: 99 },
+    { k: 'reserveGB', label: 'Runtime reserve / GPU', unit: 'GB', step: 1, min: 0 },
+    { k: 'kvMaxUtil', label: 'KV cache fill limit', unit: '%', step: 5, min: 50, max: 100 },
+    { k: 'sloMargin', label: 'Latency safety margin', unit: '%', step: 5, min: 0, max: 50 },
+    { k: 'effPrefill', label: 'Prefill MFU', unit: '%', step: 5, min: 5, max: 90 },
+    { k: 'effDecodeBW', label: 'Decode HBM efficiency', unit: '%', step: 5, min: 10, max: 95 },
+    { k: 'effDecodeComp', label: 'Decode MFU', unit: '%', step: 5, min: 5, max: 90 },
+    { k: 'stepMs', label: 'Per-step overhead', unit: 'ms', step: 0.5, min: 0 },
+    { k: 'maxSeqPerGPU', label: 'Max sequences / GPU', step: 16, min: 1, wide: true },
+  ] } },
+];
+const FIELDS = {};
+GROUPS.forEach(g => { g.fields.forEach(f => FIELDS[f.k] = f); if (g.sub) g.sub.fields.forEach(f => FIELDS[f.k] = f); });
+
+function catOpts(list, nameKey, userTitle) {
+  const b = list.filter(x => !x.custom || x.overrides), u = list.filter(x => x.custom && !x.overrides);
+  return { groups: [['Built in', b.map(x => [x.id, x[nameKey] + (x.overrides ? ' (your values)' : '')])]].concat(u.length ? [[userTitle, u.map(x => [x.id, x[nameKey]])]] : []), extra: [[EDITED, 'Edited (not saved)']] };
+}
+
+function fieldHTML(f) {
+  const id = 'in-' + f.k, type = f.type === 'sel' || f.type === 'enum' ? 'sel' : f.type || 'num';
+  let ctl;
+  if (type === 'sel') ctl = `<select id="${id}" data-k="${f.k}"></select>`;
+  else if (type === 'chk') return `<div class="field chk ${f.wide ? 'wide' : ''}"><input type="checkbox" id="${id}" data-k="${f.k}"><label for="${id}">${esc(f.label)}</label></div>`;
+  else {
+    const inp = `<input type="number" id="${id}" data-k="${f.k}" step="${f.step || (f.int ? 1 : 'any')}"${f.min != null ? ` min="${PCT.has(f.k) && f.k !== 'swaFrac' ? f.min : f.k === 'swaFrac' ? 0 : f.min}"` : ''}${f.max != null ? ` max="${f.k === 'swaFrac' ? 100 : f.max}"` : ''} inputmode="decimal">`;
+    ctl = f.unit ? `<div class="unitwrap">${inp}<span class="u">${esc(f.unit)}</span></div>` : inp;
+  }
+  const chips = f.chips ? `<div class="chips" id="chips-${f.k}"></div>` : '';
+  return `<div class="field ${f.wide ? 'wide' : ''} ${f.mlaOnly ? 'mla-only' : ''}" id="f-${f.k}"><label for="${id}">${esc(f.label)}</label>${ctl}${chips}<div class="hint" id="hint-${f.k}"></div></div>`;
+}
+function saverHTML(kind) {
+  const what = kind === 'model' ? 'model' : 'GPU';
+  return `<div class="saver"><label for="save-${kind}-name">Save these values as</label>
+    <div class="saverow"><input type="text" id="save-${kind}-name" placeholder="${kind === 'model' ? 'e.g. Our fine-tuned 70B' : 'e.g. B200 (our measured)'}">
+    <button type="button" data-act="save-${kind}">Save ${what}</button></div>
+    <div class="saverow"><button type="button" data-act="del-${kind}" id="del-${kind}" hidden>Remove from my ${what}s</button><span class="x" id="src-${kind}"></span></div>
+    <div class="msg" id="msg-${kind}" role="status"></div></div>`;
+}
+function buildInputs() {
+  const el = $('#inputs');
+  el.innerHTML = GROUPS.map((g, i) => `<fieldset><legend><span class="idx">0${i + 1}</span>${esc(g.title)}</legend>
+    <div class="grid2">${g.fields.map(fieldHTML).join('')}</div>
+    ${g.sub ? `<details class="sub" id="sub-${g.id || i}"><summary>${esc(g.sub.title)}</summary><div class="grid2">${g.sub.fields.map(fieldHTML).join('')}</div>${g.sub.saver ? saverHTML(g.sub.saver) : ''}</details>` : ''}
+  </fieldset>`).join('') + `<fieldset><legend><span class="idx">0${GROUPS.length + 1}</span>Add models and GPUs</legend>
+    <p class="note">Import a Hugging Face <code>config.json</code> to add a model, or a spec sheet (JSON) to add or update GPUs and models. Saved entries stay in this browser.</p>
+    <div class="btnrow"><button type="button" data-act="import-file">Import file…</button><button type="button" data-act="paste">Paste JSON…</button>
+      <input type="file" id="importFile" accept=".json,application/json" hidden></div>
+    <div id="pastebox" hidden><label for="pasteText" class="lbl">Spec sheet, model or GPU entry, or config.json</label><textarea id="pasteText" rows="7" spellcheck="false"></textarea>
+      <div class="btnrow"><button type="button" class="primary" data-act="import-paste">Import</button><button type="button" data-act="paste-close">Cancel</button></div></div>
+    <div class="msg" id="msg-import" role="status"></div>
+    <div class="btnrow" style="margin-top:8px"><button type="button" data-act="export-cat">Export my catalog</button><button type="button" data-act="template">Spec-sheet template</button></div>
+    <p class="x" id="catcount"></p>
+  </fieldset>
+  <div class="btnrow"><button type="button" data-act="reset">Reset inputs to the example</button></div>`;
+  el.addEventListener('input', onInput);
+  el.addEventListener('change', onInput);
+  el.addEventListener('click', onClick);
+  $('#importFile').addEventListener('change', e => { const f = e.target.files[0]; if (!f) return; const rd = new FileReader(); rd.onload = () => { importText(String(rd.result), f.name); e.target.value = ''; }; rd.readAsText(f); });
+  for (const k of Object.keys(FIELDS)) if (FIELDS[k].type === 'sel' || FIELDS[k].type === 'enum') fillSelect(k);
+}
+function fillSelect(k) {
+  const f = FIELDS[k], el = document.getElementById('in-' + k); if (!el) return;
+  const o = typeof f.opts === 'function' ? f.opts() : f.opts.map(x => Array.isArray(x) ? x : [x, x.toUpperCase()]);
+  if (Array.isArray(o)) el.innerHTML = o.map(x => `<option value="${esc(x[0])}">${esc(x[1])}</option>`).join('');
+  else el.innerHTML = o.groups.map(g => `<optgroup label="${esc(g[0])}">${g[1].map(x => `<option value="${esc(x[0])}">${esc(x[1])}</option>`).join('')}</optgroup>`).join('') + (state[k] === EDITED ? o.extra.map(x => `<option value="${x[0]}">${esc(x[1])}</option>`).join('') : '');
+}
+function syncInputs() {
+  fillSelect('model'); fillSelect('gpu');
+  Object.values(FIELDS).forEach(f => {
+    const el = document.getElementById('in-' + f.k); if (!el) return;
+    if (f.type === 'chk') el.checked = !!state[f.k];
+    else if (f.type === 'sel' || f.type === 'enum') el.value = state[f.k];
+    else el.value = PCT.has(f.k) ? +(state[f.k] * 100).toFixed(2) : state[f.k];
+  });
+  document.querySelectorAll('.mla-only').forEach(n => n.hidden = state.attn !== 'mla');
+  const mc = models.find(m => m.id === state.model), gc = gpus.find(g => g.id === state.gpu);
+  $('#save-model-name').value = mc ? mc.name : (state.modelLabel || '');
+  $('#save-gpu-name').value = gc ? gc.label : (state.gpuLabel || '');
+  $('#del-model').hidden = !(mc && mc.custom); $('#del-gpu').hidden = !(gc && gc.custom);
+  $('#src-model').innerHTML = mc && mc.source ? `<a href="${esc(mc.source)}" target="_blank" rel="noopener">Model card</a>` : '';
+  $('#src-gpu').innerHTML = gc && gc.source ? `<a href="${esc(gc.source)}" target="_blank" rel="noopener">Spec sheet</a>` : '';
+  $('#catcount').textContent = `${models.length} models and ${gpus.length} GPUs available` + (userCat.models.length + userCat.gpus.length ? `, ${userCat.models.length + userCat.gpus.length} of them yours.` : '.');
+}
+function onInput(e) {
+  const el = e.target, k = el.dataset && el.dataset.k; if (!k || !FIELDS[k]) return;
+  const f = FIELDS[k];
+  if (f.type === 'chk') state[k] = el.checked;
+  else if (f.type === 'sel' || f.type === 'enum') {
+    state[k] = el.value;
+    if (k === 'model' && el.value !== EDITED) { const m = models.find(x => x.id === el.value); Object.assign(state, modelValues(m)); if (state.ctx > m.maxCtx) state.ctx = m.maxCtx; }
+    if (k === 'gpu' && el.value !== EDITED) Object.assign(state, gpuValues(gpus.find(x => x.id === el.value)));
+    if (k === 'attn') markEdited('model');
+    if (k === 'model' || k === 'gpu') { const m = document.getElementById('msg-' + k); if (m) m.textContent = ''; }
+    syncInputs();
+  } else {
+    if (el.value === '' || !isFinite(+el.value)) return;
+    let v = +el.value;
+    if (PCT.has(k)) v = v / 100;
+    state[k] = v;
+    if (MODEL_KEYS.includes(k)) markEdited('model');
+    if (GPU_KEYS.includes(k)) markEdited('gpu');
+  }
+  if (e.type === 'input' && f.type !== 'sel' && f.type !== 'chk') { clearTimeout(onInput.t); onInput.t = setTimeout(update, 120); }
+  else update();
+}
+function markEdited(kind) {
+  if (state[kind] === EDITED) return;
+  const cur = kind === 'model' ? models.find(m => m.id === state.model) : gpus.find(g => g.id === state.gpu);
+  if (kind === 'model') state.modelLabel = cur ? cur.name + ' (edited)' : state.modelLabel; else state.gpuLabel = cur ? cur.label + ' (edited)' : state.gpuLabel;
+  state[kind] = EDITED; fillSelect(kind); document.getElementById('in-' + kind).value = EDITED;
+}
+function msg(id, text, bad) { const m = document.getElementById('msg-' + id); m.innerHTML = text; m.className = 'msg' + (bad ? ' bad' : ' good'); }
+
+function onClick(e) {
+  const chip = e.target.closest('.chip');
+  if (chip) { state.ctx = +chip.dataset.v; syncInputs(); update(); return; }
+  const b = e.target.closest('[data-act]'); if (!b) return;
+  const act = b.dataset.act;
+  if (act === 'save-model' || act === 'save-gpu') return saveEntry(act.slice(5));
+  if (act === 'del-model' || act === 'del-gpu') return removeEntry(act.slice(4));
+  if (act === 'import-file') return $('#importFile').click();
+  if (act === 'paste') { $('#pastebox').hidden = false; $('#pasteText').focus(); return; }
+  if (act === 'paste-close') { $('#pastebox').hidden = true; return; }
+  if (act === 'import-paste') return importText($('#pasteText').value, 'pasted JSON');
+  if (act === 'export-cat') return showDialog('Your catalog', 'Spec sheet with the GPUs and models you added or changed. Import it on another machine, or commit it under inference-sizer/specs/.', JSON.stringify(C.makeSheet(userCat.gpus, userCat.models), null, 2), 'inference-sizer-catalog.json');
+  if (act === 'template') return showDialog('Spec-sheet template', 'Fill in one entry per GPU or model, then import the file. An entry whose id matches a built-in one replaces it. Dense (not sparse) FLOPS, and per-direction link bandwidth.', JSON.stringify(C.makeSheet([C.GPUS[0]], [C.MODELS[2]]), null, 2), 'spec-sheet-template.json');
+  if (act === 'reset') { state = defaults(); refreshCatalog(); syncInputs(); update(); }
+}
+function saveEntry(kind) {
+  const name = $('#save-' + kind + '-name').value.trim();
+  if (!name) return msg(kind, 'Give it a name first.', true);
+  const cur = kind === 'model' ? models.find(m => m.id === state.model) : gpus.find(g => g.id === state.gpu);
+  const sameName = cur && (kind === 'model' ? cur.name : cur.label) === name;
+  const entry = kind === 'model'
+    ? Object.assign({ id: sameName ? cur.id : C.slug(name), name, source: sameName ? cur.source || '' : '' }, modelValues(state), { wprec: state.wprec })
+    : Object.assign({ id: sameName ? cur.id : C.slug(name), label: name, vendor: cur ? cur.vendor || '' : '', source: sameName ? cur.source || '' : '' }, gpuValues(state));
+  delete entry.modelLabel; delete entry.gpuLabel;
+  const r = kind === 'model' ? C.validateModel(entry) : C.validateGPU(entry);
+  if (!r.ok) return msg(kind, r.errors.map(esc).join('<br>'), true);
+  const list = kind === 'model' ? userCat.models : userCat.gpus;
+  const i = list.findIndex(x => x.id === r.value.id);
+  if (i >= 0) list[i] = r.value; else list.push(r.value);
+  refreshCatalog();
+  state[kind] = r.value.id;
+  if (kind === 'model') state.modelLabel = name; else state.gpuLabel = name;
+  syncInputs(); update();
+  const builtin = (kind === 'model' ? C.MODELS : C.GPUS).some(x => x.id === r.value.id);
+  msg(kind, builtin ? `Saved. ${esc(name)} now uses your values; remove it to go back to the built-in figures.` : `Saved ${esc(name)} to your ${kind === 'model' ? 'models' : 'GPUs'}.`);
+}
+function removeEntry(kind) {
+  const id = state[kind];
+  const list = kind === 'model' ? userCat.models : userCat.gpus;
+  const i = list.findIndex(x => x.id === id); if (i < 0) return;
+  const name = kind === 'model' ? list[i].name : list[i].label;
+  list.splice(i, 1); refreshCatalog();
+  const back = (kind === 'model' ? models : gpus).find(x => x.id === id) || (kind === 'model' ? models[0] : gpus[0]);
+  Object.assign(state, kind === 'model' ? modelValues(back) : gpuValues(back)); state[kind] = back.id;
+  syncInputs(); update();
+  msg(kind, `Removed ${esc(name)}.` + (back.id === id ? ' The built-in figures are back.' : ''));
+}
+function importText(text, from) {
+  const r = C.parseSheet(text);
+  if (!r.gpus.length && !r.models.length) return msg('import', `Could not import ${esc(from)}: ${r.errors.map(esc).join('<br>')}`, true);
+  for (const g of r.gpus) { const i = userCat.gpus.findIndex(x => x.id === g.id); if (i >= 0) userCat.gpus[i] = g; else userCat.gpus.push(g); }
+  for (const m of r.models) { const i = userCat.models.findIndex(x => x.id === m.id); if (i >= 0) userCat.models[i] = m; else userCat.models.push(m); }
+  refreshCatalog();
+  if (r.models.length === 1 && !r.gpus.length) { Object.assign(state, modelValues(models.find(x => x.id === r.models[0].id))); state.model = r.models[0].id; }
+  if (r.gpus.length === 1 && !r.models.length) { Object.assign(state, gpuValues(gpus.find(x => x.id === r.gpus[0].id))); state.gpu = r.gpus[0].id; }
+  $('#pastebox').hidden = true; $('#pasteText').value = '';
+  syncInputs(); update();
+  const parts = [];
+  if (r.models.length) parts.push(`${r.models.length} model${r.models.length > 1 ? 's' : ''} (${r.models.map(m => esc(m.name)).join(', ')})`);
+  if (r.gpus.length) parts.push(`${r.gpus.length} GPU${r.gpus.length > 1 ? 's' : ''} (${r.gpus.map(g => esc(g.label)).join(', ')})`);
+  msg('import', `Imported ${parts.join(' and ')} from ${esc(from)}.` + (r.notes && r.notes.length ? '<br>' + r.notes.map(esc).join('<br>') : '') + (r.errors.length ? '<br><span class="bad">Skipped: ' + r.errors.map(esc).join('<br>') + '</span>' : ''), false);
+}
+
+// ---------- dialog (export / copy / download) ----------
+function showDialog(title, text, body, filename) {
+  const d = $('#dialog');
+  d.innerHTML = `<div class="dlg" role="dialog" aria-modal="true" aria-labelledby="dlg-t"><div class="dh"><h2 id="dlg-t">${esc(title)}</h2><button type="button" data-d="close" aria-label="Close">Close</button></div>
+    <p class="sub">${text}</p><textarea readonly rows="16" spellcheck="false" id="dlg-body"></textarea>
+    <div class="btnrow"><button type="button" class="primary" data-d="copy">Copy</button><button type="button" data-d="download">Download ${esc(filename)}</button><span class="msg" id="dlg-msg"></span></div></div>`;
+  $('#dlg-body').value = body;
+  d.hidden = false;
+  d.onclick = async e => {
+    const a = e.target.dataset.d;
+    if (a === 'close' || e.target === d) { d.hidden = true; return; }
+    if (a === 'copy') { try { await navigator.clipboard.writeText(body); $('#dlg-msg').textContent = 'Copied.'; } catch (err) { $('#dlg-body').select(); $('#dlg-msg').textContent = 'Copy is blocked here: the text is selected, press Ctrl/Cmd+C.'; } }
+    if (a === 'download') {
+      try { const u = URL.createObjectURL(new Blob([body], { type: 'application/json' })); const l = document.createElement('a'); l.href = u; l.download = filename; document.body.appendChild(l); l.click(); l.remove(); setTimeout(() => URL.revokeObjectURL(u), 1000); $('#dlg-msg').textContent = 'If nothing downloaded, this viewer blocks downloads: use Copy.'; }
+      catch (err) { $('#dlg-msg').textContent = 'Downloads are blocked here: use Copy.'; }
+    }
+  };
+  document.addEventListener('keydown', function esc_(e) { if (e.key === 'Escape') { d.hidden = true; document.removeEventListener('keydown', esc_); } });
+}
+
+// ---------- validation ----------
+function sanitized() {
+  const s = Object.assign({}, state);
+  const pos = ['total', 'active', 'layers', 'hidden', 'qHeads', 'kvHeads', 'headDim', 'ctx', 'avgIn', 'peakIn', 'avgOut', 'peakOut', 'ttft', 'tpot', 'hbmGB', 'hbmTBs', 'tfBf16', 'scaleUpGBs', 'nicGbps', 'maxSeqPerGPU', 'domain', 'maxCtx'];
+  pos.forEach(k => { s[k] = Math.max(+s[k] || 0, 1e-6); });
+  ['conc', 'dau', 'rpu', 'experts', 'topk', 'swaFrac', 'swaWindow', 'prefixHit', 'headroom', 'price', 'reserveGB', 'stepMs', 'tfFp8', 'tfFp4', 'nodeKW', 'sloMargin', 'mlaRope', 'mlaNope'].forEach(k => { s[k] = Math.max(+s[k] || 0, 0); });
+  s.peakFactor = Math.max(1, +s.peakFactor || 1);
+  s.prefixHit = Math.min(s.prefixHit, 95); s.swaFrac = Math.min(s.swaFrac, 1); s.sloMargin = Math.min(s.sloMargin, 50);
+  s.kvMaxUtil = Math.min(1, Math.max(0.3, +s.kvMaxUtil || 0.9));
+  s.active = Math.min(s.active, s.total);
+  ['layers', 'qHeads', 'kvHeads', 'headDim', 'hidden', 'experts', 'topk', 'ctx', 'maxSeqPerGPU', 'domain', 'mlaLatent', 'mlaV'].forEach(k => s[k] = Math.max(1, Math.round(+s[k] || 1)));
+  if (!(+state.experts > 0)) s.experts = 0;
+  if (!(+state.topk > 0)) s.topk = 0;
+  return s;
+}
+function warnings(s, r) {
+  const w = [];
+  if (s.peakIn + s.peakOut > s.ctx) w.push(['warn', `A peak request (${fInt(s.peakIn)} in + ${fInt(s.peakOut)} out = ${fInt(s.peakIn + s.peakOut)} tokens) is larger than the ${fCtx(s.ctx)} context window. Peak prompts are capped at the window in this sizing; raise the window or lower the peak.`]);
+  if (s.avgIn + s.avgOut > s.ctx) w.push(['bad', `The average request (${fInt(s.avgIn + s.avgOut)} tokens) does not fit the ${fCtx(s.ctx)} context window.`]);
+  if (s.ctx > s.maxCtx) w.push(['warn', `The ${fCtx(s.ctx)} context window is above this model's maximum of ${fCtx(s.maxCtx)}.`]);
+  if (s.avgIn > s.peakIn || s.avgOut > s.peakOut) w.push(['warn', 'An average token count is larger than its peak. Check the token inputs.']);
+  if (r.md.computeFallback) w.push(['warn', `${s.gpuLabel} has no ${s.wprec.toUpperCase()} tensor cores. ${s.wprec.toUpperCase()} weights still save memory, but the math runs at the ${r.md.computeFallback.toUpperCase()} rate.`]);
+  if (s.kvPolicy === 'reserve') w.push(['warn', `Every session reserves KV for the full ${fCtx(s.ctx)} window (${fGB(M.kvBytes(r.md, s.ctx))} each). Paged allocation (vLLM, SGLang, TRT-LLM default) usually needs far less memory.`]);
+  if (s.experts > 0 && s.topk === 0) w.push(['warn', 'Experts is set but experts per token is 0, so the model is treated as dense.']);
+  if (s.conc === 0 && s.dau === 0) w.push(['warn', 'Both concurrent sessions and DAU are 0, so there is no load to size for.']);
+  if (!r.chosen) {
+    const m = 1 - s.sloMargin / 100;
+    if (r.tpotFloor > s.tpot / 1000 * m) w.push(['bad', `TPOT ${s.tpot} ms (less the ${s.sloMargin}% safety margin) is below what this model can do on ${s.gpuLabel} even at batch 1 (best layout: ${fMs(r.tpotFloor)}). Relax TPOT, use lower-precision weights, a faster GPU, or add speculative decoding (not modelled).`]);
+    if (r.ttftFloor > s.ttft / 1000 * m) w.push(['bad', `TTFT ${s.ttft} ms (less the ${s.sloMargin}% margin) is not reachable for a ${fInt(Math.min(s.peakIn, s.ctx))}-token peak prompt (fastest layout: ${fMs(r.ttftFloor)}). Relax TTFT, cut the peak prompt, raise the prefix-cache hit rate, or use lower-precision weights.`]);
+    if (r.tpotFloor <= s.tpot / 1000 * m && r.ttftFloor <= s.ttft / 1000 * m) w.push(['bad', 'No layout meets both targets together under the selected serving architecture. Try "Pick the cheaper option", relax a target, or reduce the context window.']);
+  }
+  return w;
+}
+
+// ---------- topology ----------
+const unitName = D => D > 8 ? 'rack' : 'node';
+function instancesFor(r) {
+  const c = r.chosen, list = [];
+  if (c.mode === 'disagg') {
+    for (let i = 0; i < r.dis.P.N; i++) list.push({ role: 'p', g: r.dis.P.c.g, tag: 'P' + (i + 1) });
+    for (let i = 0; i < r.dis.D.N; i++) list.push({ role: 'd', g: r.dis.D.c.g, tag: 'D' + (i + 1) });
+  } else for (let i = 0; i < r.agg.best.N; i++) list.push({ role: 'a', g: r.agg.best.c.g, tag: 'A' + (i + 1) });
+  if (c.spareNodes || r.s.nPlus1) list.push({ role: 's', g: Math.max(...list.map(x => x.g)), tag: 'spare' });
+  return list;
+}
+function packCells(r) {
+  const D = r.md.D;
+  const inst = instancesFor(r).sort((a, b) => (b.g - a.g) || ((a.role === 's') - (b.role === 's')));
+  const nodes = [];
+  inst.forEach(it => {
+    if (it.g >= D) { for (let k = 0; k < Math.ceil(it.g / D); k++) nodes.push(Array.from({ length: D }, (_, j) => ({ role: it.role, tag: it.tag, first: j === 0 }))); return; }
+    let n = nodes.find(nd => nd.filter(x => !x).length >= it.g);
+    if (!n) { n = Array(D).fill(null); nodes.push(n); }
+    const start = n.indexOf(null);
+    for (let j = 0; j < it.g; j++) n[start + j] = { role: it.role, tag: it.tag, first: j === 0 };
+  });
+  return nodes;
+}
+function topologyHTML(r) {
+  const c = r.chosen, s = r.s, D = r.md.D, U = unitName(D);
+  let pools = '';
+  if (c.mode === 'disagg') {
+    const P = r.dis.P, Dd = r.dis.D;
+    pools += `<div class="pool p"><div class="t">Prefill pool</div><div class="l">${P.N} × ${esc(P.label)} = ${P.gpus} GPUs</div><ul>
+      <li>${fTok(P.ps.cap)} prompt tokens/s per instance, ${pct(P.rho)} busy at peak</li>
+      <li>KV handed to decode over RDMA: ${fMs(P.xferAvg)} avg, ${fMs(P.xferPeak)} for a peak prompt</li></ul></div>`;
+    pools += `<div class="pool d"><div class="t">Decode pool</div><div class="l">${Dd.N} × ${esc(Dd.label)} = ${Dd.gpus} GPUs</div><ul>
+      <li>${fInt(Dd.Bop)} streams per instance at peak (max ${fInt(Dd.Binst)} within TPOT)</li>
+      <li>${fTok(Dd.Bop / Dd.tpotOp)} output tokens/s per instance; step is ${Dd.st.bound}-bound</li></ul></div>`;
+  } else {
+    const A = r.agg.best;
+    pools += `<div class="pool a"><div class="t">Aggregated pool (chunked prefill)</div><div class="l">${A.N} × ${esc(A.label)} = ${A.gpus} GPUs</div><ul>
+      <li>${fInt(A.Bop)} decode streams per instance, plus up to ${fInt(A.chunk)} prompt tokens per step</li>
+      <li>Prefill uses ${pct(A.fp)} of instance compute at peak</li></ul></div>`;
+  }
+  pools += `<div class="pool s"><div class="t">Fleet</div><div class="l">${c.totalNodes} ${U}${c.totalNodes === 1 ? '' : 's'} × ${D} = ${c.provGPUs} GPUs</div><ul>
+    <li>${esc(s.gpuLabel)}; ${D} GPUs per ${U} share one scale-up domain</li>
+    <li>${c.gpus} GPUs serving${s.nPlus1 ? ', room for one spare instance' : ''}${c.kw ? `; ~${f1(c.kw)} kW at max power` : ''}</li></ul></div>`;
+  const nodes = packCells(r), MAX = D > 8 ? 8 : 48, shown = nodes.slice(0, MAX), cols = Math.min(D, 18);
+  const rack = shown.map((nd, i) => `<div class="node" aria-label="${U} ${i + 1}"><div class="nh"><span>${U} ${i + 1}</span><span>${nd.every(x => x && x.role === 's') ? 'spare' : ''}</span></div><div class="gpus" style="grid-template-columns:repeat(${cols},1fr)">${nd.map(x => x ? `<div class="gpu ${x.role}${x.first ? ' gl' : ''}" title="${esc(x.tag)}">${x.first && x.role !== 's' ? esc(x.tag) : ''}</div>` : '<div class="gpu" title="idle"></div>').join('')}</div></div>`).join('');
+  const more = nodes.length > MAX ? `<p class="x">Showing ${MAX} of ${nodes.length} ${U}s.</p>` : '';
+  const leg = `<div class="legend">${c.mode === 'disagg' ? '<span><i style="background:var(--prefill)"></i>prefill</span><span><i style="background:var(--decode)"></i>decode</span>' : '<span><i style="background:var(--agg)"></i>prefill + decode</span>'}<span><i class="hatch"></i>spare instance</span><span><i style="background:var(--sunk)"></i>idle</span><span class="x">Labels mark the first GPU of each model instance.</span></div>`;
+  return `<div class="pools">${pools}</div><div class="rack ${D > 8 ? 'wide' : ''}">${rack}</div>${more}${leg}`;
+}
+
+// ---------- charts ----------
+function niceMax(v) { if (!(v > 0)) return 1; const p = Math.pow(10, Math.floor(Math.log10(v))); for (const m of [1, 1.2, 1.5, 2, 2.5, 3, 4, 5, 6, 8, 10]) if (m * p >= v) return m * p; return 10 * p; }
+function ticks(max) { return Array.from({ length: 5 }, (_, i) => +(max / 4 * i).toPrecision(3)); }
+function stepChart(r) {
+  const s = r.s, md = r.md, c = r.chosen;
+  const row = c.mode === 'disagg' ? r.dis.D : r.agg.best;
+  const cfg = row.c, mi = row.mi;
+  const capBm = Math.max(1, M.decodeCap(s, md, cfg, mi));
+  const W = 560, H = 260, L = 50, R = 16, T = 14, B = 40;
+  const xs = []; for (let i = 0; i <= 60; i++) xs.push(Math.max(1, Math.round(1 + (capBm - 1) * i / 60)));
+  const pts = xs.map(b => { const st = M.decodeStep(s, md, cfg, b); return { b: b * cfg.pp, t: st.t * 1000, m: (st.tm + st.comm + st.ovh) * 1000 }; });
+  const target = s.tpot;
+  const yMax = niceMax(Math.max(target * 1.2, ...pts.map(p => p.t))), xMax = capBm * cfg.pp;
+  const X_ = v => L + (W - L - R) * v / xMax, Y = v => T + (H - T - B) * (1 - v / yMax);
+  const path = key => pts.map((p, i) => (i ? 'L' : 'M') + X_(p.b).toFixed(1) + ' ' + Y(p[key]).toFixed(1)).join(' ');
+  const area = path('t') + ` L ${X_(pts[pts.length - 1].b).toFixed(1)} ${Y(0)} L ${X_(pts[0].b).toFixed(1)} ${Y(0)} Z`;
+  const op = row.Bop, opT = row.tpotOp * 1000, opX = X_(Math.min(op, xMax)), opY = Y(Math.min(opT, yMax)), right = opX > W * 0.62;
+  const limitLabel = Math.floor(mi.Bmem / cfg.pp) <= s.maxSeqPerGPU * cfg.tpl ? 'KV fill limit' : 'sequence cap';
+  return `<svg class="chart" viewBox="0 0 ${W} ${H}" role="img" aria-label="Decode step time versus concurrent streams for one ${esc(row.label)} instance">
+    ${ticks(yMax).map(v => `<line class="grid" x1="${L}" x2="${W - R}" y1="${Y(v)}" y2="${Y(v)}"/><text x="${L - 6}" y="${Y(v) + 4}" text-anchor="end">${v}</text>`).join('')}
+    ${ticks(xMax).map(v => `<text x="${X_(v)}" y="${H - B + 16}" text-anchor="middle">${fInt(v)}</text>`).join('')}
+    <text x="${(L + W - R) / 2}" y="${H - 6}" text-anchor="middle">concurrent streams per instance</text>
+    <text x="12" y="${T + (H - T - B) / 2}" transform="rotate(-90 12 ${T + (H - T - B) / 2})" text-anchor="middle">ms per token</text>
+    <path d="${area}" fill="var(--decode)" opacity="0.10"/>
+    <path d="${path('m')}" fill="none" stroke="var(--muted)" stroke-width="1.2" stroke-dasharray="2 3"/>
+    <path d="${path('t')}" fill="none" stroke="var(--decode)" stroke-width="2.2"/>
+    <line x1="${L}" x2="${W - R}" y1="${Y(target)}" y2="${Y(target)}" stroke="var(--warn)" stroke-width="1.5" stroke-dasharray="6 4"/>
+    <text x="${W - R}" y="${Y(target) - 6}" text-anchor="end" style="fill:var(--warn)">TPOT target ${target} ms</text>
+    <text x="${W - R}" y="${T + 10}" text-anchor="end">${limitLabel} at ${fInt(xMax)} →</text>
+    <circle cx="${opX}" cy="${opY}" r="5" fill="var(--surface)" stroke="var(--ink)" stroke-width="2"/>
+    <text x="${opX + (right ? -10 : 10)}" y="${opY - 10}" text-anchor="${right ? 'end' : 'start'}" style="fill:var(--ink)">at peak: ${fInt(op)} streams · ${opT.toFixed(1)} ms</text>
+  </svg>
+  <div class="legend"><span><i style="background:var(--decode)"></i>decode step time</span><span><i class="dots"></i>weight + KV read, comms, overhead</span></div>`;
+}
+function sensChart(r) {
+  const data = r.sens || [];
+  const W = 560, H = 260, L = 50, R = 16, T = 14, B = 40;
+  const yMax = niceMax(Math.max(8, ...data.map(d => d.gpus).filter(v => v != null)));
+  const bw = (W - L - R) / data.length, Y = v => T + (H - T - B) * (1 - v / yMax);
+  return `<svg class="chart" viewBox="0 0 ${W} ${H}" role="img" aria-label="GPUs provisioned versus TPOT target">
+    ${ticks(yMax).map(v => `<line class="grid" x1="${L}" x2="${W - R}" y1="${Y(v)}" y2="${Y(v)}"/><text x="${L - 6}" y="${Y(v) + 4}" text-anchor="end">${fInt(v)}</text>`).join('')}
+    ${data.map((d, i) => {
+      const x = L + i * bw + bw * 0.18, w = bw * 0.64, cur = d.tpot === r.s.tpot;
+      const bar = d.gpus == null ? `<text x="${x + w / 2}" y="${Y(0) - 6}" text-anchor="middle" style="fill:var(--bad)">n/a</text>`
+        : `<rect x="${x}" y="${Y(d.gpus)}" width="${w}" height="${Y(0) - Y(d.gpus)}" rx="2" fill="${cur ? 'var(--accent)' : 'var(--line)'}"/><text x="${x + w / 2}" y="${Y(d.gpus) - 5}" text-anchor="middle" style="fill:${cur ? 'var(--ink)' : 'var(--muted)'}">${fInt(d.gpus)}</text>`;
+      return bar + `<text x="${x + w / 2}" y="${H - B + 16}" text-anchor="middle" style="${cur ? 'fill:var(--ink);font-weight:500' : ''}">${d.tpot}</text>`;
+    }).join('')}
+    <text x="${(L + W - R) / 2}" y="${H - 6}" text-anchor="middle">TPOT target (ms), same traffic and TTFT</text>
+    <text x="12" y="${T + (H - T - B) / 2}" transform="rotate(-90 12 ${T + (H - T - B) / 2})" text-anchor="middle">GPUs provisioned</text>
+  </svg>`;
+}
+
+// ---------- sections ----------
+function verdictHTML(r, warns) {
+  const s = r.s, c = r.chosen;
+  const wl = warns.length ? `<div class="warns">${warns.map(w => `<div class="warnline ${w[0] === 'bad' ? 'bad' : ''}">${esc(w[1])}</div>`).join('')}</div>` : '';
+  if (!c) return `<section class="card verdict fail"><div class="vhead"><div><div class="what">No ${esc(s.gpuLabel)} layout meets these targets</div><div class="why">Every layout from 1 to 64 GPUs per instance was ruled out.</div></div><span class="pill bad">infeasible</span></div>${wl}</section>`;
+  const desc = c.mode === 'disagg' ? `Disaggregated: ${r.dis.P.N} × ${r.dis.P.label} prefill + ${r.dis.D.N} × ${r.dis.D.label} decode` : `Aggregated: ${r.agg.best.N} × ${r.agg.best.label}`;
+  const drow = c.mode === 'disagg' ? r.dis.D : r.agg.best;
+  const perGPU = Math.max(r.load.Dtok, r.load.Cs / drow.tpotOp) / c.gpus;
+  const U = unitName(c.nodeGPUs);
+  return `<section class="card verdict"><div class="vhead"><div><div class="eyebrow">${esc(s.modelLabel)} on ${esc(s.gpuLabel)}</div><div class="what">${esc(desc)}</div><div class="why">${esc(r.reason)}</div></div>
+    <div class="btnrow"><button type="button" class="primary" data-r="copy">Copy summary</button><button type="button" data-r="fleetscope">Export to FleetScope</button></div></div>
+    <div class="toast" id="toast" role="status"></div>
+    <div class="kpis">
+      <div class="kpi main"><div class="k">GPUs needed</div><div class="v">${fInt(c.gpus)}</div><div class="d">serving at peak load</div></div>
+      <div class="kpi"><div class="k">${U === 'rack' ? 'Racks' : 'Nodes'} (${c.nodeGPUs} GPUs each)</div><div class="v">${fInt(c.totalNodes)}</div><div class="d">${c.nodes} serving${c.spareNodes ? ` + ${c.spareNodes} for the spare` : ''}</div></div>
+      <div class="kpi"><div class="k">GPUs provisioned</div><div class="v">${fInt(c.provGPUs)}</div><div class="d">whole ${U}s</div></div>
+      <div class="kpi"><div class="k">Output tokens/s per GPU</div><div class="v">${fTok(perGPU)}</div><div class="d">at peak</div></div>
+      <div class="kpi"><div class="k">Cost per 1M output tokens</div><div class="v">${s.dau > 0 && s.price > 0 ? fUSD(r.econ.perMOut) : '–'}</div><div class="d">${s.dau > 0 ? `${fUSD(r.econ.costDay)}/day at $${(+s.price).toFixed(2)}/GPU-hr` : 'needs DAU'}</div></div>
+    </div>${wl}</section>`;
+}
+function sloHTML(r) {
+  const s = r.s, c = r.chosen, T = s.ttft / 1000, P = s.tpot / 1000;
+  const pill = (v, tgt) => { const q = v / tgt; return `<span class="pill ${q <= 0.8 ? 'good' : q <= 1.0001 ? 'warn' : 'bad'}">${q <= 1.0001 ? 'meets' : 'misses'} · ${Math.round(q * 100)}% of target</span>`; };
+  let rows;
+  if (c.mode === 'disagg') {
+    const Pp = r.dis.P, D = r.dis.D;
+    rows = [['TTFT, average prompt at peak load', `${fInt(s.avgIn)} tokens, queueing + KV handoff`, Pp.ttftAvg, T],
+      ['TTFT, peak prompt', `${fInt(Math.min(s.peakIn, s.ctx))} tokens on an idle prefill instance`, Pp.ttftPeak, T],
+      ['TPOT at peak load', `${fInt(D.Bop)} streams on each decode instance`, D.tpotOp, P]];
+  } else {
+    const A = r.agg.best;
+    rows = [['TTFT, average prompt at peak load', `${fInt(s.avgIn)} tokens, chunked behind decode`, A.ttftAvg, T],
+      ['TTFT, peak prompt', `${fInt(Math.min(s.peakIn, s.ctx))} tokens`, A.ttftPeak, T],
+      ['TPOT, typical step at peak', `${fInt(A.Bop)} streams + prefill chunks`, A.tpotOp, P],
+      ['TPOT, step carrying a full prefill chunk', `${fInt(A.chunk)} prompt tokens in the step`, P * (1 - s.sloMargin / 100), P]];
+  }
+  const row = c.mode === 'disagg' ? r.dis.D : r.agg.best;
+  return `<section class="card"><h2>Latency check</h2><p class="sub">Estimates against your targets of ${s.ttft} ms TTFT and ${s.tpot} ms TPOT (${f1(1000 / s.tpot)} tokens/s per user), sized with a ${s.sloMargin}% safety margin.</p>
+  <div class="tablewrap"><table><thead><tr><th>Metric</th><th>Condition</th><th class="n">Estimate</th><th>Status</th></tr></thead><tbody>
+  ${rows.map(x => `<tr><td>${esc(x[0])}</td><td class="muted">${esc(x[1])}</td><td class="n">${fMs(x[2])}</td><td>${pill(x[2], x[3])}</td></tr>`).join('')}
+  <tr><td>KV cache in use</td><td class="muted">per ${esc(row.label)} instance at peak</td><td class="n">${pct(row.kvUse)}</td><td><span class="pill ${row.kvUse < 0.85 ? 'good' : row.kvUse <= 1 ? 'warn' : 'bad'}">${row.kvUse < 0.85 ? 'room to spare' : 'near the limit'}</span></td></tr>
+  </tbody></table></div></section>`;
+}
+function memoryHTML(r) {
+  const s = r.s, md = r.md, c = r.chosen;
+  const row = c.mode === 'disagg' ? r.dis.D : r.agg.best, mi = row.mi;
+  const hbm = s.hbmGB * 1e9, held = hbm * (1 - s.memUtil), resv = md.reserve, w = mi.wGPU;
+  const kvTot = Math.max(0, mi.avail), kvUsed = Math.min(kvTot, kvTot * row.kvUse);
+  const parts = [['Weights', w, 'var(--ink)'], ['KV cache in use', kvUsed, 'var(--decode)'], ['KV cache free', kvTot - kvUsed, 'color-mix(in srgb, var(--decode) 30%, transparent)'], ['Runtime reserve', resv, 'var(--warn)'], ['Held back by engine', held, 'var(--line)']];
+  return `<section class="card"><h2>Memory on one decode GPU</h2><p class="sub">${esc(row.label)}, ${s.wprec.toUpperCase()} weights, ${s.kvprec.toUpperCase()} KV, ${s.kvPolicy === 'paged' ? 'paged KV' : 'full-window reservation'}, ${s.hbmGB} GB HBM.</p>
+    <div class="membar">${parts.map(p => `<div style="width:${Math.max(0, 100 * p[1] / hbm).toFixed(2)}%;background:${p[2]}" title="${p[0]}"></div>`).join('')}</div>
+    <div class="memlegend">${parts.map(p => `<i style="background:${p[2]}"></i><span>${p[0]}</span><span class="mono">${fGB(p[1])}</span>`).join('')}</div>
+    <dl class="kv" style="margin-top:14px">
+      <dt>KV per token (all layers)</dt><dd>${fGB(md.kvTokLayer * s.layers)}</dd>
+      <dt>KV for one ${fCtx(s.ctx)} full-context request</dt><dd>${fGB(mi.ctxBytes)}</dd>
+      <dt>KV for an average request (${fInt(s.avgIn + s.avgOut)} tokens)</dt><dd>${fGB(M.kvBytes(md, Math.min(s.ctx, s.avgIn + s.avgOut)))}</dd>
+      <dt>KV capacity per instance</dt><dd>${fGB(mi.cap)}</dd>
+      ${mi.rep > 1 ? `<dt>KV replicated across GPUs</dt><dd>${mi.rep}× (${md.mla ? 'MLA latent' : s.kvHeads + ' KV heads'} under TP)</dd>` : ''}
+      <dt>Sequences per instance at the ${pct(s.kvMaxUtil)} fill limit</dt><dd>${fInt(mi.Bmem)}</dd>
+    </dl></section>`;
+}
+function loadHTML(r) {
+  const s = r.s, L = r.load, row = r.chosen.mode === 'disagg' ? r.dis.D : r.agg.best, hit = s.prefixHit / 100;
+  return `<section class="card"><h2>Load being sized</h2><p class="sub">Peak figures include ${s.headroom}% headroom. Sized on ${L.binding === 'DAU' ? 'DAU traffic' : 'concurrent sessions'}, the larger of the two.</p>
+  <dl class="kv">
+    <dt>Requests/s from DAU (peak)</dt><dd>${f1(L.lamDau)}</dd>
+    <dt>Requests/s implied by ${fInt(s.conc)} sessions</dt><dd>${f1(L.lamConc)}</dd>
+    <dt>Peak request rate sized</dt><dd>${f1(L.lam)}</dd>
+    <div class="sep"></div>
+    <dt>Prompt tokens/s to prefill${hit ? ` (after ${s.prefixHit}% cache hits)` : ''}</dt><dd>${fTok(L.lam * Math.min(s.avgIn, s.ctx) * (1 - hit))}</dd>
+    <dt>Output tokens/s to decode</dt><dd>${fTok(Math.max(L.Dtok, L.Cs / row.tpotOp))}</dd>
+    <dt>Streams in flight at peak</dt><dd>${fInt(Math.max(L.Cs, L.Dtok * row.tpotOp))}</dd>
+    <div class="sep"></div>
+    <dt>Requests per day</dt><dd>${fTok(r.econ.reqDay)}</dd>
+    <dt>Input / output tokens per day</dt><dd>${fTok(r.econ.inDay)} / ${fTok(r.econ.outDay)}</dd>
+    <dt>Daily average vs sized peak</dt><dd>${s.dau > 0 ? pct(r.econ.avgVsPeak) : '–'}</dd>
+  </dl></section>`;
+}
+function candidatesHTML(r) {
+  const c = r.chosen;
+  const rows = r.cfgs.map((cfg, i) => {
+    const d = r.dis.dec[i], p = r.dis.pre[i], a = r.agg.rows[i];
+    const cell = (x, f) => x.feasible ? f(x) : `<span class="x">${esc(x.why)}</span>`;
+    const isChosen = c && ((c.mode === 'agg' && r.agg.best === a) || (c.mode === 'disagg' && (r.dis.D === d || r.dis.P === p)));
+    return `<tr class="${isChosen ? 'chosen' : ''}"><td class="mono">${cfg.g}</td><td>${esc(d.label)}</td><td class="n">${cell(d, x => fInt(x.Binst))}</td><td class="n">${cell(d, x => fInt(x.gpus))}</td><td>${esc(p.label)}</td><td class="n">${cell(p, x => fInt(x.gpus))}</td><td class="n">${cell(a, x => fInt(x.gpus))}</td></tr>`;
+  }).join('');
+  return `<section class="card"><h2>Every layout considered</h2><p class="sub">GPUs per model instance, and how many GPUs each pool needs with that instance size. The cheapest feasible layout per pool is used; highlighted rows are the recommendation.</p>
+  <div class="tablewrap"><table><thead><tr><th>GPUs / instance</th><th>Decode layout</th><th class="n">Max streams</th><th class="n">Decode GPUs</th><th>Prefill layout</th><th class="n">Prefill GPUs</th><th class="n">Aggregated GPUs</th></tr></thead><tbody>${rows}</tbody></table></div></section>`;
+}
+function methodHTML() {
+  return `<section class="card method"><h2>How the estimate works</h2>
+  <ol>
+    <li><b>Load.</b> Peak request rate = DAU × requests/user ÷ 86,400 × peak factor. Concurrent sessions convert to a rate with Little's law: sessions ÷ (TTFT + output × TPOT). Decode must hold the session count and deliver rate × average output tokens/s.</li>
+    <li><b>Memory.</b> Weights per GPU = params × bytes ÷ GPUs (MoE experts sharded by EP; with MLA, attention runs data-parallel so dense weights are replicated). KV per token = 2 × layers × KV heads × head dim × bytes (MLA: latent + RoPE dims per layer). Sliding-window layers store only the window. KV is replicated when TP is larger than the KV-head count. The context window must fit one full request; under paged allocation each session holds its actual tokens, under reservation the whole window. KV fills to the fill limit at most.</li>
+    <li><b>Decode step.</b> <code>max(HBM read time, compute time) + collectives + overhead</code>. The HBM read is weights (only the experts the batch routes to) plus each stream's KV. The largest batch that stays within TPOT less the safety margin sets streams per instance.</li>
+    <li><b>Prefill.</b> FLOPs = 2 × active params × prompt tokens + causal attention, at the chosen MFU. TP inside a scale-up domain, context parallelism across domains. Queueing uses an M/D/1 model, with utilisation capped so the average prompt still meets TTFT.</li>
+    <li><b>Serving architecture.</b> Disaggregated: separate prefill and decode pools, KV moved over RDMA (counted in TTFT). Aggregated: each step carries decode tokens plus a prefill chunk sized to keep the step within TPOT. Auto picks disaggregated only when it saves at least 10% of nodes.</li>
+    <li><b>Fleet.</b> Instances up to the scale-up domain size pack first-fit into nodes (or racks); larger ones span whole domains. N+1 keeps room for one more instance of the largest layout.</li>
+    <li><b>GPUs without a precision.</b> FP4 weights on a GPU without FP4 tensor cores keep the memory saving but compute at the FP8 (or BF16) rate.</li>
+  </ol>
+  <p class="muted" style="max-width:90ch">First-order model. It leaves out speculative decoding / MTP, CUDA-graph padding, request-length variance beyond the peak checks and framework-specific kernels. Calibrate the engine assumptions against a vLLM, SGLang or TensorRT-LLM benchmark at your own sequence lengths, then use Export to FleetScope to replay the result over time.</p></section>`;
+}
+function summaryText(r) {
+  const s = r.s, c = r.chosen, L = r.load;
+  const lines = [`Sizing: ${s.modelLabel} on ${s.gpuLabel}, ${s.wprec.toUpperCase()} weights, ${s.kvprec.toUpperCase()} KV, ${fCtx(s.ctx)} context`,
+    `Load: ${fInt(s.conc)} concurrent sessions; ${fInt(s.dau)} DAU × ${s.rpu} req/day, ${s.peakFactor}× peak → ${f1(L.lam)} req/s sized (incl. ${s.headroom}% headroom)`,
+    `Tokens: in avg ${fInt(s.avgIn)} / peak ${fInt(s.peakIn)}, out avg ${fInt(s.avgOut)} / peak ${fInt(s.peakOut)}`,
+    `Targets: TTFT ${s.ttft} ms, TPOT ${s.tpot} ms (sized with a ${s.sloMargin}% margin)`];
+  if (!c) { lines.push(`Result: no ${s.gpuLabel} layout meets these targets.`); return lines.join('\n'); }
+  if (c.mode === 'disagg') lines.push(`Recommendation: disaggregated. Prefill ${r.dis.P.N} × ${r.dis.P.label} (${r.dis.P.gpus} GPUs), decode ${r.dis.D.N} × ${r.dis.D.label} (${r.dis.D.gpus} GPUs)`, `Estimates: TTFT ${fMs(r.dis.P.ttftAvg)} avg / ${fMs(r.dis.P.ttftPeak)} peak prompt; TPOT ${fMs(r.dis.D.tpotOp)}`);
+  else lines.push(`Recommendation: aggregated with chunked prefill. ${r.agg.best.N} × ${r.agg.best.label} (${r.agg.best.gpus} GPUs)`, `Estimates: TTFT ${fMs(r.agg.best.ttftAvg)} avg / ${fMs(r.agg.best.ttftPeak)} peak prompt; TPOT ${fMs(r.agg.best.tpotOp)} typical`);
+  lines.push(`Fleet: ${c.gpus} GPUs serving → ${c.totalNodes} × ${c.nodeGPUs}-GPU ${unitName(c.nodeGPUs)}s = ${c.provGPUs} GPUs${c.kw ? `, ~${f1(c.kw)} kW max` : ''}`);
+  if (s.dau > 0 && s.price > 0) lines.push(`Cost: ${fUSD(r.econ.costDay)}/day, ${fUSD(r.econ.perMOut)} per 1M output tokens at $${(+s.price).toFixed(2)}/GPU-hr`);
+  return lines.join('\n');
+}
+
+// ---------- update ----------
+let last = null;
+function setHint(k, text, warn) { const h = document.getElementById('hint-' + k); if (h) { h.textContent = text || ''; h.classList.toggle('warn', !!warn); } }
+function update() {
+  save(STORE, state);
+  const s = sanitized(), r = M.plan(s);
+  last = r;
+  const warns = warnings(s, r);
+  setHint('ctx', `Model max ${fCtx(s.maxCtx)}. Peak request uses ${fInt(s.peakIn + s.peakOut)} tokens.`, s.peakIn + s.peakOut > s.ctx || s.ctx > s.maxCtx);
+  const chips = $('#chips-ctx');
+  chips.innerHTML = FIELDS.ctx.chips.filter(v => v <= Math.max(s.maxCtx, 8192)).concat(s.maxCtx > 262144 ? [s.maxCtx] : []).map(v => `<button type="button" class="chip ${v === s.ctx ? 'on' : ''}" data-v="${v}">${fCtx(v)}</button>`).join('');
+  setHint('tpot', `${f1(1000 / s.tpot)} tokens/s per user`);
+  setHint('model', `${s.experts ? `MoE, ${s.active}B of ${s.total}B active` : `Dense, ${s.total}B`} · ${s.attn === 'mla' ? 'MLA' : s.kvHeads + ' KV heads'} · weights ${fGB(r.md.Wd + r.md.We)}`);
+  setHint('gpu', `${s.hbmGB} GB @ ${s.hbmTBs} TB/s · ${fInt(s.tfFp8 || s.tfBf16)} TFLOPS ${s.tfFp8 ? 'FP8' : 'BF16'}${s.tfFp4 ? ` · ${fInt(s.tfFp4)} FP4` : ''} · ${s.domain} per domain`);
+  setHint('conc', `Implies ${f1(r.load.lamConc)} req/s`);
+  setHint('dau', s.dau > 0 ? `${f1(r.load.lamDau)} req/s at peak` : '');
+  $('#spec').textContent = `${s.gpuLabel} · ${s.hbmGB} GB @ ${s.hbmTBs} TB/s · ${s.scaleUpGBs} GB/s scale-up per direction · ${s.domain} GPUs per domain · ${s.nicGbps}G NIC per GPU`;
+  const el = $('#results');
+  if (!r.chosen) { el.innerHTML = verdictHTML(r, warns) + methodHTML(); return; }
+  const lbl = (r.chosen.mode === 'disagg' ? r.dis.D : r.agg.best).label;
+  el.innerHTML = verdictHTML(r, warns)
+    + `<section class="card"><h2>GPU topology</h2><p class="sub">How the ${r.chosen.provGPUs} GPUs split into model instances and sit on ${r.chosen.nodeGPUs}-GPU ${unitName(r.chosen.nodeGPUs)}s.</p>${topologyHTML(r)}</section>`
+    + sloHTML(r)
+    + `<div class="two"><section class="card"><h2>Decode step time vs batch</h2><p class="sub">One ${esc(lbl)} instance. Where the curve crosses the target sets streams per instance.</p>${stepChart(r)}</section>
+       <section class="card"><h2>GPUs vs TPOT target</h2><p class="sub">Provisioned GPUs as the TPOT target moves; your current target is highlighted.</p>${sensChart(r)}</section></div>`
+    + `<div class="two">${memoryHTML(r)}${loadHTML(r)}</div>` + candidatesHTML(r) + methodHTML();
+}
+$('#results').addEventListener('click', async e => {
+  const b = e.target.closest('[data-r]'); if (!b) return;
+  if (b.dataset.r === 'copy') {
+    const t = $('#toast');
+    try { await navigator.clipboard.writeText(summaryText(last)); t.textContent = 'Summary copied.'; }
+    catch (err) { showDialog('Summary', 'Copy is blocked here; select the text below.', summaryText(last), 'sizing-summary.txt'); }
+  }
+  if (b.dataset.r === 'fleetscope') {
+    const x = X.toGraph(last);
+    if (!x.ok) { $('#toast').textContent = x.errors.join(' '); $('#toast').className = 'toast bad'; return; }
+    showDialog('Export to FleetScope', `A FleetScope graph with this model, your targets, ${fInt(x.users)} chat users arriving at the sized peak rate, and the recommended pools (GPUs per instance set). In FleetScope, press <b>Load graph JSON</b> and Play, or save it as <code>fleetscope/scenarios/&lt;name&gt;/graph.json</code> for the CI plan.<br>${x.notes.map(esc).join('<br>')}`, JSON.stringify(x.graph, null, 1), 'graph.json');
+  }
+});
+
+buildInputs();
+syncInputs();
+update();
+})();
+
+</script>
+</body>
+</html>
