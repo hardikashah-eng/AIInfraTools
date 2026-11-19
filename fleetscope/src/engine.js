@@ -31,7 +31,9 @@
     H100: { label: 'H100 80GB', hbm: 80, bw: 3.35, bf16: 989, fp8: 1979, onprem: 1.4, rent: 2.4 },
     H200: { label: 'H200 141GB', hbm: 141, bw: 4.8, bf16: 989, fp8: 1979, onprem: 2.0, rent: 3.5 },
     MI300X: { label: 'MI300X 192GB', hbm: 192, bw: 5.3, bf16: 1307, fp8: 2615, onprem: 1.5, rent: 2.6 },
-    B200: { label: 'B200 180GB', hbm: 180, bw: 8.0, bf16: 2250, fp8: 4500, onprem: 3.2, rent: 5.5 }
+    B200: { label: 'B200 180GB', hbm: 180, bw: 8.0, bf16: 2250, fp8: 4500, onprem: 3.2, rent: 5.5 },
+    B300: { label: 'B300 262GB', hbm: 262, bw: 8.0, bf16: 2250, fp8: 4500, onprem: 4.0, rent: 7.0 },
+    GB200: { label: 'GB200 186GB (NVL72)', hbm: 186, bw: 8.0, bf16: 2500, fp8: 5000, onprem: 3.6, rent: 6.0 }
   };
   // Approximate architecture figures. kvDim = per-token, per-layer K+V width (2 x kv_heads x head_dim, or MLA latent).
   const MODELS = {
@@ -43,13 +45,15 @@
   };
 
   // ---------- performance profile ----------
-  function profile(gpuKey, m) {
+  // tpFixed: GPUs per instance set on the pool (0 or absent = smallest power of two whose share of the weights fits).
+  function profile(gpuKey, m, tpFixed) {
     const G = GPUS[gpuKey];
     const wBytes = m.params * 1e9 * (m.wPrec === 'bf16' ? 2 : 1);
     const kvElem = m.kvPrec === 'bf16' ? 2 : 1;
     const kvBytesPerToken = m.mla ? m.layers * m.mla * kvElem : 2 * m.layers * m.kvHeads * m.headDim * kvElem;
     let tp = 1;
-    while (tp < 16 && wBytes / tp > 0.65 * G.hbm * 1e9) tp *= 2;
+    if (tpFixed > 0) tp = Math.round(tpFixed);
+    else while (tp < 16 && wBytes / tp > 0.65 * G.hbm * 1e9) tp *= 2;
     const tflops = (m.wPrec === 'bf16' ? G.bf16 : G.fp8) * 1e12;
     const bw = G.bw * 1e12 * 0.75;
     const prefill = tp * tflops * 0.45 / (2 * m.active * 1e9);
@@ -310,7 +314,7 @@
   function lintSpec(spec) {
     const out = [], P = {}, m = spec.model;
     if (!m) return out;
-    for (const p of spec.pools) P[p.id] = profile(p.gpu, m);
+    for (const p of spec.pools) P[p.id] = profile(p.gpu, m, p.tp);
     // rough traffic estimate: requests/s and token sizes per router
     const est = {};
     for (const S of spec.sources) {
@@ -681,7 +685,7 @@
     for (const n of g.nodes) {
       if (n.type !== 'pool') continue;
       const c = n.cfg;
-      const p = { id: n.id, name: c.name, site: c.site, siteKind: c.siteKind, role: c.role, gpu: c.gpu,
+      const p = { id: n.id, name: c.name, site: c.site, siteKind: c.siteKind, role: c.role, gpu: c.gpu, tp: +c.tp || 0,
         min: c.autoscale ? c.min : c.instances, max: c.autoscale ? Math.max(c.min, c.max, 1) : c.instances,
         auto: !!c.autoscale, coldStart: c.coldStart, upWait: c.upWait, downUtil: c.downUtil / 100, maxBatch: c.maxBatch, fabricGbps: c.fabricGbps, decode: [],
         zone: zoneOf(c), offloadGB: +c.offloadGB || 0, offloadGBs: +c.offloadGBs || 50, loraAdapters: +c.loraAdapters || 0, loraSlots: Math.max(1, +c.loraSlots || 8), calib: (c.calibPrefill && c.calibPrefill !== 1) || (c.calibDecode && c.calibDecode !== 1) ? { prefill: c.calibPrefill || 1, decode: c.calibDecode || 1 } : null };
@@ -753,7 +757,7 @@
     const dt = 0.05, STEPS = 20;
     const m = spec.model;
     const profs = {};
-    const prof = gk => profs[gk] || (profs[gk] = profile(gk, m));
+    const prof = (gk, tp) => { const k = gk + ':' + (tp || 0); return profs[k] || (profs[k] = profile(gk, m, tp)); };
     const pools = [], byId = {};
     let dropped = 0;
 
@@ -763,7 +767,7 @@
     }
     for (const sp of spec.pools) {
       const p = Object.assign({}, sp);
-      p.P = calibrated(prof(p.gpu), p.calib);
+      p.P = calibrated(prof(p.gpu, p.tp), p.calib);
       p.price = p.siteKind === 'neo' ? GPUS[p.gpu].rent : GPUS[p.gpu].onprem;
       Object.assign(p, { inst: [], q: new Q(), qTokens: 0, lastUp: -1e9, utilHist: [], nextId: 0, tokSec: 0, spillFrom: [], down: 0, capLoss: 0 });
       pools.push(p); byId[p.id] = p;

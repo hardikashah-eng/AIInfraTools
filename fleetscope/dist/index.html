@@ -337,6 +337,8 @@ button, select, input { font: inherit; color: inherit; }
       <button type="button" id="pinBtn">Pin as baseline</button>
       <button type="button" id="clearBtn" hidden>Clear baseline</button>
       <button type="button" id="copyBtn" title="Copy this graph as JSON">Copy graph JSON</button>
+      <button type="button" id="loadBtn" title="Load a graph JSON file, such as one exported by Inference Sizer">Load graph JSON</button>
+      <input type="file" id="loadFile" accept=".json,application/json" hidden>
     </div>
     <div class="tb">
       <button type="button" id="whatifBtn" title="Stress this topology: peak load, peak sessions, outages, large contexts, headroom">What if…</button>
@@ -416,7 +418,9 @@ button, select, input { font: inherit; color: inherit; }
     H100: { label: 'H100 80GB', hbm: 80, bw: 3.35, bf16: 989, fp8: 1979, onprem: 1.4, rent: 2.4 },
     H200: { label: 'H200 141GB', hbm: 141, bw: 4.8, bf16: 989, fp8: 1979, onprem: 2.0, rent: 3.5 },
     MI300X: { label: 'MI300X 192GB', hbm: 192, bw: 5.3, bf16: 1307, fp8: 2615, onprem: 1.5, rent: 2.6 },
-    B200: { label: 'B200 180GB', hbm: 180, bw: 8.0, bf16: 2250, fp8: 4500, onprem: 3.2, rent: 5.5 }
+    B200: { label: 'B200 180GB', hbm: 180, bw: 8.0, bf16: 2250, fp8: 4500, onprem: 3.2, rent: 5.5 },
+    B300: { label: 'B300 262GB', hbm: 262, bw: 8.0, bf16: 2250, fp8: 4500, onprem: 4.0, rent: 7.0 },
+    GB200: { label: 'GB200 186GB (NVL72)', hbm: 186, bw: 8.0, bf16: 2500, fp8: 5000, onprem: 3.6, rent: 6.0 }
   };
   // Approximate architecture figures. kvDim = per-token, per-layer K+V width (2 x kv_heads x head_dim, or MLA latent).
   const MODELS = {
@@ -428,13 +432,15 @@ button, select, input { font: inherit; color: inherit; }
   };
 
   // ---------- performance profile ----------
-  function profile(gpuKey, m) {
+  // tpFixed: GPUs per instance set on the pool (0 or absent = smallest power of two whose share of the weights fits).
+  function profile(gpuKey, m, tpFixed) {
     const G = GPUS[gpuKey];
     const wBytes = m.params * 1e9 * (m.wPrec === 'bf16' ? 2 : 1);
     const kvElem = m.kvPrec === 'bf16' ? 2 : 1;
     const kvBytesPerToken = m.mla ? m.layers * m.mla * kvElem : 2 * m.layers * m.kvHeads * m.headDim * kvElem;
     let tp = 1;
-    while (tp < 16 && wBytes / tp > 0.65 * G.hbm * 1e9) tp *= 2;
+    if (tpFixed > 0) tp = Math.round(tpFixed);
+    else while (tp < 16 && wBytes / tp > 0.65 * G.hbm * 1e9) tp *= 2;
     const tflops = (m.wPrec === 'bf16' ? G.bf16 : G.fp8) * 1e12;
     const bw = G.bw * 1e12 * 0.75;
     const prefill = tp * tflops * 0.45 / (2 * m.active * 1e9);
@@ -695,7 +701,7 @@ button, select, input { font: inherit; color: inherit; }
   function lintSpec(spec) {
     const out = [], P = {}, m = spec.model;
     if (!m) return out;
-    for (const p of spec.pools) P[p.id] = profile(p.gpu, m);
+    for (const p of spec.pools) P[p.id] = profile(p.gpu, m, p.tp);
     // rough traffic estimate: requests/s and token sizes per router
     const est = {};
     for (const S of spec.sources) {
@@ -1066,7 +1072,7 @@ button, select, input { font: inherit; color: inherit; }
     for (const n of g.nodes) {
       if (n.type !== 'pool') continue;
       const c = n.cfg;
-      const p = { id: n.id, name: c.name, site: c.site, siteKind: c.siteKind, role: c.role, gpu: c.gpu,
+      const p = { id: n.id, name: c.name, site: c.site, siteKind: c.siteKind, role: c.role, gpu: c.gpu, tp: +c.tp || 0,
         min: c.autoscale ? c.min : c.instances, max: c.autoscale ? Math.max(c.min, c.max, 1) : c.instances,
         auto: !!c.autoscale, coldStart: c.coldStart, upWait: c.upWait, downUtil: c.downUtil / 100, maxBatch: c.maxBatch, fabricGbps: c.fabricGbps, decode: [],
         zone: zoneOf(c), offloadGB: +c.offloadGB || 0, offloadGBs: +c.offloadGBs || 50, loraAdapters: +c.loraAdapters || 0, loraSlots: Math.max(1, +c.loraSlots || 8), calib: (c.calibPrefill && c.calibPrefill !== 1) || (c.calibDecode && c.calibDecode !== 1) ? { prefill: c.calibPrefill || 1, decode: c.calibDecode || 1 } : null };
@@ -1138,7 +1144,7 @@ button, select, input { font: inherit; color: inherit; }
     const dt = 0.05, STEPS = 20;
     const m = spec.model;
     const profs = {};
-    const prof = gk => profs[gk] || (profs[gk] = profile(gk, m));
+    const prof = (gk, tp) => { const k = gk + ':' + (tp || 0); return profs[k] || (profs[k] = profile(gk, m, tp)); };
     const pools = [], byId = {};
     let dropped = 0;
 
@@ -1148,7 +1154,7 @@ button, select, input { font: inherit; color: inherit; }
     }
     for (const sp of spec.pools) {
       const p = Object.assign({}, sp);
-      p.P = calibrated(prof(p.gpu), p.calib);
+      p.P = calibrated(prof(p.gpu, p.tp), p.calib);
       p.price = p.siteKind === 'neo' ? GPUS[p.gpu].rent : GPUS[p.gpu].onprem;
       Object.assign(p, { inst: [], q: new Q(), qTokens: 0, lastUp: -1e9, utilHist: [], nextId: 0, tokSec: 0, spillFrom: [], down: 0, capLoss: 0 });
       pools.push(p); byId[p.id] = p;
@@ -1803,7 +1809,7 @@ button, select, input { font: inherit; color: inherit; }
     router: { title: 'Router', group: 'Routing', color: 'route', inputs: true, outputs: true, w: 200,
       defaults: () => ({ name: 'Router', policy: 'primary-first', burstWait: 1.5, affinity: 'ideal', enforceResidency: false, owner: '', oncall: '' }) },
     pool: { title: 'GPU pool', group: 'Compute', color: 'pool', inputs: true, outputs: true, w: 290,
-      defaults: () => ({ name: 'On-prem pool', site: 'On-prem DC', siteKind: 'onprem', role: 'agg', gpu: 'H100', instances: 4, autoscale: false, min: 0, max: 8, coldStart: 90, upWait: 1, downUtil: 30, maxBatch: 256, fabricGbps: 400, zone: 'auto', owner: '', oncall: '', calibPrefill: 1, calibDecode: 1, clusterWorkload: '', clusterAtH: 0, offloadGB: 0, offloadGBs: 50, loraAdapters: 0, loraSlots: 8 }) },
+      defaults: () => ({ name: 'On-prem pool', site: 'On-prem DC', siteKind: 'onprem', role: 'agg', gpu: 'H100', tp: 0, instances: 4, autoscale: false, min: 0, max: 8, coldStart: 90, upWait: 1, downUtil: 30, maxBatch: 256, fabricGbps: 400, zone: 'auto', owner: '', oncall: '', calibPrefill: 1, calibDecode: 1, clusterWorkload: '', clusterAtH: 0, offloadGB: 0, offloadGBs: 50, loraAdapters: 0, loraSlots: 8 }) },
     link: { title: 'Cross-site link', group: 'Network', color: 'link', inputs: true, outputs: true, w: 210,
       defaults: () => ({ name: 'Cloud link', gbps: 100, rttMs: 20, egressPerGB: 0.05, encrypted: true, owner: '', oncall: '' }) },
     train: { title: 'Training job', group: 'Compute', color: 'train', inputs: false, outputs: true, w: 250,
@@ -2767,7 +2773,7 @@ function cfgLine(n) {
     case 'chat': return fInt(c.users) + ' users · ' + c.turns + ' turns · ' + c.thinkS + ' s think';
     case 'trace': return (c.trace === 'uploaded' ? (traces.uploaded ? traces.uploaded.name : 'upload a CSV') : c.trace === 'live' ? (traces.live ? traces.live.name : 'live forecast') : (E.TRACES[c.trace] || { label: c.trace }).label.replace('Sample: ', '')) + ' · ' + c.scale + '×';
     case 'router': return ({ 'primary-first': 'Primary first, burst at ' + c.burstWait + ' s', 'least-wait': 'Least estimated wait', 'round-robin': 'Round robin' })[c.policy];
-    case 'pool': { const m = prof(); const tp = m ? E.profile(c.gpu, m.cfg).tp : 1; return ((+c.calibPrefill || 1) !== 1 || (+c.calibDecode || 1) !== 1 ? '\u2713 calibrated · ' : '') + roleName[c.role] + ' · ' + c.gpu + (tp > 1 ? ' ×' + tp : '') + ' · ' + (c.autoscale ? c.min + '–' + c.max + ' inst, ' + c.coldStart + ' s cold' : c.instances + ' inst'); }
+    case 'pool': { const m = prof(); const tp = m ? E.profile(c.gpu, m.cfg, c.tp).tp : 1; return ((+c.calibPrefill || 1) !== 1 || (+c.calibDecode || 1) !== 1 ? '\u2713 calibrated · ' : '') + roleName[c.role] + ' · ' + c.gpu + (tp > 1 ? ' ×' + tp : '') + ' · ' + (c.autoscale ? c.min + '–' + c.max + ' inst, ' + c.coldStart + ' s cold' : c.instances + ' inst'); }
     case 'link': return c.gbps + ' Gbps · ' + c.rttMs + ' ms RTT · $' + c.egressPerGB + '/GB';
     case 'train': return E.MODELS[c.model].label.replace(/ \(.*\)/, '') + ' · ' + fInt(c.gpus) + ' × ' + c.gpu;
     case 'model': return c.params + 'B params' + (c.active !== c.params ? ' (' + c.active + 'B active)' : '') + ' · ' + c.wPrec.toUpperCase() + (c.thinkTokens ? ' · thinks ~' + fK(c.thinkTokens) : '');
@@ -3014,6 +3020,7 @@ const FIELDS = {
     { p: 'siteKind', k: 'seg', label: 'Site type', opts: [['onprem', 'On-prem'], ['neo', 'Neocloud']] },
     { p: 'site', k: 'text', label: 'Site name', list: true, hint: 'Pools with the same site name share a fabric; across sites, wire through a link.' },
     { p: 'gpu', k: 'select', label: 'GPU type', opts: gpuOpts },
+    { p: 'tp', k: 'number', label: 'GPUs per instance (0 = auto)', min: 0, max: 72, step: 1, hint: 'Auto picks the smallest power of two that holds the weights. Set it to match a layout from Inference Sizer.' },
     { p: 'autoscale', k: 'check', label: 'Autoscale' },
     { p: 'instances', k: 'range', label: 'Instances', min: 1, max: 32, step: 1, f: v => v + ' inst', show: c => !c.autoscale },
     { p: 'min', k: 'range', label: 'Min instances (always on)', min: 0, max: 16, step: 1, f: v => v + ' inst', show: c => c.autoscale },
@@ -3228,7 +3235,7 @@ function refreshForm() {
     else if (f.k === 'poolReadout') {
       const m = S.graph.nodes.find(x => x.type === 'model');
       if (!m) { b.w.innerHTML = 'Add a Model node to see this pool’s profile.'; continue; }
-      const P = E.profile(c.gpu, m.cfg), G = E.GPUS[c.gpu];
+      const P = E.profile(c.gpu, m.cfg, c.tp), G = E.GPUS[c.gpu];
       const rows = [['GPUs per instance (tensor parallel)', P.tp], ['KV cache per instance', fK(P.kvCap) + ' tok'], ['Prefill throughput', fK(P.prefill) + ' tok/s'], ['Decode step, batch 32 at 2k ctx', fMs(P.a + P.b0 * 32 + P.c * 64000)], ['Price', fUsd(c.siteKind === 'neo' ? G.rent : G.onprem) + '/GPU-h' + (c.siteKind === 'neo' ? ' rented' : ' amortized')]];
       b.w.innerHTML = '<table>' + rows.map(r => '<tr><td>' + r[0] + '</td><td>' + r[1] + '</td></tr>').join('') + '</table>' + (P.multiNode ? '<div class="warnline">Weights need more than 8 GPUs per instance: modelled as a 16-GPU multi-node instance.</div>' : '') + (P.kvCap < 20000 ? '<div class="warnline">Little KV cache left after weights.</div>' : '');
     } else if (f.k === 'modelReadout') {
@@ -4112,6 +4119,28 @@ $('#copyBtn').onclick = () => {
   const txt = JSON.stringify(S.graph, null, 1);
   if (navigator.clipboard && navigator.clipboard.writeText) navigator.clipboard.writeText(txt).then(() => toast('Graph JSON copied.'), () => toast('Copy was blocked by the browser.'));
   else toast('Copy is not available here.');
+};
+$('#loadBtn').onclick = () => $('#loadFile').click();
+$('#loadFile').onchange = () => {
+  const f = $('#loadFile').files[0];
+  if (!f) return;
+  const rd = new FileReader();
+  rd.onload = () => {
+    try {
+      const g = JSON.parse(String(rd.result));
+      const graph = g && g.graph && Array.isArray(g.graph.nodes) ? g.graph : g;
+      if (!graph || !Array.isArray(graph.nodes) || !Array.isArray(graph.edges)) throw new Error('expected an object with "nodes" and "edges" arrays');
+      const known = new Set(Object.keys(NT));
+      const bad = graph.nodes.filter(n => !n || !n.id || !known.has(n.type));
+      if (bad.length) throw new Error('unknown node type "' + (bad[0] && bad[0].type) + '"');
+      for (const n of graph.nodes) n.cfg = Object.assign(NT[n.type].defaults(), n.cfg || {});
+      S.graph = graph; S.sel = null;
+      renderGraph(); renderPalette(); renderDetails(); scheduleRun(0);
+      toast('Loaded ' + f.name + '.');
+    } catch (err) { toast('Could not load ' + f.name + ': ' + err.message); }
+    $('#loadFile').value = '';
+  };
+  rd.readAsText(f);
 };
 function baselineOf(R, label) {
   const tot = new Float64Array(R.D);

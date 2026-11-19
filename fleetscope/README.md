@@ -8,6 +8,10 @@ A node-editor prototype for capacity planning on hybrid GPU fleets: on-prem plus
 
 Open `dist/index.html` in a browser. It is a single self-contained file with no server and no install.
 
+## Starting from Inference Sizer
+
+[Inference Sizer](../inference-sizer/) recommends GPUs, layout and pools for a model at TTFT/TPOT targets. Its **Export to FleetScope** writes a graph with the model, targets, matching traffic and pools, with GPUs per instance set. **Load graph JSON** opens it here, to replay against bursts, cold starts and failures. A pool's **GPUs per instance** (0 = auto) sets tensor parallelism explicitly.
+
 ## Demo
 
 These screenshots are of `dist/index.html` running its built-in templates. Synthetic traces only: no real traffic. All figures are uncalibrated spec-sheet estimates.
