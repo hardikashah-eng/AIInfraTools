@@ -337,6 +337,8 @@ button, select, input { font: inherit; color: inherit; }
       <button type="button" id="pinBtn">Pin as baseline</button>
       <button type="button" id="clearBtn" hidden>Clear baseline</button>
       <button type="button" id="copyBtn" title="Copy this graph as JSON">Copy graph JSON</button>
+      <button type="button" id="loadBtn" title="Load a graph JSON file, such as one exported by Inference Sizer">Load graph JSON</button>
+      <input type="file" id="loadFile" accept=".json,application/json" hidden>
     </div>
     <div class="tb">
       <button type="button" id="whatifBtn" title="Stress this topology: peak load, peak sessions, outages, large contexts, headroom">What if…</button>
@@ -534,7 +536,7 @@ function cfgLine(n) {
     case 'chat': return fInt(c.users) + ' users · ' + c.turns + ' turns · ' + c.thinkS + ' s think';
     case 'trace': return (c.trace === 'uploaded' ? (traces.uploaded ? traces.uploaded.name : 'upload a CSV') : c.trace === 'live' ? (traces.live ? traces.live.name : 'live forecast') : (E.TRACES[c.trace] || { label: c.trace }).label.replace('Sample: ', '')) + ' · ' + c.scale + '×';
     case 'router': return ({ 'primary-first': 'Primary first, burst at ' + c.burstWait + ' s', 'least-wait': 'Least estimated wait', 'round-robin': 'Round robin' })[c.policy];
-    case 'pool': { const m = prof(); const tp = m ? E.profile(c.gpu, m.cfg).tp : 1; return ((+c.calibPrefill || 1) !== 1 || (+c.calibDecode || 1) !== 1 ? '\u2713 calibrated · ' : '') + roleName[c.role] + ' · ' + c.gpu + (tp > 1 ? ' ×' + tp : '') + ' · ' + (c.autoscale ? c.min + '–' + c.max + ' inst, ' + c.coldStart + ' s cold' : c.instances + ' inst'); }
+    case 'pool': { const m = prof(); const tp = m ? E.profile(c.gpu, m.cfg, c.tp).tp : 1; return ((+c.calibPrefill || 1) !== 1 || (+c.calibDecode || 1) !== 1 ? '\u2713 calibrated · ' : '') + roleName[c.role] + ' · ' + c.gpu + (tp > 1 ? ' ×' + tp : '') + ' · ' + (c.autoscale ? c.min + '–' + c.max + ' inst, ' + c.coldStart + ' s cold' : c.instances + ' inst'); }
     case 'link': return c.gbps + ' Gbps · ' + c.rttMs + ' ms RTT · $' + c.egressPerGB + '/GB';
     case 'train': return E.MODELS[c.model].label.replace(/ \(.*\)/, '') + ' · ' + fInt(c.gpus) + ' × ' + c.gpu;
     case 'model': return c.params + 'B params' + (c.active !== c.params ? ' (' + c.active + 'B active)' : '') + ' · ' + c.wPrec.toUpperCase() + (c.thinkTokens ? ' · thinks ~' + fK(c.thinkTokens) : '');
@@ -781,6 +783,7 @@ const FIELDS = {
     { p: 'siteKind', k: 'seg', label: 'Site type', opts: [['onprem', 'On-prem'], ['neo', 'Neocloud']] },
     { p: 'site', k: 'text', label: 'Site name', list: true, hint: 'Pools with the same site name share a fabric; across sites, wire through a link.' },
     { p: 'gpu', k: 'select', label: 'GPU type', opts: gpuOpts },
+    { p: 'tp', k: 'number', label: 'GPUs per instance (0 = auto)', min: 0, max: 72, step: 1, hint: 'Auto picks the smallest power of two that holds the weights. Set it to match a layout from Inference Sizer.' },
     { p: 'autoscale', k: 'check', label: 'Autoscale' },
     { p: 'instances', k: 'range', label: 'Instances', min: 1, max: 32, step: 1, f: v => v + ' inst', show: c => !c.autoscale },
     { p: 'min', k: 'range', label: 'Min instances (always on)', min: 0, max: 16, step: 1, f: v => v + ' inst', show: c => c.autoscale },
@@ -995,7 +998,7 @@ function refreshForm() {
     else if (f.k === 'poolReadout') {
       const m = S.graph.nodes.find(x => x.type === 'model');
       if (!m) { b.w.innerHTML = 'Add a Model node to see this pool’s profile.'; continue; }
-      const P = E.profile(c.gpu, m.cfg), G = E.GPUS[c.gpu];
+      const P = E.profile(c.gpu, m.cfg, c.tp), G = E.GPUS[c.gpu];
       const rows = [['GPUs per instance (tensor parallel)', P.tp], ['KV cache per instance', fK(P.kvCap) + ' tok'], ['Prefill throughput', fK(P.prefill) + ' tok/s'], ['Decode step, batch 32 at 2k ctx', fMs(P.a + P.b0 * 32 + P.c * 64000)], ['Price', fUsd(c.siteKind === 'neo' ? G.rent : G.onprem) + '/GPU-h' + (c.siteKind === 'neo' ? ' rented' : ' amortized')]];
       b.w.innerHTML = '<table>' + rows.map(r => '<tr><td>' + r[0] + '</td><td>' + r[1] + '</td></tr>').join('') + '</table>' + (P.multiNode ? '<div class="warnline">Weights need more than 8 GPUs per instance: modelled as a 16-GPU multi-node instance.</div>' : '') + (P.kvCap < 20000 ? '<div class="warnline">Little KV cache left after weights.</div>' : '');
     } else if (f.k === 'modelReadout') {
@@ -1879,6 +1882,28 @@ $('#copyBtn').onclick = () => {
   const txt = JSON.stringify(S.graph, null, 1);
   if (navigator.clipboard && navigator.clipboard.writeText) navigator.clipboard.writeText(txt).then(() => toast('Graph JSON copied.'), () => toast('Copy was blocked by the browser.'));
   else toast('Copy is not available here.');
+};
+$('#loadBtn').onclick = () => $('#loadFile').click();
+$('#loadFile').onchange = () => {
+  const f = $('#loadFile').files[0];
+  if (!f) return;
+  const rd = new FileReader();
+  rd.onload = () => {
+    try {
+      const g = JSON.parse(String(rd.result));
+      const graph = g && g.graph && Array.isArray(g.graph.nodes) ? g.graph : g;
+      if (!graph || !Array.isArray(graph.nodes) || !Array.isArray(graph.edges)) throw new Error('expected an object with "nodes" and "edges" arrays');
+      const known = new Set(Object.keys(NT));
+      const bad = graph.nodes.filter(n => !n || !n.id || !known.has(n.type));
+      if (bad.length) throw new Error('unknown node type "' + (bad[0] && bad[0].type) + '"');
+      for (const n of graph.nodes) n.cfg = Object.assign(NT[n.type].defaults(), n.cfg || {});
+      S.graph = graph; S.sel = null;
+      renderGraph(); renderPalette(); renderDetails(); scheduleRun(0);
+      toast('Loaded ' + f.name + '.');
+    } catch (err) { toast('Could not load ' + f.name + ': ' + err.message); }
+    $('#loadFile').value = '';
+  };
+  rd.readAsText(f);
 };
 function baselineOf(R, label) {
   const tot = new Float64Array(R.D);
