@@ -1,0 +1,59 @@
+# Runs chrony on every node of a cluster whose node OS you cannot configure directly, but where privileged
+# pods are allowed (common on neocloud Kubernetes). Skip it if the nodes already run chronyd or ntpd:
+# two time daemons fighting over one clock is worse than one.
+#
+# The pod sets the HOST clock (hostNetwork + SYS_TIME). Readiness fails while the clock's error bound
+# is over 1 ms, so `kubectl get pods -l app=chrony-clock` shows which nodes are not fit for cross-site tracing.
+# Apply one ConfigMap per site: neocloud nodes get clock/neocloud-node.chrony.conf, on-prem nodes
+# clock/onprem-node.chrony.conf:
+#   kubectl -n kube-system create configmap chrony-conf --from-file=chrony.conf=clock/neocloud-node.chrony.conf
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: chrony-clock
+  namespace: kube-system
+  labels:
+    app: chrony-clock
+spec:
+  selector:
+    matchLabels:
+      app: chrony-clock
+  template:
+    metadata:
+      labels:
+        app: chrony-clock
+    spec:
+      hostNetwork: true
+      priorityClassName: system-node-critical
+      tolerations:
+        - operator: Exists
+      containers:
+        - name: chrony
+          image: registry.example.internal/chrony-clock:4 # build from clock/Dockerfile
+          securityContext:
+            capabilities:
+              add: ["SYS_TIME"]
+          volumeMounts:
+            - name: conf
+              mountPath: /etc/chrony
+            - name: state
+              mountPath: /var/lib/chrony
+          readinessProbe:
+            exec:
+              command: ["/usr/local/bin/check-clock.sh", "--max-error-ms", "1"]
+            initialDelaySeconds: 60
+            periodSeconds: 30
+          resources:
+            requests:
+              cpu: 10m
+              memory: 16Mi
+            limits:
+              memory: 64Mi
+      volumes:
+        - name: conf
+          configMap:
+            name: chrony-conf
+        - name: state
+          hostPath:
+            path: /var/lib/chrony-clock
+            type: DirectoryOrCreate

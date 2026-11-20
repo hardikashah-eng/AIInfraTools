@@ -1,0 +1,10 @@
+{
+  "name": "aiinfra-tools",
+  "displayName": "AI Infra Tools",
+  "version": "0.1.0",
+  "description": "GPU inference sizing, hybrid fleet simulation, cross-site tracing with clock-skew correction, and GPU health checks with an approval queue for fixes.",
+  "author": { "name": "hardikashah-eng", "url": "https://github.com/hardikashah-eng" },
+  "repository": "https://github.com/hardikashah-eng/AIInfraTools",
+  "homepage": "https://github.com/hardikashah-eng/AIInfraTools",
+  "keywords": ["gpu", "inference", "capacity-planning", "llm-serving", "tracing", "opentelemetry", "dcgm", "rocm", "gpu-health"]
+}

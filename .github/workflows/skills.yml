@@ -1,0 +1,42 @@
+# Keeps the Agent Skills in skills/ in step with the tools, checks they work from an isolated copy, validates the
+# Claude Code plugin, and publishes the skill zips as an artifact.
+name: Skills
+on:
+  pull_request:
+    paths:
+      - 'skills/**'
+      - 'scripts/**'
+      - '.claude-plugin/**'
+      - 'inference-sizer/**'
+      - 'fleetscope/**'
+      - 'hybrid-tracing/**'
+      - 'gpu-health/**'
+      - '.github/workflows/skills.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'skills/**'
+      - 'scripts/**'
+      - '.claude-plugin/**'
+permissions:
+  contents: read
+jobs:
+  skills:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Generated files are up to date and every SKILL.md is valid
+        run: node scripts/build-skills.mjs --check
+      - name: Skills work from an isolated copy
+        run: node --test scripts/test-skills.mjs
+      - name: Claude Code plugin manifest validates
+        run: npx -y @anthropic-ai/claude-code plugin validate .
+      - name: Package
+        run: node scripts/build-skills.mjs --zip dist/skills
+      - uses: actions/upload-artifact@v4
+        with:
+          name: skills
+          path: dist/skills/*.zip

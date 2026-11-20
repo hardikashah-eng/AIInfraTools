@@ -1,0 +1,42 @@
+# GPU quotas for the sample cluster's queues (Kueue ClusterQueues). Changing a nominalQuota here is planned in CI.
+apiVersion: kueue.x-k8s.io/v1beta1
+kind: ClusterQueue
+metadata:
+  name: serving
+spec:
+  cohort: gpu
+  resourceGroups:
+  - coveredResources: ["nvidia.com/gpu"]
+    flavors:
+    - name: h100
+      resources:
+      - name: nvidia.com/gpu
+        nominalQuota: 160
+---
+apiVersion: kueue.x-k8s.io/v1beta1
+kind: ClusterQueue
+metadata:
+  name: research
+spec:
+  cohort: gpu
+  resourceGroups:
+  - coveredResources: ["nvidia.com/gpu"]
+    flavors:
+    - name: h100
+      resources:
+      - name: nvidia.com/gpu
+        nominalQuota: 288
+---
+apiVersion: kueue.x-k8s.io/v1beta1
+kind: ClusterQueue
+metadata:
+  name: eval
+spec:
+  cohort: gpu
+  resourceGroups:
+  - coveredResources: ["nvidia.com/gpu"]
+    flavors:
+    - name: h100
+      resources:
+      - name: nvidia.com/gpu
+        nominalQuota: 64

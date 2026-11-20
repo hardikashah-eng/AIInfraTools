@@ -1,0 +1,142 @@
+{
+ "seed": 11,
+ "horizonH": 8,
+ "policy": {
+  "placement": "spread",
+  "gang": true,
+  "topology": true,
+  "preemption": true,
+  "borrowing": true,
+  "order": "besteffort"
+ },
+ "pools": [
+  {
+   "id": "h100",
+   "name": "h100-onprem",
+   "gpu": "H100",
+   "gpusPerNode": 8,
+   "nodes": 48,
+   "domainNodes": 24,
+   "site": "On-prem DC",
+   "faultPerGpuDay": 0.03,
+   "repairH": 6
+  },
+  {
+   "id": "h200",
+   "name": "h200-neocloud",
+   "gpu": "H200",
+   "gpusPerNode": 8,
+   "nodes": 16,
+   "domainNodes": 16,
+   "site": "Neocloud A",
+   "faultPerGpuDay": 0.01,
+   "repairH": 3
+  }
+ ],
+ "queues": [
+  {
+   "id": "serving",
+   "name": "serving",
+   "team": "ML Platform",
+   "quota": 160,
+   "priority": 100
+  },
+  {
+   "id": "research",
+   "name": "research",
+   "team": "Foundation Models",
+   "quota": 288,
+   "priority": 10
+  },
+  {
+   "id": "eval",
+   "name": "eval",
+   "team": "Evaluation",
+   "quota": 64,
+   "priority": 0
+  }
+ ],
+ "workloads": [
+  {
+   "id": "chat",
+   "name": "chat-serving",
+   "kind": "inference",
+   "queue": "serving",
+   "gpusPerPod": 2,
+   "pods": 40,
+   "minPods": 16,
+   "peakH": 14,
+   "clockH": 9
+  },
+  {
+   "id": "agents",
+   "name": "coding-agents-serving",
+   "kind": "inference",
+   "queue": "serving",
+   "gpusPerPod": 4,
+   "pods": 16,
+   "minPods": 8,
+   "peakH": 11,
+   "clockH": 9
+  },
+  {
+   "id": "pretrain",
+   "name": "pretrain-70b",
+   "kind": "training",
+   "queue": "research",
+   "gpusPerPod": 8,
+   "pods": 20,
+   "topology": "domain",
+   "startH": 0.5,
+   "durationH": 6,
+   "ckptMin": 45,
+   "restartMin": 12,
+   "pool": "h100"
+  },
+  {
+   "id": "ft1",
+   "name": "finetune-coder",
+   "kind": "training",
+   "queue": "research",
+   "gpusPerPod": 8,
+   "pods": 4,
+   "topology": "domain",
+   "startH": 1,
+   "durationH": 2,
+   "ckptMin": 20,
+   "restartMin": 5
+  },
+  {
+   "id": "ft2",
+   "name": "finetune-safety",
+   "kind": "training",
+   "queue": "research",
+   "gpusPerPod": 8,
+   "pods": 2,
+   "topology": "domain",
+   "startH": 2.5,
+   "durationH": 1.5,
+   "ckptMin": 20,
+   "restartMin": 5
+  },
+  {
+   "id": "evals",
+   "name": "eval-jobs",
+   "kind": "batch",
+   "queue": "eval",
+   "gpusPerPod": 1,
+   "ratePerH": 40,
+   "durationH": 0.5
+  },
+  {
+   "id": "embed",
+   "name": "embedding-backfill",
+   "kind": "batch",
+   "queue": "eval",
+   "gpusPerPod": 2,
+   "ratePerH": 6,
+   "durationH": 1.5,
+   "priority": -10
+  }
+ ]
+}
