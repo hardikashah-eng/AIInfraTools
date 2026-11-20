@@ -12,12 +12,12 @@ import { Store, suggest } from '../src/actions.mjs';
 import { fill, run } from '../src/executors.mjs';
 import { markdown, html } from '../src/report.mjs';
 import { createServer } from '../src/server.mjs';
-import { demoSamples, demoJobs, demoSteps, demoProbes, demoCluster, DEMO_NOW } from '../src/synth.mjs';
+import { demoSamples, demoJobs, demoSteps, demoProbes, demoCluster, demoResults, DEMO_NOW } from '../src/synth.mjs';
 
 const cfg = loadConfig({ pricePerGpuHour: { B200: 6, H200: 4.5 } });
 const tmp = () => fs.mkdtempSync(path.join(os.tmpdir(), 'gh-'));
 let demoCache;
-const demo = () => demoCache ||= analyze({ samples: demoSamples(), jobs: demoJobs(), steps: demoSteps(), probes: demoProbes(), cluster: demoCluster(), cfg, now: DEMO_NOW });
+const demo = () => demoCache ||= analyze({ samples: demoSamples(), jobs: demoJobs(), steps: demoSteps(), probes: demoProbes(), results: demoResults(), cluster: demoCluster(), cfg, now: DEMO_NOW });
 
 test('ingest: dcgm-exporter text becomes normalized samples', () => {
   const txt = `# HELP DCGM_FI_PROF_SM_ACTIVE x
@@ -42,9 +42,12 @@ test('ingest: AMD exporter percentages are scaled and GFX stands in for tensor',
 test('demo: health finds the planted faults and nothing else', () => {
   const h = demo().health.gpus;
   assert.equal(h['n4/5'].state, 'quarantined'); assert.equal(h['n4/5'].faultClass, 'bus');
-  for (const k of ['n2/5', 'n4/4', 'n4/6']) assert.equal(h[k].state, 'suspect', k);
+  for (const k of ['n2/5', 'n4/4', 'n4/6', 'n1/3', 'n3/6']) assert.equal(h[k].state, 'suspect', k);
+  assert.equal(h['n1/2'].state, 'quarantined'); assert.equal(h['n1/2'].faultClass, 'sdc');
   assert.match(h['n4/4'].why, /corrected ECC/); assert.match(h['n4/6'].why, /PCIe/); assert.match(h['n2/5'].why, /clock-limited/);
-  const others = Object.values(h).filter(g => !['n4/5', 'n2/5', 'n4/4', 'n4/6'].includes(g.key));
+  assert.match(h['n1/3'].why, /HBM 14°C hotter than peers \(same node and job\)/); assert.match(h['n1/3'].why, /own earlier days/);
+  assert.match(h['n3/6'].why, /50% of samples missing/);
+  const others = Object.values(h).filter(g => !['n4/5', 'n2/5', 'n4/4', 'n4/6', 'n1/2', 'n1/3', 'n3/6'].includes(g.key));
   assert.ok(others.every(g => g.state === 'serving' && g.schedulable));
   assert.equal(h['n4/4'].schedulable, false, 'suspect GPUs take no new jobs');
 });
@@ -175,13 +178,13 @@ test('suggest: quarantine brings owner notice, diag and first ladder step; execu
   const a = demo();
   const s = suggest(a, cfg);
   const ids = s.map(x => x.id);
-  for (const id of ['quarantine:n4/5', 'notify-owner:n4/5:batch-sim', 'run-diag:n4/5', 'node-reboot:n4/5', 'requeue-at-checkpoint:train-llm', 'repartition:partition:H200']) assert.ok(ids.includes(id), id);
+  for (const id of ['quarantine:n4/5', 'notify-owner:n4/5:batch-sim', 'run-diag:n4/5', 'node-reboot:n4/5', 'swap-at-checkpoint:train-llm@n2/5', 'repartition:partition:H200']) assert.ok(ids.includes(id), id);
   assert.equal(s.find(x => x.id === 'node-reboot:n4/5').mode, 'approve');
   const st = new Store(tmp());
   st.merge(s, cfg, DEMO_NOW);
   Object.assign(st.get('quarantine:n4/5'), { status: 'executed', executedAt: DEMO_NOW + 60, updatedAt: DEMO_NOW + 60 });
   st.merge(s, cfg, DEMO_NOW + 3 * 86400);
-  assert.equal(st.list().filter(x => x.kind === 'quarantine').length, 1);
+  assert.equal(st.list().filter(x => x.kind === 'quarantine' && x.target === 'n4/5').length, 1);
 });
 
 test('reports render and escape', () => {

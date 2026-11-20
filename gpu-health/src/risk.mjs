@@ -15,6 +15,12 @@ export function contributions(ev, g, cfg) {
   if (ev.throttleBusy > 0.05) out.push({ why: `throttled ${(ev.throttleBusy * 100).toFixed(0)}% of busy time`, p: clamp(ev.throttleBusy * 1.2) });
   if (ev.linkErrRate > 1) out.push({ why: `link errors ${ev.linkErrRate.toFixed(0)}/h`, p: clamp(Math.log10(ev.linkErrRate) / 4) });
   if (ev.pcieDowntrained) out.push({ why: 'PCIe downtrained', p: 0.3 });
+  if (ev.memTempOverPeers > 3) out.push({ why: `HBM ${ev.memTempOverPeers.toFixed(0)}°C over peers`, p: clamp((ev.memTempOverPeers - 3) / 15) });
+  if (ev.memTempRise > 2) out.push({ why: `HBM +${ev.memTempRise.toFixed(0)}°C vs its own history at the same power`, p: clamp((ev.memTempRise - 2) / 12) });
+  if (ev.brakeBusy > 0.01) out.push({ why: `power-brake ${(ev.brakeBusy * 100).toFixed(0)}% of busy time`, p: clamp(ev.brakeBusy * 4) });
+  if (ev.telemetryMissing >= 0.1 && !ev.nodeTelemetryThin) out.push({ why: `${Math.round(ev.telemetryMissing * 100)}% telemetry missing`, p: clamp(ev.telemetryMissing) });
+  if ((ev.sdcEvents || []).length) out.push({ why: `${ev.sdcEvents.length} SDC event(s)`, p: clamp(0.4 * ev.sdcEvents.length) });
+  if (ev.linkUe > 0) out.push({ why: 'uncorrectable link errors', p: 0.6 });
   if (ev.speed && ev.speed.index < 0.97) out.push({ why: `speed ${(ev.speed.index * 100).toFixed(0)}% of cohort`, p: clamp((0.97 - ev.speed.index) * 5) });
   const past = (g.history || []).filter(h => h.state === 'quarantined').length;
   if (past) out.push({ why: `${past} past quarantine(s)`, p: clamp(0.25 * past) });

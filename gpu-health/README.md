@@ -25,8 +25,15 @@ node tools/gpu-health.mjs actions execute --state gpu-health-demo/state     # dr
 
 The demo finds the following problems:
 
-- An XID 79 GPU, which it quarantines.
-- Three suspect GPUs: corrected ECC errors rising, PCIe running at x8 of x16, and a thermally throttled GPU that is also the straggler slowing a 16-GPU training job by 26%.
+- An XID 79 GPU, which it quarantines, and a GPU behind two silent-data-corruption events in the training job.
+- Five suspect GPUs:
+  - corrected ECC errors rising;
+  - PCIe running at x8 of x16;
+  - HBM running 14°C hotter than its node-mates, with power-brake slowdowns;
+  - a GPU whose telemetry is thinning while the rest of its node reports normally;
+  - a thermally throttled GPU that is also the straggler slowing a 16-GPU training job by 26%.
+
+  For the training job it proposes swapping those nodes at the next checkpoint; for inference, draining the replica.
 - An embedding service on 4 GPUs that fits on 1.
 - A notebook that has been idle for hours.
 - An ETL job starved on CPU/I-O. More GPUs won't help it.
@@ -61,19 +68,49 @@ serving ─soft signal─▶ suspect ─diag fail─▶ quarantined ─▶ remed
    └────────── hard fault / no data ────────▶ quarantined          second failure within 30 days of a fix ─▶ rma
 ```
 
-- **Hard faults** quarantine a GPU at once. These are uncorrectable ECC, failed row remap, XID 48/64/74/79/94/95/119/120, and GPU lost.
-- **Soft signals** make a GPU suspect. These are rising corrected ECC, pending remap, throttling, running hot vs peers at similar power, PCIe downtrained under load, link errors, and a micro-benchmark below 92% of the cohort median (same SKU, firmware and site).
+- **Hard faults** quarantine a GPU at once. These are uncorrectable ECC, failed row remap, uncorrectable NVLink/XGMI errors, XID 48/64/74/79/94/95/119/120/145, GPU lost, and repeated or replay-confirmed silent data corruption.
+- **Soft signals** make a GPU suspect. See [Early warning](#early-warning) below.
 - A suspect GPU finishes its current job, then gets a deep diag before anything else.
 - If more than 20% of the fleet goes silent at once, the tool blames monitoring rather than the GPUs: states are held and one exporter check is raised (circuit breaker).
 
-**Risk** is a rules-first score that combines corrected-ECC rate, spare rows used, temperature over peers, throttling, link errors, speed index and past quarantines. Exact failure times are hard to predict, but a ranking is useful. Once quarantine outcomes accumulate, swap in a learned ranker with the same interface (`src/risk.mjs`).
+### Early warning
+
+Many GPU failures leave a trend you can catch hours ahead. Others (firmware crashes, a GPU dropping off the bus, silent wrong results) give little or no warning, so they are detected fast instead. Each signal below makes a GPU suspect: it finishes its current job, and its work is moved off before it fails.
+
+| Signal | Usually comes before | Source |
+|---|---|---|
+| HBM temperature above peers, or rising against its own earlier days at the same power | HBM faults, cooling problems | `memTempC` |
+| Power-brake slowdowns, thermal throttling, GPU temperature above peers | power-delivery and cooling faults | `powerBrake`, `throttle`, `tempC` |
+| Corrected-ECC rate, pending row remaps (failed remap is a hard fault) | uncorrectable memory errors | ECC and remap counters |
+| PCIe below max width/speed under load; NVLink/XGMI correctable-error rate | link failures, fall-off-bus | PCIe and link counters |
+| Telemetry thinning on one GPU while its node-mates report normally | detachment (XID 79), which often has no numeric warning | sample gaps, metrics that stop reporting |
+| Silent-data-corruption events from the training loop | a GPU that computes wrong results | `results` with `kind: "sdc"` |
+| Micro-benchmark below 92% of its cohort | slow silicon, stragglers | probes |
+
+Three rules keep false alarms down:
+
+- **Peers:** a GPU is compared with the other GPUs on the same node running the same job (same load, same cooling). When there are fewer than two of those, it is compared with same-SKU GPUs at similar power.
+- **Persistence:** windowed signals must fire in 3 of the last 4 hourly windows.
+- **Cooldown:** a signal that cleared stays quiet for 2 hours, so a GPU doesn't flap between serving and suspect.
+
+When a whole node's telemetry thins, the GPUs aren't blamed: one exporter check is raised for the node.
+
+**SDC events:**
+- **Reporting:** the training loop reports them, either from a non-finite gradient check, or from a loss or gradient-norm spike that disappears when the step is recomputed. Send `{ t, kind: "sdc", job, rank, type: nan|loss-spike|grad-spike|replay-mismatch }`, or use `node` and `gpu` instead of `job` and `rank`.
+- **Thresholds:** one event in 7 days makes the GPU suspect. Two events, or one `replay-mismatch` (the step gave a different result on another GPU), quarantine it.
+
+**Moving work off a GPU:**
+- **Training:** `swap-at-checkpoint` labels the node so your launcher or elastic agent checkpoints and restarts without it. The job never crashes on the GPU.
+- **Inference:** `drain-inference` flips the replica's `gpu-health.aiinfra/serving` label so the Service stops sending it new requests while in-flight ones finish. Select on that label in your Service, and set it to `"true"` in the pod template. The reason text warns when the replica is the only one.
+
+**Risk** is a rules-first score that combines the signals above with spare rows used and past quarantines. Exact failure times are hard to predict, but a ranking is useful. Once quarantine outcomes accumulate, swap in a learned ranker with the same interface (`src/risk.mjs`).
 
 ## Actions and approval
 
 | Mode | Meaning | Defaults |
 |---|---|---|
 | `auto` | approved by policy at once | quarantine, notify owner, run diag, deep diag at next job boundary, exporter check |
-| `approve` | waits for a person | GPU reset, node reboot, RMA, release to service, reclaim idle, scale in, resize, requeue at checkpoint, repartition |
+| `approve` | waits for a person | GPU reset, node reboot, RMA, release to service, reclaim idle, scale in, resize, swap at checkpoint, drain inference replica, repartition |
 | `never` | suggestion only | reclaim idle *training* jobs |
 
 Overrides are per action and per workload class (`training`, `inference`, `interactive`, `batch`). See [docs/CONFIG.md](docs/CONFIG.md).
@@ -129,10 +166,10 @@ node tools/gpu-health.mjs receipt embed-svc --state /var/lib/gpu-health
 | `--jobs` JSON | `[{ id, class, owner, namespace, start, end?, gpusPerReplica?, gpus: [{node, gpu}] }]`, from your scheduler | efficiency, savings, owner notices |
 | `--steps` JSONL | `{ job, rank, step, t, computeMs }`, from a training-loop hook | straggler detection (best) |
 | `--probes` JSONL | `{ t, node, gpu, sku, firmware, site, gemmTflops, hbmGBs, linkGBs? }`, from a short benchmark between jobs | speed index |
-| `--results` JSONL | `{ t, node, gpu, kind: diag\|burnin\|release, pass, level?, detail? }`, written by your diag jobs | moving GPUs through repair |
+| `--results` JSONL | `{ t, node, gpu, kind: diag\|burnin\|release, pass, level?, detail? }`, written by your diag jobs; `{ t, kind: sdc, job, rank, type }` from the training loop | moving GPUs through repair; SDC |
 | `--cluster` JSON | `{ nodes: [{ node, gpus: [{ gpu, alloc }] }], pending: [{ job, gpus? , fraction? }] }` | fragmentation |
 
-Metric names for dcgm-exporter and AMD's exporter are in `src/ingest.mjs` (`MAPPINGS`). Check them against the exporter versions you run, and override any of them under `ingest.mappings`. AMD's default metrics expose no separate matrix-core counter, so GFX activity stands in for tensor activity.
+Metric names for dcgm-exporter and AMD's exporter are in `src/ingest.mjs` (`MAPPINGS`). Check them against the exporter versions you run, and override any of them under `ingest.mappings`. AMD's default metrics expose no separate matrix-core counter, so GFX activity stands in for tensor activity. On MI300-series and later, ROCm's XGMI health field isn't evaluated, so link faults are read from the XGMI_WAFL RAS counters instead. On NVIDIA, power brake and throttling are decoded from the clock-event-reason bitmask.
 
 ### Commands the executors run
 

@@ -5,12 +5,16 @@
 //     tensor, sm, dram,                 // fractions 0..1 of peak: tensor-pipe active, SM/CU active, HBM bandwidth active
 //     memUsedGB, memTotalGB, frameworkPeakGB?,   // device memory as the driver sees it; the framework's own peak if exported
 //     clockMHz, maxClockMHz, throttle,  // throttle: 0..1 share of the interval spent clock-limited (thermal/power)
-//     tempC, powerW, eccSbeTotal, eccDbeTotal, remapPending, remapFailed, remapUsed, remapSpare,
-//     pcieWidth, pcieWidthMax, pcieGen, pcieGenMax, linkErrTotal, faults: [codes], cpuWait? }
+//     tempC, memTempC, powerW, powerBrake (0..1 share of the interval in power-brake slowdown), eccSbeTotal, eccDbeTotal, remapPending, remapFailed, remapUsed, remapSpare,
+//     pcieWidth, pcieWidthMax, pcieGen, pcieGenMax, linkErrTotal (correctable NVLink/XGMI), linkUeTotal (uncorrectable),
+//     faults: [codes], cpuWait? }
 // Jobs are joined later by (node, gpu); exporters that carry pod labels can set `job` directly.
 
-export const NUM_FIELDS = ['tensor', 'sm', 'dram', 'memUsedGB', 'memTotalGB', 'frameworkPeakGB', 'clockMHz', 'maxClockMHz', 'throttle', 'tempC', 'powerW',
-  'eccSbeTotal', 'eccDbeTotal', 'remapPending', 'remapFailed', 'remapUsed', 'remapSpare', 'pcieWidth', 'pcieWidthMax', 'pcieGen', 'pcieGenMax', 'linkErrTotal', 'cpuWait'];
+export const NUM_FIELDS = ['tensor', 'sm', 'dram', 'memUsedGB', 'memTotalGB', 'frameworkPeakGB', 'clockMHz', 'maxClockMHz', 'throttle', 'tempC', 'memTempC', 'powerW', 'powerBrake',
+  'eccSbeTotal', 'eccDbeTotal', 'remapPending', 'remapFailed', 'remapUsed', 'remapSpare', 'pcieWidth', 'pcieWidthMax', 'pcieGen', 'pcieGenMax', 'linkErrTotal', 'linkUeTotal', 'cpuWait'];
+
+// NVML clock event (throttle) reason bits, as exported in DCGM_FI_DEV_CLOCKS_EVENT_REASONS
+export const CLOCK_REASON = { swPowerCap: 0x4, hwSlowdown: 0x8, swThermal: 0x20, hwThermal: 0x40, hwPowerBrake: 0x80 };
 
 // Prometheus exposition text -> [{ name, labels, value }]
 export function parsePrometheus(text) {
@@ -37,6 +41,8 @@ export const MAPPINGS = {
       DCGM_FI_PROF_PIPE_TENSOR_ACTIVE: ['tensor', 1], DCGM_FI_PROF_SM_ACTIVE: ['sm', 1], DCGM_FI_PROF_DRAM_ACTIVE: ['dram', 1],
       DCGM_FI_DEV_FB_USED: ['memUsedGB', 1 / 1024], DCGM_FI_DEV_FB_TOTAL: ['memTotalGB', 1 / 1024],
       DCGM_FI_DEV_SM_CLOCK: ['clockMHz', 1], DCGM_FI_DEV_MAX_SM_CLOCK: ['maxClockMHz', 1], DCGM_FI_DEV_GPU_TEMP: ['tempC', 1], DCGM_FI_DEV_POWER_USAGE: ['powerW', 1],
+      DCGM_FI_DEV_MEMORY_TEMP: ['memTempC', 1],
+      DCGM_FI_DEV_CLOCKS_EVENT_REASONS: ['clockReasons', 1], DCGM_FI_DEV_CLOCK_THROTTLE_REASONS: ['clockReasons', 1], // bitmask, decoded below
       DCGM_FI_DEV_ECC_SBE_AGG_TOTAL: ['eccSbeTotal', 1], DCGM_FI_DEV_ECC_DBE_AGG_TOTAL: ['eccDbeTotal', 1],
       DCGM_FI_DEV_ROW_REMAP_PENDING: ['remapPending', 1], DCGM_FI_DEV_ROW_REMAP_FAILURE: ['remapFailed', 1],
       DCGM_FI_DEV_CORRECTABLE_REMAPPED_ROWS: ['remapUsed', 1],
@@ -51,8 +57,10 @@ export const MAPPINGS = {
     fields: {
       gpu_gfx_activity: ['sm', 0.01], gpu_umc_activity: ['dram', 0.01],
       gpu_used_vram: ['memUsedGB', 1 / 1024], gpu_total_vram: ['memTotalGB', 1 / 1024],
-      gpu_clock: ['clockMHz', 1], gpu_junction_temperature: ['tempC', 1], gpu_power_usage: ['powerW', 1],
+      gpu_clock: ['clockMHz', 1], gpu_junction_temperature: ['tempC', 1], gpu_memory_temperature: ['memTempC', 1], gpu_power_usage: ['powerW', 1],
       gpu_ecc_correct_total: ['eccSbeTotal', 1], gpu_ecc_uncorrect_total: ['eccDbeTotal', 1],
+      // On MI300-series and later the XGMI health field isn't evaluated; link faults show up as RAS errors on the XGMI_WAFL block.
+      gpu_ecc_correct_xgmi_wafl: ['linkErrTotal', 1], gpu_ecc_uncorrect_xgmi_wafl: ['linkUeTotal', 1],
       pcie_speed: ['pcieGen', 1], pcie_max_speed: ['pcieGenMax', 1],
     },
     // AMD exposes no separate matrix-core counter in the default set; GFX activity stands in for tensor activity.
@@ -84,7 +92,15 @@ export function samplesFromExporter(text, opts = {}) {
     if (isFault) { if (s.value > 0) smp.faults.push(String(vendor === 'nvidia' ? 'xid' + s.value : s.value)); continue; }
     smp[f[0]] = s.value * f[1];
   }
-  for (const smp of byGpu.values()) if (smp.tensor == null && map.tensorFrom && smp[map.tensorFrom] != null) smp.tensor = smp[map.tensorFrom];
+  for (const smp of byGpu.values()) {
+    if (smp.tensor == null && map.tensorFrom && smp[map.tensorFrom] != null) smp.tensor = smp[map.tensorFrom];
+    if (smp.clockReasons != null) { // one scrape is a point in time: the share over an interval comes from averaging samples
+      const b = smp.clockReasons;
+      smp.powerBrake = b & CLOCK_REASON.hwPowerBrake ? 1 : 0;
+      if (smp.throttle == null) smp.throttle = b & (CLOCK_REASON.hwSlowdown | CLOCK_REASON.swThermal | CLOCK_REASON.hwThermal) ? 1 : 0;
+      delete smp.clockReasons;
+    }
+  }
   return [...byGpu.values()];
 }
 

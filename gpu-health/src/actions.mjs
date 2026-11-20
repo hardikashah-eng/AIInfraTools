@@ -13,22 +13,35 @@ import { modeFor } from './config.mjs';
 import { run } from './executors.mjs';
 
 const OPEN = new Set(['proposed', 'approved', 'suggested']);
-const DISRUPTIVE = new Set(['gpu-reset', 'node-reboot', 'fabric-restart', 'reclaim-idle', 'scale-in', 'resize', 'requeue-at-checkpoint', 'release', 'repartition']);
+const DISRUPTIVE = new Set(['gpu-reset', 'node-reboot', 'fabric-restart', 'reclaim-idle', 'scale-in', 'resize', 'swap-at-checkpoint', 'drain-inference', 'release', 'repartition']);
 
 // Candidate actions from an analysis.
 export function suggest(analysis, cfg) {
   const out = [];
   const jobsOn = k => analysis.jobs.filter(j => j.gpus.some(g => g.node + '/' + g.gpu === k));
   const add = (a) => out.push(Object.assign({ evidence: [] }, a));
+  // Move work off a GPU before it fails: training swaps the node at the next checkpoint; inference drains the replica.
+  const jobAction = (j, g, why, severity) => {
+    const target = `${j.id}@${g.node}/${g.gpu}`, params = { namespace: j.namespace || 'default' };
+    if (j.class === 'training') add({ kind: 'swap-at-checkpoint', job: j.id, class: j.class, node: g.node, gpu: g.gpu, target, params, severity, reason: `${why}. At the next checkpoint, swap node ${g.node} for a spare so the job never crashes on it.` });
+    else if (j.class === 'inference') {
+      const replicas = Math.max(1, Math.round(j.gpus.length / Math.max(1, j.gpusPerReplica || j.gpus.length)));
+      add({ kind: 'drain-inference', job: j.id, class: j.class, node: g.node, gpu: g.gpu, target, params, severity, reason: `${why}. Stop new requests to the replica on ${g.node}, let in-flight ones finish, then repair.${replicas <= 1 ? ' This is the only replica: add one first or the service goes down.' : ` ${replicas - 1} other replica(s) take the load.`}` });
+    }
+  };
   const h = analysis.health;
   if (h.breaker) add({ kind: 'exporter-check', target: 'fleet', reason: `${h.staleCount} of ${h.fleet} GPUs stopped reporting at once; checking monitoring before quarantining anything`, severity: 'high' });
+  for (const node of h.nodesThin || []) add({ kind: 'exporter-check', node, target: `node:${node}`, reason: `every GPU on ${node} is reporting patchily: check the node's exporter and network before suspecting the GPUs`, severity: 'medium' });
   for (const g of Object.values(h.gpus)) {
     const k = g.key, cls = g.faultClass || 'default', ladder = cfg.ladder[cls] || cfg.ladder.default;
     const base = { node: g.node, gpu: g.gpu, target: k, since: g.since, evidence: (g.signals || []).map(s => s.why) };
     const jobs = jobsOn(k);
     if (g.state === 'quarantined') {
       add(Object.assign({}, base, { kind: 'quarantine', reason: g.why, severity: 'high' }));
-      for (const j of jobs) add(Object.assign({}, base, { kind: 'notify-owner', job: j.id, class: j.class, target: `${k}:${j.id}`, reason: `GPU ${k} quarantined: ${g.why}. Restart from the last checkpoint on healthy GPUs.`, severity: 'high' }));
+      for (const j of jobs) {
+        add(Object.assign({}, base, { kind: 'notify-owner', job: j.id, class: j.class, target: `${k}:${j.id}`, reason: `GPU ${k} quarantined: ${g.why}. Restart from the last checkpoint on healthy GPUs.`, severity: 'high' }));
+        jobAction(j, g, `GPU ${k} quarantined: ${g.why}`, 'high');
+      }
       if (cls === 'stale') add(Object.assign({}, base, { kind: 'exporter-check', reason: `no telemetry from ${k}`, severity: 'medium' }));
       else {
         add(Object.assign({}, base, { kind: 'run-diag', params: { level: cfg.diagLevelByClass[cls] || cfg.diagLevelByClass.default }, reason: `confirm ${cls} fault`, severity: 'high' }));
@@ -47,26 +60,37 @@ export function suggest(analysis, cfg) {
     } else if (g.state === 'suspect') {
       add(Object.assign({}, base, { kind: 'deep-diag-next-boundary', params: { level: cfg.diagLevelByClass[cls] || 3 }, reason: g.why, severity: 'medium' }));
       if (g.evidence && g.evidence.remapPending) add(Object.assign({}, base, { kind: 'gpu-reset', reason: 'row remap pending: reset at the next job boundary', severity: 'medium' }));
-      for (const j of jobs.filter(j => j.class === 'training' && j.gpus.length >= 8)) add(Object.assign({}, base, { kind: 'notify-owner', job: j.id, class: j.class, target: `${k}:${j.id}`, reason: `GPU ${k} under suspicion (${g.why}); checkpoint more often until it is cleared.`, severity: 'medium' }));
+      for (const j of jobs) {
+        if (j.class === 'training' && j.gpus.length >= 8) add(Object.assign({}, base, { kind: 'notify-owner', job: j.id, class: j.class, target: `${k}:${j.id}`, reason: `GPU ${k} under suspicion (${g.why}); checkpoint more often until it is cleared.`, severity: 'medium' }));
+        jobAction(j, g, `GPU ${k} under suspicion: ${g.why}`, 'medium');
+      }
     }
   }
   for (const r of analysis.risk.filter(r => r.tier === 'high' && r.state === 'serving')) {
     add({ kind: 'avoid-large-jobs', node: r.node, gpu: r.gpu, target: r.key, reasonCode: 'high-risk', reason: `failure risk ${(r.score * 100).toFixed(0)}: ${r.why.join(', ')}`, severity: 'medium' });
     add({ kind: 'deep-diag-next-boundary', node: r.node, gpu: r.gpu, target: r.key, params: { level: 3 }, reason: `high failure risk: ${r.why.join(', ')}`, severity: 'medium' });
+    for (const j of jobsOn(r.key)) jobAction(j, r, `high failure risk (${Math.round(r.score * 100)}): ${r.why.join(', ')}`, 'medium');
   }
   for (const rec of analysis.recommendations) {
     const job = analysis.jobs.find(j => j.id === rec.job) || {};
     const a = { kind: rec.action, job: rec.job, class: rec.class, target: rec.job, reason: rec.text, weekly: rec.weekly, confidence: rec.confidence, severity: rec.weekly > 500 ? 'medium' : 'low', params: {} };
     if (rec.replicas != null) a.params.replicas = rec.replicas;
     if (rec.fraction != null) a.params.fraction = rec.fraction;
-    if (rec.lever === 'fix-straggler') { const [node, gpu] = rec.target.split('/'); Object.assign(a, { node, gpu }); add({ kind: 'deep-diag-next-boundary', node, gpu, target: rec.target, params: { level: 3 }, reason: `straggler in ${rec.job}`, severity: 'medium' }); }
     a.params.namespace = job.namespace || 'default';
+    if (rec.lever === 'fix-straggler') { const [node, gpu] = rec.target.split('/'); Object.assign(a, { node, gpu, target: `${rec.job}@${rec.target}` }); add({ kind: 'deep-diag-next-boundary', node, gpu, target: rec.target, params: { level: 3 }, reason: `straggler in ${rec.job}`, severity: 'medium' }); }
     add(a);
   }
   for (const p of analysis.partitionPlan || []) if (p.gpusNeeded < p.gpusNow) add({ kind: 'repartition', target: `partition:${p.sku}`, reason: `pack fractional jobs on ${p.gpusNeeded} ${p.sku} GPU(s) instead of ${p.gpusNow}: ${p.layout.join(' | ')}`, severity: 'low' });
   // de-duplicate by kind + target
   const seen = new Map();
-  for (const a of out) { a.id = `${a.kind}:${a.target}`; if (!seen.has(a.id)) seen.set(a.id, a); else if (a.reason && !seen.get(a.id).reason.includes(a.reason)) seen.get(a.id).reason += '; ' + a.reason; }
+  for (const a of out) {
+    a.id = `${a.kind}:${a.target}`;
+    const s = seen.get(a.id);
+    if (!s) { seen.set(a.id, a); continue; }
+    if (a.reason && !s.reason.includes(a.reason)) s.reason += ' ' + a.reason;
+    if (a.weekly && !s.weekly) Object.assign(s, { weekly: a.weekly, confidence: a.confidence });
+    if (a.severity === 'high') s.severity = 'high';
+  }
   return [...seen.values()].map(a => Object.assign(a, { mode: modeFor(cfg, a.kind, a.class) }));
 }
 

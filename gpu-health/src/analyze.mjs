@@ -11,7 +11,7 @@ export function analyze({ samples, jobs = [], steps = [], probes = [], results =
   if (!samples.length) throw new Error('no samples');
   now = now ?? Math.max(...samples.map(s => s.t));
   const window = { from: now - windowDays * 86400, to: now };
-  const health = assessHealth({ samples, probes, results, prev, cfg, now });
+  const health = assessHealth({ samples, probes, results, jobs, prev, cfg, now });
   const jobStats = analyzeJobs(samples, jobs, cfg, window);
   const stragglers = [...stragglersFromSteps(steps, jobs)];
   for (const s of stragglersFromUtil(jobStats)) if (!stragglers.some(x => x.job === s.job)) stragglers.push(s);
