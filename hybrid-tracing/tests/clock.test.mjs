@@ -34,11 +34,28 @@ test('check-clock: unsynchronised or unreachable chrony exits 2, and the textfil
   assert.match(readFileSync(tf, 'utf8'), /clock_synchronized\{[^}]+\} 0/);
 });
 
+// chronyd is given the directives as arguments rather than the file path: on Ubuntu (including GitHub's runners)
+// AppArmor confines chronyd to reading config under /etc/chrony, so `chronyd -p -f <repo file>` is refused.
+// With directives on the command line chronyd reads no file, and still rejects any invalid directive.
+const directives = file => readFileSync(file, 'utf8').split('\n').map(l => l.replace(/#.*/, '').trim()).filter(Boolean);
+const chronyParse = lines => spawnSync('chronyd', ['-p', ...lines], { encoding: 'utf8' });
+
 test('chrony configs parse with chronyd', { skip: !have('chronyd') && 'chronyd not installed' }, () => {
-  for (const f of readdirSync(join(here, 'clock')).filter(f => f.endsWith('.chrony.conf'))) {
-    const r = spawnSync('chronyd', ['-p', '-f', join(here, 'clock', f)], { encoding: 'utf8' });
+  const files = readdirSync(join(here, 'clock')).filter(f => f.endsWith('.chrony.conf'));
+  assert.equal(files.length, 3);
+  for (const f of files) {
+    const lines = directives(join(here, 'clock', f));
+    assert.ok(lines.length > 5, f);
+    const r = chronyParse(lines);
     assert.equal(r.status, 0, `${f}: ${r.stderr}`);
+    assert.equal(r.stdout.trim().split('\n').length, lines.length, `${f}: chronyd echoed a different number of directives`);
   }
+});
+
+test('the chrony check rejects an invalid directive', { skip: !have('chronyd') && 'chronyd not installed' }, () => {
+  const r = chronyParse(['makestep 0.1 3', 'serverx timeserver-1']);
+  assert.notEqual(r.status, 0);
+  assert.match(r.stderr, /Invalid directive/);
 });
 
 test('ptp4l config parses with ptp4l', { skip: !have('ptp4l') && 'linuxptp not installed' }, () => {

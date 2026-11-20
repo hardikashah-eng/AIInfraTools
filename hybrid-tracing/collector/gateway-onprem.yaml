@@ -46,7 +46,7 @@ exporters:
     resolver:
       dns:
         hostname: ${env:TAILSAMPLER_HEADLESS}
-        port: 4317
+        port: "4317"
   prometheusremotewrite:
     endpoint: ${env:METRICS_REMOTE_WRITE}
 
