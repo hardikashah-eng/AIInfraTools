@@ -27,7 +27,8 @@ const HELP = `gpu-health — GPU health, efficiency and savings, with an approva
   gpu-health serve [--port 8787] [--host 127.0.0.1] [--allow-live]   approval page (needs GPU_HEALTH_TOKENS or GPU_HEALTH_TOKEN)
   gpu-health watch --scrape URL[,URL] --jobs F [--interval 60] [--execute [--live]]   scrape exporters and analyze on a loop
 
-  Common: --state DIR (default ./gpu-health-state), --config F (JSON, merged over the defaults; see docs/CONFIG.md)`;
+  Common: --state DIR (default ./gpu-health-state), --config F (JSON, merged over the defaults; see docs/CONFIG.md),
+          --json (one JSON object on stdout, for scripts and LLM agents)`;
 
 function args(argv) {
   const o = { _: [] };
@@ -38,6 +39,9 @@ function args(argv) {
   }
   return o;
 }
+let J = false;            // --json: print one JSON object at the end instead of text
+const OUT = {};
+const say = (...a) => { if (!J) console.log(...a); };
 const read = f => fs.readFileSync(f, 'utf8');
 const readJsonl = f => read(f).split(/\r?\n/).filter(l => l.trim()).map(l => JSON.parse(l));
 const readJson = f => (f.endsWith('.jsonl') ? readJsonl(f) : JSON.parse(read(f)));
@@ -50,7 +54,16 @@ function prevHealth(dir) { const f = path.join(dir, 'health.json'); return fs.ex
 // executed releases feed back into health as results
 function releaseResults(store) { return store.list('executed').filter(a => a.kind === 'release').map(a => ({ kind: 'release', node: a.node, gpu: a.gpu, t: a.executedAt, by: a.approvedBy })); }
 
+function digest(a, store) { // what a person or an agent needs from one analysis
+  const notServing = Object.values(a.health.gpus).filter(g => g.state !== 'serving' || g.stale)
+    .map(g => ({ gpu: g.key, sku: g.sku, state: g.state, schedulable: g.schedulable, why: g.why, signals: (g.signals || []).map(x => x.key) }));
+  return { summary: a.summary, breaker: a.health.breaker, gpusNotServing: notServing, recommendations: a.recommendations.map(r => ({ job: r.job, class: r.class, gpus: r.gpus, usage: r.usage, lever: r.lever, action: r.action, weekly: r.weekly, confidence: r.confidence, text: r.text })),
+    risk: a.risk.filter(r => r.score >= 0.05).slice(0, 10), fragmentation: a.fragmentation, partitionPlan: a.partitionPlan, jobUsage: a.jobUsage,
+    openActions: store.list('open').map(x => ({ id: x.id, kind: x.kind, target: x.target, mode: x.mode, status: x.status, severity: x.severity, weekly: x.weekly, reason: x.reason })) };
+}
+
 function printSummary(a, store) {
+  if (J) { Object.assign(OUT, digest(a, store)); return; }
   const s = a.summary;
   console.log(`\n${s.gpus} GPUs · effective utilization ${Math.round((s.effectiveUtil || 0) * 100)}% · idle allocated ${Math.round(s.idleGpuHours)} GPU-h · potential savings ${$(s.weeklySavings)}/week (${s.gpusFreeable.toFixed(1)} GPUs)`);
   console.log(`states: ${Object.entries(s.states).map(([k, v]) => `${k} ${v}`).join(', ')}${a.health.breaker ? '  ⚠ monitoring circuit breaker tripped' : ''}`);
@@ -71,8 +84,9 @@ function runAnalysis(o, input) {
 
 async function execApproved(store, cfg, o, fleetSize, ids, now) {
   const live = !!o.live;
-  if (live && cfg.policy.dryRun !== false) console.log('note: --live given but policy.dryRun is not false in the config, so this is still a dry-run');
+  if (live && cfg.policy.dryRun !== false) { const note = '--live given but policy.dryRun is not false in the config, so this is still a dry-run'; if (J) OUT.note = note; else console.log('note: ' + note); }
   const res = await store.execute(cfg, { ids, live, fleetSize, now });
+  if (J) { OUT.executed = (OUT.executed || []).concat(res.map(r => ({ id: r.id, outcome: r.skipped ? 'skipped' : r.dryRun ? 'dry-run' : r.ok ? 'done' : 'failed', commands: r.commands, message: r.text, output: r.output }))); return res; }
   for (const r of res) {
     console.log(`\n${r.skipped ? 'SKIPPED' : r.dryRun ? 'DRY-RUN' : r.ok ? 'DONE' : 'FAILED'}  ${r.id}`);
     if (r.commands) for (const c of r.commands) console.log('  $ ' + c.join(' '));
@@ -86,6 +100,7 @@ async function execApproved(store, cfg, o, fleetSize, ids, now) {
 
 async function main() {
   const o = args(process.argv.slice(2));
+  J = !!o.json;
   const cmd = o._[0];
   if (!cmd || o.help || cmd === 'help') return console.log(HELP);
 
@@ -104,10 +119,11 @@ async function main() {
     fs.writeFileSync(path.join(out, 'report.md'), markdown(a, store.list()));
     fs.writeFileSync(path.join(out, 'report.html'), html(a, store.list()));
     printSummary(a, store);
-    console.log(`\nauto-approved actions, dry-run:`);
+    say(`\nauto-approved actions, dry-run:`);
     await execApproved(store, cfg, {}, a.summary.gpus, null, a.generatedAt);
-    console.log(`\nwrote ${path.relative(process.cwd(), out)}/report.html and report.md; state in ${path.relative(process.cwd(), dir)}`);
-    console.log(`next: node tools/gpu-health.mjs actions list --state ${path.relative(process.cwd(), dir)}`);
+    OUT.files = { reportHtml: path.join(out, 'report.html'), reportMd: path.join(out, 'report.md'), state: dir, data: data };
+    say(`\nwrote ${path.relative(process.cwd(), out)}/report.html and report.md; state in ${path.relative(process.cwd(), dir)}`);
+    say(`next: node tools/gpu-health.mjs actions list --state ${path.relative(process.cwd(), dir)}`);
     return;
   }
 
@@ -129,12 +145,13 @@ async function main() {
     if (sub === 'list') {
       const st = o.status === 'all' ? null : (o.status && o.status !== true ? o.status : 'open');
       const rows = store.list(st);
+      if (J) { OUT.actions = rows; return; }
       if (!rows.length) return console.log('no actions');
       for (const x of rows) console.log(`${x.status.padEnd(10)} ${x.mode.padEnd(7)} ${x.id}${x.weekly ? `  ≈${$(x.weekly)}/wk` : ''}${x.approvedBy ? `  (approved by ${x.approvedBy})` : ''}\n           ${x.reason}`);
       return;
     }
-    if (sub === 'approve') { for (const id of o._.slice(2)) { const x = store.approve(id, o.by === true ? '' : o.by); console.log(`approved ${x.id} by ${x.approvedBy}`); } return; }
-    if (sub === 'reject') { const x = store.reject(o._[2], o.by === true ? '' : o.by, o.reason === true ? '' : o.reason); console.log(`rejected ${x.id}`); return; }
+    if (sub === 'approve') { OUT.approved = []; for (const id of o._.slice(2)) { const x = store.approve(id, o.by === true ? '' : o.by); OUT.approved.push(x); say(`approved ${x.id} by ${x.approvedBy}`); } return; }
+    if (sub === 'reject') { const x = store.reject(o._[2], o.by === true ? '' : o.by, o.reason === true ? '' : o.reason); OUT.rejected = x; say(`rejected ${x.id}`); return; }
     if (sub === 'execute') {
       const f = path.join(stateDir(o), 'analysis.json');
       const fleet = fs.existsSync(f) ? JSON.parse(read(f)).summary.gpus : 0;
@@ -149,7 +166,11 @@ async function main() {
     const dir = stateDir(o), f = path.join(dir, 'analysis.json');
     if (!fs.existsSync(f)) throw new Error(`no analysis in ${dir}; run analyze first`);
     const a = JSON.parse(read(f)), store = new Store(dir);
-    if (cmd === 'receipt') return process.stdout.write(receipt(a, o._[1]));
+    if (cmd === 'receipt') {
+      if (J) { OUT.job = a.jobUsage.find(x => x.job === o._[1]) || null; OUT.recommendation = a.recommendations.find(x => x.job === o._[1]) || null; return; }
+      return process.stdout.write(receipt(a, o._[1]));
+    }
+    if (J) { Object.assign(OUT, digest(a, store)); return; }
     const text = o.format === 'html' ? html(a, store.list()) : markdown(a, store.list());
     if (o.out && o.out !== true) { fs.writeFileSync(o.out, text); console.log(`wrote ${o.out}`); } else process.stdout.write(text);
     return;
@@ -186,4 +207,7 @@ async function main() {
 }
 
 const self = fileURLToPath(import.meta.url);
-if (process.argv[1] && path.resolve(process.argv[1]) === self) main().catch(e => { console.error('error: ' + e.message); process.exit(1); });
+if (process.argv[1] && path.resolve(process.argv[1]) === self) {
+  main().then(() => { if (J && Object.keys(OUT).length) console.log(JSON.stringify(OUT, null, 1)); })
+    .catch(e => { if (J) console.log(JSON.stringify({ error: e.message })); else console.error('error: ' + e.message); process.exit(1); });
+}

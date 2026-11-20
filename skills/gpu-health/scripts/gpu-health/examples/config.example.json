@@ -1,0 +1,19 @@
+{
+  "pricePerGpuHour": { "B200": 6.0, "H200": 4.5, "MI300X": 3.5, "default": 4.0 },
+  "notify": { "webhook": "https://open.feishu.cn/open-apis/bot/v2/hook/REPLACE_ME" },
+  "efficiency": { "idleAlertMin": 15 },
+  "policy": {
+    "dryRun": true,
+    "actions": { "gpu-reset": "auto" },
+    "classes": {
+      "inference": { "scale-in": "approve" },
+      "interactive": { "reclaim-idle": "auto" }
+    },
+    "limits": { "maxQuarantineShare": 0.05, "maxNodeRebootsPerRun": 1 }
+  },
+  "executors": {
+    "quarantine": [["scontrol", "update", "nodename={node}", "state=drain", "reason=gpu-health-gpu{gpu}"]],
+    "release": [["scontrol", "update", "nodename={node}", "state=resume"]],
+    "gpu-reset": [["ssh", "{node}", "sudo", "amd-smi", "reset", "--gpureset", "-g", "{gpu}"]]
+  }
+}

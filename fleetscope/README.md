@@ -8,6 +8,18 @@ A node-editor prototype for capacity planning on hybrid GPU fleets: on-prem plus
 
 Open `dist/index.html` in a browser. It is a single self-contained file with no server and no install.
 
+## From the command line
+
+The same simulator runs headless, for scripts, CI and LLM agents (every command takes `--json`):
+
+```bash
+node tools/fleetscope.mjs templates                                   # built-in fleets
+node tools/fleetscope.mjs run --template burst                        # stress suite: SLO, TTFT/TPOT p99, cost, peak GPUs, first bottleneck
+node tools/fleetscope.mjs run --scenario scenarios/hybrid-chat --trace requests.jsonl   # replay your own request log
+node tools/fleetscope.mjs ask "What if the cloud link drops to 25 Gbps?" --template xpd -o edited.json
+node tools/fleetscope.mjs compare --base scenarios/prod --head scenarios/proposed
+```
+
 ## Starting from Inference Sizer
 
 [Inference Sizer](../inference-sizer/) recommends GPUs, layout and pools for a model at TTFT/TPOT targets. Its **Export to FleetScope** writes a graph with the model, targets, matching traffic and pools, with GPUs per instance set. **Load graph JSON** opens it here, to replay against bursts, cold starts and failures. A pool's **GPUs per instance** (0 = auto) sets tensor parallelism explicitly.

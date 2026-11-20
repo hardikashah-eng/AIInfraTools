@@ -1,0 +1,167 @@
+{
+ "nodes": [
+  {
+   "id": "model",
+   "type": "model",
+   "x": 40,
+   "y": 20,
+   "cfg": {
+    "name": "Model",
+    "key": "llama-70b",
+    "wPrec": "fp8",
+    "kvPrec": "fp8",
+    "thinkTokens": 0,
+    "thinkKeep": false,
+    "label": "Llama 3.3 70B",
+    "params": 70.6,
+    "active": 70.6,
+    "layers": 80,
+    "kvHeads": 8,
+    "headDim": 128,
+    "mla": 0
+   }
+  },
+  {
+   "id": "slo",
+   "type": "slo",
+   "x": 310,
+   "y": 20,
+   "cfg": {
+    "name": "SLO targets",
+    "ttft": 2,
+    "tpotMs": 60,
+    "thinkingStreamed": false,
+    "confidentialIn": "private",
+    "internalIn": "any",
+    "requireEncryption": true
+   }
+  },
+  {
+   "id": "src",
+   "type": "trace",
+   "x": 40,
+   "y": 250,
+   "cfg": {
+    "name": "Trace replay",
+    "trace": "chat",
+    "scale": 1,
+    "prefixHit": 0,
+    "useRecordedCache": true,
+    "replay": "timestamps",
+    "onFail": "retry",
+    "dataClass": "internal",
+    "owner": "Assistant Product",
+    "oncall": "@assistant-oncall"
+   }
+  },
+  {
+   "id": "rt",
+   "type": "router",
+   "x": 330,
+   "y": 260,
+   "cfg": {
+    "name": "Router",
+    "policy": "primary-first",
+    "burstWait": 1.5,
+    "enforceResidency": false,
+    "owner": "ML Platform",
+    "oncall": "@mlplatform-oncall"
+   }
+  },
+  {
+   "id": "on",
+   "type": "pool",
+   "x": 600,
+   "y": 150,
+   "cfg": {
+    "name": "On-prem H100",
+    "site": "On-prem DC",
+    "siteKind": "onprem",
+    "role": "agg",
+    "gpu": "H100",
+    "instances": 4,
+    "autoscale": false,
+    "min": 0,
+    "max": 8,
+    "coldStart": 90,
+    "upWait": 1,
+    "downUtil": 30,
+    "maxBatch": 256,
+    "fabricGbps": 400,
+    "zone": "auto",
+    "owner": "ML Platform",
+    "oncall": "@mlplatform-oncall",
+    "calibPrefill": 1,
+    "calibDecode": 1,
+    "clusterWorkload": "",
+    "clusterAtH": 0
+   }
+  },
+  {
+   "id": "lk",
+   "type": "link",
+   "x": 600,
+   "y": 470,
+   "cfg": {
+    "name": "Cloud link",
+    "gbps": 100,
+    "rttMs": 20,
+    "egressPerGB": 0.05,
+    "encrypted": true,
+    "owner": "Network Engineering",
+    "oncall": "@netops"
+   }
+  },
+  {
+   "id": "neo",
+   "type": "pool",
+   "x": 880,
+   "y": 410,
+   "cfg": {
+    "name": "Neocloud H200",
+    "site": "Neocloud A",
+    "siteKind": "neo",
+    "role": "agg",
+    "gpu": "H200",
+    "instances": 4,
+    "autoscale": true,
+    "min": 0,
+    "max": 8,
+    "coldStart": 90,
+    "upWait": 1,
+    "downUtil": 30,
+    "maxBatch": 256,
+    "fabricGbps": 400,
+    "zone": "auto",
+    "owner": "Cloud Infrastructure",
+    "oncall": "@cloudinfra-oncall",
+    "calibPrefill": 1,
+    "calibDecode": 1,
+    "clusterWorkload": "",
+    "clusterAtH": 0
+   }
+  }
+ ],
+ "edges": [
+  {
+   "id": "e:src>rt",
+   "from": "src",
+   "to": "rt"
+  },
+  {
+   "id": "e:rt>on",
+   "from": "rt",
+   "to": "on"
+  },
+  {
+   "id": "e:rt>lk",
+   "from": "rt",
+   "to": "lk"
+  },
+  {
+   "id": "e:lk>neo",
+   "from": "lk",
+   "to": "neo"
+  }
+ ]
+}

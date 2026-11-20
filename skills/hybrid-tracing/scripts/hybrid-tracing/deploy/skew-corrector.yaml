@@ -1,0 +1,57 @@
+# skew-corrector between the tail-sampling tier and the trace store, on-prem.
+# Tail samplers send to http://skew-corrector:4318 (collector/tailsampler.yaml); it forwards to Tempo.
+# Each replica learns offsets from the traces it sees; with a few hundred cross-site traces a minute,
+# every replica converges within a few minutes. /offsets shows its current table.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: skew-corrector
+  namespace: observability
+  labels:
+    app: skew-corrector
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: skew-corrector
+  template:
+    metadata:
+      labels:
+        app: skew-corrector
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "4318"
+        prometheus.io/path: /metrics
+    spec:
+      containers:
+        - name: skew-corrector
+          image: registry.example.internal/skew-corrector:0.1 # build from hybrid-tracing/Dockerfile
+          env:
+            - name: SKEW_DOWNSTREAM
+              value: http://tempo-distributor.observability:4318/v1/traces
+            - name: SKEW_REF_SITE
+              value: onprem
+          ports:
+            - containerPort: 4318
+          readinessProbe:
+            httpGet:
+              path: /healthz
+              port: 4318
+          resources:
+            requests:
+              cpu: 200m
+              memory: 256Mi
+            limits:
+              memory: 1Gi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: skew-corrector
+  namespace: observability
+spec:
+  selector:
+    app: skew-corrector
+  ports:
+    - port: 4318
+      targetPort: 4318

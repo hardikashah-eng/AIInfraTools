@@ -1,0 +1,43 @@
+{
+  "kind": "inference-sizer/catalog",
+  "version": 1,
+  "gpus": [
+    {
+      "id": "H200-NVL",
+      "label": "NVIDIA H200 NVL (PCIe, 4-way NVLink bridge)",
+      "vendor": "NVIDIA",
+      "hbmGB": 141,
+      "hbmTBs": 4.8,
+      "tfBf16": 835,
+      "tfFp8": 1670,
+      "tfFp4": 0,
+      "scaleUpGBs": 450,
+      "domain": 4,
+      "nicGbps": 400,
+      "nodeKW": 3.2,
+      "price": 3.0,
+      "source": "https://www.nvidia.com/en-us/data-center/h200/"
+    }
+  ],
+  "models": [
+    {
+      "id": "qwen3-30b-a3b",
+      "name": "Qwen3 30B-A3B (MoE)",
+      "total": 30.5,
+      "active": 3.3,
+      "layers": 48,
+      "hidden": 2048,
+      "qHeads": 32,
+      "kvHeads": 4,
+      "headDim": 128,
+      "attn": "gqa",
+      "experts": 128,
+      "topk": 8,
+      "swaFrac": 0,
+      "swaWindow": 0,
+      "maxCtx": 131072,
+      "wprec": "fp8",
+      "source": "https://huggingface.co/Qwen/Qwen3-30B-A3B"
+    }
+  ]
+}

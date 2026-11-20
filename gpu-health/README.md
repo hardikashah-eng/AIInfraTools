@@ -158,6 +158,8 @@ node tools/gpu-health.mjs report --format html --out weekly.html --state /var/li
 node tools/gpu-health.mjs receipt embed-svc --state /var/lib/gpu-health
 ```
 
+Every command takes `--json` and prints one JSON object, for scripts and LLM agents. The [gpu-health skill](../skills/gpu-health/SKILL.md) packages it for models, including the rule that a model never approves or runs an action live on its own.
+
 ### Inputs
 
 | File | Contents | Needed for |

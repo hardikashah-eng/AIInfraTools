@@ -1,0 +1,57 @@
+# Minimum Kubernetes permissions for gpu-health's default executors.
+# Label/taint nodes (quarantine, release, risk labels), drain (node-reboot), scale deployments (scale-in),
+# delete pods (reclaim-idle) and create diag Jobs. Narrow the namespaces to the ones you let it touch.
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: gpu-health
+  namespace: gpu-health
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: gpu-health-nodes
+rules:
+  - apiGroups: [""]
+    resources: ["nodes"]
+    verbs: ["get", "list", "patch", "update"]
+  - apiGroups: [""]
+    resources: ["pods"]
+    verbs: ["get", "list"]
+  - apiGroups: [""]
+    resources: ["pods/eviction"]
+    verbs: ["create"]          # kubectl drain
+  - apiGroups: ["apps"]
+    resources: ["daemonsets"]
+    verbs: ["get", "list"]     # kubectl drain --ignore-daemonsets
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: gpu-health-nodes
+roleRef: { apiGroup: rbac.authorization.k8s.io, kind: ClusterRole, name: gpu-health-nodes }
+subjects: [{ kind: ServiceAccount, name: gpu-health, namespace: gpu-health }]
+---
+# Per workload namespace it may change (repeat the RoleBinding for each, e.g. serving, notebooks).
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: gpu-health-workloads
+rules:
+  - apiGroups: ["apps"]
+    resources: ["deployments", "deployments/scale"]
+    verbs: ["get", "patch", "update"]
+  - apiGroups: [""]
+    resources: ["pods"]
+    verbs: ["delete"]
+  - apiGroups: ["batch"]
+    resources: ["jobs"]
+    verbs: ["create", "get", "list"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: gpu-health-workloads
+  namespace: serving
+roleRef: { apiGroup: rbac.authorization.k8s.io, kind: ClusterRole, name: gpu-health-workloads }
+subjects: [{ kind: ServiceAccount, name: gpu-health, namespace: gpu-health }]

@@ -21,6 +21,9 @@ node tools/size.mjs --model llama33-70b --gpu B200 --set conc=800 --set tpot=25
 node tools/size.mjs --list                                     # GPU and model ids
 node tools/size.mjs --catalog specs/example.json --model qwen3-30b-a3b --gpu H200 --json
 node tools/size.mjs --model deepseek-v3 --gpu B200 --fleetscope ../fleetscope/scenarios/deepseek/graph.json
+node tools/size.mjs --model llama33-70b --compare B200,H200,MI300X --set tpot=25   # same targets on several GPUs, cheapest first
+echo '{"model":"llama33-70b","gpu":"H200","conc":400}' | node tools/size.mjs --input - --json
+node tools/size.mjs --list --json                              # full GPU and model specs, and every input name
 ```
 
 Develop: `npm test`, then `npm run build` to rebuild `dist/index.html` from `src/`.

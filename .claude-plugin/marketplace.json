@@ -1,0 +1,12 @@
+{
+  "name": "aiinfra-tools",
+  "description": "AI infrastructure tools packaged as skills",
+  "owner": { "name": "hardikashah-eng", "url": "https://github.com/hardikashah-eng" },
+  "plugins": [
+    {
+      "name": "aiinfra-tools",
+      "source": "./",
+      "description": "GPU inference sizing, hybrid fleet simulation, cross-site tracing with clock-skew correction, and GPU health checks with an approval queue for fixes."
+    }
+  ]
+}
