@@ -31,6 +31,12 @@ Pass `--config my.json`. The file is deep-merged over the defaults in `src/confi
 | `health.tempOverPeersC` | 10 | Hotter than same-SKU peers at similar power |
 | `health.speedIndexMin` | 0.92 | Micro-benchmark vs cohort median |
 | `health.strikeWindowDays` | 30 | A second failure within this window after a fix sends the GPU to RMA |
+| `health.memTempOverPeersC` / `memTempRiseC` | 8 / 6 | HBM hotter than peers / than its own earlier days at the same power |
+| `health.powerBrakeBusy` | 0.05 | Share of busy time in power-brake slowdown |
+| `health.telemetryGapFrac` | 0.3 | Share of expected samples missing in the last hour (one GPU; node-mates fine) |
+| `health.persistN` / `persistK` / `persistWindowMin` | 3 / 4 / 60 | Windowed signals must fire in N of the last K windows |
+| `health.signalCooldownMin` | 120 | A soft signal that cleared stays quiet this long |
+| `health.sdcSoft` / `sdcHard` / `sdcWindowDays` | 1 / 2 / 7 | SDC events per GPU that make it suspect / quarantine it |
 
 ## Faults and the repair ladder
 
@@ -71,7 +77,9 @@ Action kinds:
 | `avoid-large-jobs` | high risk | label so large synchronous jobs avoid the GPU |
 | `scale-in` | oversized inference | `kubectl scale deployment --replicas={replicas}` |
 | `reclaim-idle` | idle allocation | delete the pod |
-| `resize`, `requeue-at-checkpoint`, `repartition`, `rma`, `reseat`, `firmware-align`, `fabric-restart`, `facilities-check`, `exporter-check`, `notify-owner` | various | webhook message to the owner or ops channel |
+| `swap-at-checkpoint` | training job on a suspect, quarantined or high-risk GPU; stragglers | label the node so the launcher checkpoints and restarts without it |
+| `drain-inference` | inference replica on a suspect, quarantined or high-risk GPU | flip the replica pods' `gpu-health.aiinfra/serving` label so the Service stops routing to them (`app={job}` label assumed) |
+| `resize`, `repartition`, `rma`, `reseat`, `firmware-align`, `fabric-restart`, `facilities-check`, `exporter-check`, `notify-owner` | various | webhook message to the owner or ops channel |
 
 ## Executors
 

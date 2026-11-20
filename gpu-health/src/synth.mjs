@@ -4,6 +4,10 @@
 //   neocloud n4     H200 x8   notebook-ana (2, idle most of the day), etl-feature (2, starved on CPU/I-O),
 //                             rerank-svc (gpu4, corrected ECC rising), batch-sim (gpu5: XID 79 then silent; gpu6: PCIe x8 of x16),
 //                             ocr-svc (gpu7, tiny)
+// early-warning plants:
+//   n1/gpu3  HBM running hotter than its node-mates and than its own last week, plus power-brake slowdowns
+//   n1/gpu2  two silent-data-corruption events reported by train-llm (rank 2): loss spike, then NaN
+//   n3/gpu6  half of its samples missing in the last hour while the rest of n3 reports normally
 // Deterministic (seeded) so tests can assert on it.
 
 export function rng(seed = 42) { let s = seed >>> 0; return () => { s = (s + 0x6D2B79F5) >>> 0; let t = s; t = Math.imul(t ^ (t >>> 15), t | 1); t ^= t + Math.imul(t ^ (t >>> 7), t | 61); return ((t ^ (t >>> 14)) >>> 0) / 4294967296; }; }
@@ -50,11 +54,16 @@ export function demoSamples({ now = DEMO_NOW, days = 7, step = 600, seed = 7 } =
         if (node === 'n4' && (gpu === 5 || gpu === 6)) u = { tensor: jitter(0.42, 0.05), sm: jitter(0.7, 0.05), dram: jitter(0.3, 0.05), mem: 90, fw: 80 };
         if (node === 'n4' && gpu === 7) u = { tensor: jitter(0.04 + 0.07 * day, 0.015), sm: jitter(0.08 + 0.06 * day, 0.02), dram: jitter(0.06 + 0.06 * day, 0.02), mem: 100, fw: 13 };
         if (node === 'n4' && gpu === 5 && t > now - 3 * 3600) continue; // fell off the bus: silent after the XID
+        if (node === 'n3' && gpu === 6 && t > now - 3600 && Math.floor(t / step) % 2 === 0) continue; // telemetry thinning
         u.throttle = u.throttle || 0;
         const eff = Math.max(u.tensor, u.dram);
         const powerW = S.power * (0.12 + 0.75 * Math.max(eff, u.sm * 0.8));
         let tempC = 32 + 40 * powerW / S.power + (R() - 0.5) * 2;
         if (node === 'n2' && gpu === 5) tempC += 18;
+        let memTempC = tempC + 6 + (R() - 0.5) * 2;
+        const hbmHot = node === 'n1' && gpu === 3 && t > now - 2 * 86400;
+        if (hbmHot) memTempC += 14;
+        const powerBrake = hbmHot && t > now - 86400 && R() < 0.15 ? 1 : 0;
         // corrected ECC: n4/gpu4 starts rising one day ago
         sbe[k] = (sbe[k] || (node === 'n4' && gpu === 4 ? 120 : 2)) + (node === 'n4' && gpu === 4 && t > now - 86400 ? 40 * step / 3600 : R() < 0.002 ? 1 : 0);
         link[k] = (link[k] || 0) + (R() < 0.01 ? 1 : 0);
@@ -64,7 +73,7 @@ export function demoSamples({ now = DEMO_NOW, days = 7, step = 600, seed = 7 } =
           tensor: +u.tensor.toFixed(3), sm: +u.sm.toFixed(3), dram: +u.dram.toFixed(3),
           memUsedGB: u.mem === 1 ? 1 : u.mem, memTotalGB: S.mem, ...(u.fw != null ? { frameworkPeakGB: u.fw } : {}),
           clockMHz: Math.round(S.clock * (1 - 0.25 * u.throttle)), maxClockMHz: S.clock, throttle: +u.throttle.toFixed(3),
-          tempC: +tempC.toFixed(1), powerW: Math.round(powerW),
+          tempC: +tempC.toFixed(1), memTempC: +memTempC.toFixed(1), powerW: Math.round(powerW), powerBrake,
           eccSbeTotal: Math.floor(sbe[k]), eccDbeTotal: 0, remapPending: 0, remapFailed: 0, remapUsed: node === 'n4' && gpu === 4 ? 180 : 2, remapSpare: node === 'n4' && gpu === 4 ? 332 : 510,
           pcieWidth: node === 'n4' && gpu === 6 ? 8 : 16, pcieWidthMax: 16, pcieGen: 5, pcieGenMax: 5, linkErrTotal: link[k],
           ...(u.cpuWait != null ? { cpuWait: +u.cpuWait.toFixed(3) } : {}), faults,
@@ -91,6 +100,14 @@ export function demoProbes({ now = DEMO_NOW, seed = 5 } = {}) {
       out.push({ t: now - 6 * 3600, node, gpu: String(gpu), site, sku, firmware: sku === 'B200' ? '570.86' : '565.57', gemmTflops: +(S.gemm * slow * (1 + (R() - 0.5) * 0.02)).toFixed(0), hbmGBs: +(S.hbm * (1 + (R() - 0.5) * 0.02)).toFixed(0) });
     }
   return out;
+}
+
+// Results from outside the telemetry: here, SDC events reported by the training loop's checks.
+export function demoResults({ now = DEMO_NOW } = {}) {
+  return [
+    { t: now - 5 * 3600, kind: 'sdc', job: 'train-llm', rank: 2, step: 41870, type: 'loss-spike', detail: 'loss 2.31 -> 9.8, recovered next step' },
+    { t: now - 2 * 3600, kind: 'sdc', job: 'train-llm', rank: 2, step: 42011, type: 'nan', detail: 'non-finite gradient on rank 2 only' },
+  ];
 }
 
 export function demoCluster() {

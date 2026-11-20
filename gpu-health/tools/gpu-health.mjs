@@ -10,7 +10,7 @@ import { persistable } from '../src/health.mjs';
 import { Store } from '../src/actions.mjs';
 import { markdown, html, receipt } from '../src/report.mjs';
 import { createServer } from '../src/server.mjs';
-import { demoSamples, demoJobs, demoSteps, demoProbes, demoCluster, toJsonl } from '../src/synth.mjs';
+import { demoSamples, demoJobs, demoSteps, demoProbes, demoCluster, demoResults, toJsonl } from '../src/synth.mjs';
 
 const HELP = `gpu-health — GPU health, efficiency and savings, with an approval queue for fixes
 
@@ -94,13 +94,13 @@ async function main() {
     const data = path.join(out, 'data'); fs.mkdirSync(data, { recursive: true });
     const write = (n, v) => fs.writeFileSync(path.join(data, n), v);
     const now = o.now ? +o.now : Math.floor(Date.now() / 1000 / 600) * 600; // ends now, so approvals can be executed straight away
-    const jobs = demoJobs(now), steps = demoSteps({ now }), probes = demoProbes({ now });
+    const jobs = demoJobs(now), steps = demoSteps({ now }), probes = demoProbes({ now }), results = demoResults({ now });
     write('samples.jsonl', toJsonl(demoSamples({ now }))); write('jobs.json', JSON.stringify(jobs, null, 1)); write('steps.jsonl', toJsonl(steps));
-    write('probes.jsonl', toJsonl(probes)); write('cluster.json', JSON.stringify(demoCluster(), null, 1));
+    write('probes.jsonl', toJsonl(probes)); write('results.jsonl', toJsonl(results)); write('cluster.json', JSON.stringify(demoCluster(), null, 1));
     write('config.json', JSON.stringify({ pricePerGpuHour: { B200: 6.0, H200: 4.5, default: 4.0 } }, null, 1));
     o.state = path.join(out, 'state'); o.config = path.join(data, 'config.json');
     if (fs.existsSync(o.state)) fs.rmSync(o.state, { recursive: true });
-    const { a, store, dir, cfg } = runAnalysis(o, { samples: readSamples(read(path.join(data, 'samples.jsonl'))), jobs, steps, probes, cluster: demoCluster(), now });
+    const { a, store, dir, cfg } = runAnalysis(o, { samples: readSamples(read(path.join(data, 'samples.jsonl'))), jobs, steps, probes, results, cluster: demoCluster(), now });
     fs.writeFileSync(path.join(out, 'report.md'), markdown(a, store.list()));
     fs.writeFileSync(path.join(out, 'report.html'), html(a, store.list()));
     printSummary(a, store);

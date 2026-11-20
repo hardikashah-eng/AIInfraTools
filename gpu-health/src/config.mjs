@@ -23,6 +23,13 @@ export const DEFAULTS = {
     linkErrPerHour: 100,
     speedIndexMin: 0.92,      // probe result vs cohort median below this = Suspect
     strikeWindowDays: 30, strikesForRma: 2,
+    memTempOverPeersC: 8,     // HBM hotter than peers (same node and job, else same SKU at similar power)
+    memTempRiseC: 6,          // HBM warmer than the GPU's own earlier days at the same power
+    powerBrakeBusy: 0.05,     // share of busy time in power-brake slowdown
+    telemetryGapFrac: 0.3,    // share of expected samples missing in the last hour (one GPU, node-mates fine)
+    persistN: 3, persistK: 4, persistWindowMin: 60, // windowed signals must fire in N of the last K windows
+    signalCooldownMin: 120,   // a cleared soft signal stays quiet this long
+    sdcSoft: 1, sdcHard: 2, sdcWindowDays: 7, // silent-data-corruption events per GPU: suspect / quarantine
   },
   faults: {
     // fault code -> { class, severity: hard (quarantine now) | soft (Suspect) }
@@ -33,14 +40,16 @@ export const DEFAULTS = {
     xid13: { class: 'app', severity: 'ignore' }, xid31: { class: 'app', severity: 'ignore' }, xid43: { class: 'app', severity: 'ignore' },
     ras_uncorrectable: { class: 'ecc', severity: 'hard' }, ras_correctable: { class: 'ecc', severity: 'soft' },
     gpu_lost: { class: 'bus', severity: 'hard' },
+    xid145: { class: 'link', severity: 'hard' }, xid109: { class: 'app', severity: 'soft' }, // 109 can be a driver issue: confirm with a diag
   },
   // Remediation ladder by fault class: the cheapest step first. Each step is an action kind (see executors).
   ladder: {
     ecc: ['gpu-reset', 'node-reboot', 'rma'], bus: ['node-reboot', 'rma'], link: ['fabric-restart', 'node-reboot', 'rma'],
     firmware: ['gpu-reset', 'firmware-align', 'rma'], pcie: ['node-reboot', 'reseat', 'rma'], thermal: ['facilities-check', 'reseat', 'rma'],
     slow: ['config-reset', 'gpu-reset', 'reseat', 'rma'], stale: ['exporter-check'], default: ['gpu-reset', 'node-reboot', 'rma'],
+    power: ['facilities-check', 'reseat', 'rma'], telemetry: ['exporter-check', 'node-reboot', 'rma'], sdc: ['gpu-reset', 'rma'],
   },
-  diagLevelByClass: { ecc: 3, bus: 3, link: 3, firmware: 2, pcie: 2, thermal: 3, slow: 3, stale: 1, default: 2 },
+  diagLevelByClass: { ecc: 3, bus: 3, link: 3, firmware: 2, pcie: 2, thermal: 3, slow: 3, stale: 1, power: 3, telemetry: 2, sdc: 4, default: 2 },
   // What may happen without a person. auto = executes at once; approve = queued for approval; never = suggestion only.
   policy: {
     dryRun: true,             // commands run only with this false AND --live
@@ -50,12 +59,13 @@ export const DEFAULTS = {
       'quarantine': 'auto', 'release': 'approve', 'notify-owner': 'auto', 'run-diag': 'auto', 'config-reset': 'auto',
       'gpu-reset': 'approve', 'node-reboot': 'approve', 'fabric-restart': 'approve', 'firmware-align': 'approve',
       'rma': 'approve', 'reseat': 'approve', 'facilities-check': 'approve', 'exporter-check': 'auto',
-      'reclaim-idle': 'approve', 'scale-in': 'approve', 'resize': 'approve', 'requeue-at-checkpoint': 'approve',
+      'reclaim-idle': 'approve', 'scale-in': 'approve', 'resize': 'approve',
       'deep-diag-next-boundary': 'auto', 'avoid-large-jobs': 'approve', 'label-capability': 'approve', 'repartition': 'approve',
+      'swap-at-checkpoint': 'approve', 'drain-inference': 'approve',
     },
     // Per workload class overrides. Training jobs are never stopped automatically.
     classes: {
-      training: { 'reclaim-idle': 'never', 'requeue-at-checkpoint': 'approve' },
+      training: { 'reclaim-idle': 'never', 'swap-at-checkpoint': 'approve' },
       interactive: { 'reclaim-idle': 'approve' },
       inference: { 'scale-in': 'approve', 'resize': 'approve' },
       batch: {},
@@ -73,10 +83,15 @@ export const DEFAULTS = {
     'config-reset': [['ssh', '{node}', 'sudo', 'nvidia-smi', '-i', '{gpu}', '-rgc']],
     'scale-in': [['kubectl', '-n', '{namespace}', 'scale', 'deployment', '{job}', '--replicas={replicas}']],
     'reclaim-idle': [['kubectl', '-n', '{namespace}', 'delete', 'pod', '{job}', '--wait=false']],
+    // The training launcher (elastic agent) watches this label: checkpoint, then restart without the node.
+    'swap-at-checkpoint': [['kubectl', 'label', 'node', '{node}', 'gpu-health.aiinfra/swap-at-checkpoint={job}', '--overwrite']],
+    // The Service selects gpu-health.aiinfra/serving=true (set in the pod template); flipping it stops new requests
+    // reaching the replica while in-flight ones finish.
+    'drain-inference': [['kubectl', '-n', '{namespace}', 'label', 'pods', '-l', 'app={job}', '--field-selector=spec.nodeName={node}', 'gpu-health.aiinfra/serving=false', '--overwrite']],
     'avoid-large-jobs': [['kubectl', 'label', 'node', '{node}', 'gpu-health.aiinfra/gpu-{gpu}-risk=high', '--overwrite']],
     'label-capability': [['kubectl', 'label', 'node', '{node}', 'gpu-health.aiinfra/capability={reason}', '--overwrite']],
     'notify-owner': 'webhook', 'rma': 'webhook', 'reseat': 'webhook', 'facilities-check': 'webhook', 'exporter-check': 'webhook',
-    'resize': 'webhook', 'repartition': 'webhook', 'requeue-at-checkpoint': 'webhook', 'firmware-align': 'webhook', 'fabric-restart': 'webhook',
+    'resize': 'webhook', 'repartition': 'webhook', 'firmware-align': 'webhook', 'fabric-restart': 'webhook',
   },
   ingest: { mappings: {} },   // per vendor: { nvidia: { fields: { METRIC: [field, scale] }, node: [labels], ... } }
   notify: { webhook: '' }, // Lark/Feishu or Slack incoming-webhook URL; empty = print only

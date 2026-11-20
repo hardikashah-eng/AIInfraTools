@@ -42,8 +42,8 @@ export function recommend(jobStats, stragglers, cfg, window) {
     const st = stragglers.find(s => s.job === j.id);
     if (st) {
       const lost = st.slowdown ? (1 - 1 / st.slowdown) : 0.1;
-      out.push(Object.assign(base, { lever: 'fix-straggler', action: 'requeue-at-checkpoint', target: `${st.node}/${st.gpu}`, gpusFreed: G * lost, weekly: G * lost * price * 168 * activeShare,
-        text: `Rank ${st.rank} on ${st.node}/gpu${st.gpu} is ${st.slowdown ? Math.round((st.slowdown - 1) * 100) + '% slower than the job median' : 'holding the job back'} (${st.source}); every rank waits for it. Restart from the next checkpoint without that GPU and send it for a deep diag.` }));
+      out.push(Object.assign(base, { lever: 'fix-straggler', action: 'swap-at-checkpoint', target: `${st.node}/${st.gpu}`, gpusFreed: G * lost, weekly: G * lost * price * 168 * activeShare,
+        text: `Rank ${st.rank} on ${st.node}/gpu${st.gpu} is ${st.slowdown ? Math.round((st.slowdown - 1) * 100) + '% slower than the job median' : 'holding the job back'} (${st.source}); every rank waits for it. At the next checkpoint, swap that node for a spare and send the GPU for a deep diag.` }));
       continue;
     }
     if (js.cls === 'idle') {
