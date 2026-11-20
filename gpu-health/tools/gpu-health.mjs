@@ -1,0 +1,189 @@
+#!/usr/bin/env node
+// gpu-health: find unhealthy and wasted GPUs, suggest actions, and run them once approved.
+import fs from 'node:fs';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
+import { loadConfig } from '../src/config.mjs';
+import { readSamples, samplesFromExporter } from '../src/ingest.mjs';
+import { analyze } from '../src/analyze.mjs';
+import { persistable } from '../src/health.mjs';
+import { Store } from '../src/actions.mjs';
+import { markdown, html, receipt } from '../src/report.mjs';
+import { createServer } from '../src/server.mjs';
+import { demoSamples, demoJobs, demoSteps, demoProbes, demoCluster, toJsonl } from '../src/synth.mjs';
+
+const HELP = `gpu-health — GPU health, efficiency and savings, with an approval queue for fixes
+
+  gpu-health demo [--out DIR]                      build a demo fleet with planted problems and analyze it
+  gpu-health analyze --samples F[,F] --jobs F      analyze; writes STATE/analysis.json and updates the action queue
+        [--prom F[,F]] [--steps F] [--probes F] [--results F] [--cluster F] [--config F] [--days 7] [--now EPOCH]
+        [--execute [--live]]                       also run actions the policy approves automatically
+  gpu-health actions list [--status open|all|proposed|approved|executed|rejected]
+  gpu-health actions approve ID... --by NAME
+  gpu-health actions reject ID --by NAME [--reason TEXT]
+  gpu-health actions execute [ID...] [--live]      run approved actions (dry-run unless --live AND policy.dryRun=false)
+  gpu-health report [--format md|html] [--out F]   report from the last analysis
+  gpu-health receipt JOB                           what one job was given vs what it used
+  gpu-health serve [--port 8787] [--host 127.0.0.1] [--allow-live]   approval page (needs GPU_HEALTH_TOKENS or GPU_HEALTH_TOKEN)
+  gpu-health watch --scrape URL[,URL] --jobs F [--interval 60] [--execute [--live]]   scrape exporters and analyze on a loop
+
+  Common: --state DIR (default ./gpu-health-state), --config F (JSON, merged over the defaults; see docs/CONFIG.md)`;
+
+function args(argv) {
+  const o = { _: [] };
+  for (let i = 0; i < argv.length; i++) {
+    const a = argv[i];
+    if (a.startsWith('--')) { const k = a.slice(2); const nx = argv[i + 1]; if (nx === undefined || nx.startsWith('--')) o[k] = true; else { o[k] = nx; i++; } }
+    else o._.push(a);
+  }
+  return o;
+}
+const read = f => fs.readFileSync(f, 'utf8');
+const readJsonl = f => read(f).split(/\r?\n/).filter(l => l.trim()).map(l => JSON.parse(l));
+const readJson = f => (f.endsWith('.jsonl') ? readJsonl(f) : JSON.parse(read(f)));
+const list = v => (v && v !== true ? String(v).split(',').map(s => s.trim()).filter(Boolean) : []);
+const $ = v => '$' + Math.round(v || 0).toLocaleString('en-US');
+
+function config(o) { return loadConfig(o.config ? JSON.parse(read(o.config)) : {}); }
+function stateDir(o) { return path.resolve(o.state && o.state !== true ? o.state : 'gpu-health-state'); }
+function prevHealth(dir) { const f = path.join(dir, 'health.json'); return fs.existsSync(f) ? JSON.parse(read(f)) : { gpus: {} }; }
+// executed releases feed back into health as results
+function releaseResults(store) { return store.list('executed').filter(a => a.kind === 'release').map(a => ({ kind: 'release', node: a.node, gpu: a.gpu, t: a.executedAt, by: a.approvedBy })); }
+
+function printSummary(a, store) {
+  const s = a.summary;
+  console.log(`\n${s.gpus} GPUs · effective utilization ${Math.round((s.effectiveUtil || 0) * 100)}% · idle allocated ${Math.round(s.idleGpuHours)} GPU-h · potential savings ${$(s.weeklySavings)}/week (${s.gpusFreeable.toFixed(1)} GPUs)`);
+  console.log(`states: ${Object.entries(s.states).map(([k, v]) => `${k} ${v}`).join(', ')}${a.health.breaker ? '  ⚠ monitoring circuit breaker tripped' : ''}`);
+  const open = store.list('open');
+  if (open.length) { console.log(`\nactions (${open.length} open):`); for (const x of open) console.log(`  ${x.status.padEnd(9)} ${x.mode.padEnd(7)} ${x.id}${x.weekly ? `  ≈${$(x.weekly)}/wk` : ''}\n            ${x.reason.slice(0, 150)}`); }
+}
+
+function runAnalysis(o, input) {
+  const cfg = config(o), dir = stateDir(o);
+  const store = new Store(dir);
+  const results = [...(input.results || []), ...releaseResults(store)];
+  const a = analyze(Object.assign({}, input, { results, prev: prevHealth(dir), cfg, windowDays: +(o.days || 7), now: o.now ? +o.now : input.now }));
+  fs.writeFileSync(path.join(dir, 'health.json'), JSON.stringify(persistable(a.health), null, 1));
+  fs.writeFileSync(path.join(dir, 'analysis.json'), JSON.stringify(a));
+  store.merge(a.suggestions, cfg, a.generatedAt);
+  return { a, cfg, dir, store };
+}
+
+async function execApproved(store, cfg, o, fleetSize, ids, now) {
+  const live = !!o.live;
+  if (live && cfg.policy.dryRun !== false) console.log('note: --live given but policy.dryRun is not false in the config, so this is still a dry-run');
+  const res = await store.execute(cfg, { ids, live, fleetSize, now });
+  for (const r of res) {
+    console.log(`\n${r.skipped ? 'SKIPPED' : r.dryRun ? 'DRY-RUN' : r.ok ? 'DONE' : 'FAILED'}  ${r.id}`);
+    if (r.commands) for (const c of r.commands) console.log('  $ ' + c.join(' '));
+    if (r.text) console.log('  message: ' + r.text);
+    if (r.output && !r.dryRun) console.log('  ' + r.output.split('\n').join('\n  '));
+    else if (r.skipped) console.log('  ' + r.output);
+  }
+  if (!res.length) console.log('nothing approved to execute');
+  return res;
+}
+
+async function main() {
+  const o = args(process.argv.slice(2));
+  const cmd = o._[0];
+  if (!cmd || o.help || cmd === 'help') return console.log(HELP);
+
+  if (cmd === 'demo') {
+    const out = path.resolve(o.out && o.out !== true ? o.out : 'gpu-health-demo');
+    const data = path.join(out, 'data'); fs.mkdirSync(data, { recursive: true });
+    const write = (n, v) => fs.writeFileSync(path.join(data, n), v);
+    const now = o.now ? +o.now : Math.floor(Date.now() / 1000 / 600) * 600; // ends now, so approvals can be executed straight away
+    const jobs = demoJobs(now), steps = demoSteps({ now }), probes = demoProbes({ now });
+    write('samples.jsonl', toJsonl(demoSamples({ now }))); write('jobs.json', JSON.stringify(jobs, null, 1)); write('steps.jsonl', toJsonl(steps));
+    write('probes.jsonl', toJsonl(probes)); write('cluster.json', JSON.stringify(demoCluster(), null, 1));
+    write('config.json', JSON.stringify({ pricePerGpuHour: { B200: 6.0, H200: 4.5, default: 4.0 } }, null, 1));
+    o.state = path.join(out, 'state'); o.config = path.join(data, 'config.json');
+    if (fs.existsSync(o.state)) fs.rmSync(o.state, { recursive: true });
+    const { a, store, dir, cfg } = runAnalysis(o, { samples: readSamples(read(path.join(data, 'samples.jsonl'))), jobs, steps, probes, cluster: demoCluster(), now });
+    fs.writeFileSync(path.join(out, 'report.md'), markdown(a, store.list()));
+    fs.writeFileSync(path.join(out, 'report.html'), html(a, store.list()));
+    printSummary(a, store);
+    console.log(`\nauto-approved actions, dry-run:`);
+    await execApproved(store, cfg, {}, a.summary.gpus, null, a.generatedAt);
+    console.log(`\nwrote ${path.relative(process.cwd(), out)}/report.html and report.md; state in ${path.relative(process.cwd(), dir)}`);
+    console.log(`next: node tools/gpu-health.mjs actions list --state ${path.relative(process.cwd(), dir)}`);
+    return;
+  }
+
+  if (cmd === 'analyze') {
+    const samples = [];
+    for (const f of list(o.samples)) samples.push(...readSamples(read(f)));
+    for (const f of list(o.prom)) samples.push(...samplesFromExporter(read(f), { t: o.now ? +o.now : undefined, mappings: config(o).ingest.mappings }));
+    if (!samples.length) throw new Error('give --samples (JSONL) and/or --prom (exporter text)');
+    const input = { samples, jobs: o.jobs ? readJson(o.jobs) : [], steps: o.steps ? readJsonl(o.steps) : [], probes: o.probes ? readJsonl(o.probes) : [],
+      results: o.results ? readJsonl(o.results) : [], cluster: o.cluster ? readJson(o.cluster) : null };
+    const { a, store, cfg } = runAnalysis(o, input);
+    printSummary(a, store);
+    if (o.execute) await execApproved(store, cfg, o, a.summary.gpus, null, a.generatedAt);
+    return;
+  }
+
+  if (cmd === 'actions') {
+    const sub = o._[1] || 'list', store = new Store(stateDir(o)), cfg = config(o);
+    if (sub === 'list') {
+      const st = o.status === 'all' ? null : (o.status && o.status !== true ? o.status : 'open');
+      const rows = store.list(st);
+      if (!rows.length) return console.log('no actions');
+      for (const x of rows) console.log(`${x.status.padEnd(10)} ${x.mode.padEnd(7)} ${x.id}${x.weekly ? `  ≈${$(x.weekly)}/wk` : ''}${x.approvedBy ? `  (approved by ${x.approvedBy})` : ''}\n           ${x.reason}`);
+      return;
+    }
+    if (sub === 'approve') { for (const id of o._.slice(2)) { const x = store.approve(id, o.by === true ? '' : o.by); console.log(`approved ${x.id} by ${x.approvedBy}`); } return; }
+    if (sub === 'reject') { const x = store.reject(o._[2], o.by === true ? '' : o.by, o.reason === true ? '' : o.reason); console.log(`rejected ${x.id}`); return; }
+    if (sub === 'execute') {
+      const f = path.join(stateDir(o), 'analysis.json');
+      const fleet = fs.existsSync(f) ? JSON.parse(read(f)).summary.gpus : 0;
+      const res = await execApproved(store, cfg, o, fleet, o._.length > 2 ? o._.slice(2) : null, o.now ? +o.now : undefined);
+      process.exitCode = res.some(r => !r.ok && !r.skipped) ? 1 : 0;
+      return;
+    }
+    throw new Error(`unknown: actions ${sub}`);
+  }
+
+  if (cmd === 'report' || cmd === 'receipt') {
+    const dir = stateDir(o), f = path.join(dir, 'analysis.json');
+    if (!fs.existsSync(f)) throw new Error(`no analysis in ${dir}; run analyze first`);
+    const a = JSON.parse(read(f)), store = new Store(dir);
+    if (cmd === 'receipt') return process.stdout.write(receipt(a, o._[1]));
+    const text = o.format === 'html' ? html(a, store.list()) : markdown(a, store.list());
+    if (o.out && o.out !== true) { fs.writeFileSync(o.out, text); console.log(`wrote ${o.out}`); } else process.stdout.write(text);
+    return;
+  }
+
+  if (cmd === 'serve') {
+    const srv = createServer({ stateDir: stateDir(o), cfg: config(o), allowLive: !!o['allow-live'] });
+    const port = +(o.port || 8787), host = o.host && o.host !== true ? o.host : '127.0.0.1';
+    srv.listen(port, host, () => console.log(`approval page on http://${host}:${port}/ (state ${stateDir(o)})`));
+    return;
+  }
+
+  if (cmd === 'watch') {
+    const urls = list(o.scrape), every = +(o.interval || 60) * 1000, dir = stateDir(o), keepDays = +(o.days || 7);
+    if (!urls.length) throw new Error('give --scrape with exporter URLs');
+    fs.mkdirSync(dir, { recursive: true });
+    const sf = path.join(dir, 'samples.jsonl');
+    const tick = async () => {
+      const t = Math.floor(Date.now() / 1000);
+      const got = [];
+      for (const u of urls) { try { const r = await fetch(u, { signal: AbortSignal.timeout(10000) }); got.push(...samplesFromExporter(await r.text(), { t, mappings: config(o).ingest.mappings })); } catch (e) { console.error(`scrape ${u}: ${e.message}`); } }
+      fs.appendFileSync(sf, toJsonl(got));
+      const all = readSamples(read(sf)).filter(s => s.t > t - keepDays * 86400);
+      if (all.length > got.length * 50) fs.writeFileSync(sf, toJsonl(all)); // trim old samples now and then
+      const { a, store, cfg } = runAnalysis(o, { samples: all, jobs: o.jobs ? readJson(o.jobs) : [], cluster: o.cluster ? readJson(o.cluster) : null, now: t });
+      console.log(`${new Date().toISOString()} ${got.length} samples · ${Object.entries(a.summary.states).map(([k, v]) => `${k} ${v}`).join(', ')} · ${store.list('open').length} open actions`);
+      if (o.execute) await execApproved(store, cfg, o, a.summary.gpus, store.list('approved').filter(x => x.approvedBy === 'policy').map(x => x.id), t);
+    };
+    await tick();
+    setInterval(() => tick().catch(e => console.error(e.message)), every);
+    return;
+  }
+  throw new Error(`unknown command ${cmd}\n\n${HELP}`);
+}
+
+const self = fileURLToPath(import.meta.url);
+if (process.argv[1] && path.resolve(process.argv[1]) === self) main().catch(e => { console.error('error: ' + e.message); process.exit(1); });

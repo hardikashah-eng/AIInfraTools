@@ -1,0 +1,26 @@
+# Runs gpu-health's tests and its demo end to end.
+name: GPU Health
+on:
+  pull_request:
+    paths:
+      - 'gpu-health/**'
+      - '.github/workflows/gpu-health.yml'
+permissions:
+  contents: read
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Tests
+        working-directory: gpu-health
+        run: npm test
+      - name: Demo runs and writes a report
+        working-directory: gpu-health
+        run: |
+          node tools/gpu-health.mjs demo --out /tmp/gh-demo
+          test -s /tmp/gh-demo/report.html
+          node tools/gpu-health.mjs actions list --state /tmp/gh-demo/state | grep -q 'scale-in:embed-svc'
