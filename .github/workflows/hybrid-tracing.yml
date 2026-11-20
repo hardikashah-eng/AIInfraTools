@@ -1,0 +1,37 @@
+# Hybrid tracing: unit and service tests, chrony/PTP config parsing, and collector config validation
+# with the official OpenTelemetry Collector (contrib) image.
+name: Hybrid tracing
+on:
+  pull_request:
+    paths:
+      - 'hybrid-tracing/**'
+      - '.github/workflows/hybrid-tracing.yml'
+permissions:
+  contents: read
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Install chrony and linuxptp (used to parse the clock configs)
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends chrony linuxptp
+      - name: Tests
+        working-directory: hybrid-tracing
+        run: npm test
+  collector-configs:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Validate collector configs with otelcol-contrib
+        run: |
+          for f in hybrid-tracing/collector/*.yaml; do
+            echo "== $f"
+            docker run --rm -v "$PWD/hybrid-tracing/collector:/cfg:ro" \
+              -e SITE=onprem -e TIME_SERVER=timeserver-1.onprem.internal -e GATEWAY_ENDPOINT=gateway:4317 \
+              -e ONPREM_GATEWAY_ENDPOINT=onprem-gateway:4319 -e TAILSAMPLER_HEADLESS=tailsampler-headless \
+              -e METRICS_REMOTE_WRITE=http://mimir/api/v1/push -e SKEW_CORRECTOR_ENDPOINT=http://skew-corrector:4318 \
+              otel/opentelemetry-collector-contrib:0.163.2 validate --config="/cfg/$(basename "$f")"
+          done

@@ -1,0 +1,63 @@
+# OpenTelemetry Collector (contrib) gateway on-prem: where both sites' telemetry meets.
+# Env: TAILSAMPLER_HEADLESS (DNS name resolving to every tail-sampler pod), METRICS_REMOTE_WRITE (Prometheus/Mimir).
+# Routes every span of a trace to the same tail-sampler pod (by trace ID), so a trace with spans from both sites
+# gets one sampling decision. Neocloud traffic arrives on its own mTLS port.
+extensions:
+  health_check:
+    endpoint: 0.0.0.0:13133
+
+receivers:
+  otlp:
+    protocols:
+      grpc:
+        endpoint: 0.0.0.0:4317
+  otlp/neocloud:
+    protocols:
+      grpc:
+        endpoint: 0.0.0.0:4319
+        tls:
+          cert_file: /etc/otelcol/tls/onprem-gateway.crt
+          key_file: /etc/otelcol/tls/onprem-gateway.key
+          client_ca_file: /etc/otelcol/tls/neocloud-ca.crt
+
+processors:
+  memory_limiter:
+    check_interval: 1s
+    limit_percentage: 80
+    spike_limit_percentage: 20
+  transform/redact:
+    error_mode: ignore
+    trace_statements:
+      - context: span
+        statements:
+          - 'delete_matching_keys(attributes, "^gen_ai\\.(prompt|completion|input\\.messages|output\\.messages|system_instructions)")'
+      - context: spanevent
+        statements:
+          - 'delete_matching_keys(attributes, "^gen_ai\\.(prompt|completion|input\\.messages|output\\.messages|system_instructions)")'
+  batch: {}
+
+exporters:
+  loadbalancing:
+    routing_key: traceID
+    protocol:
+      otlp:
+        tls:
+          insecure: true
+    resolver:
+      dns:
+        hostname: ${env:TAILSAMPLER_HEADLESS}
+        port: 4317
+  prometheusremotewrite:
+    endpoint: ${env:METRICS_REMOTE_WRITE}
+
+service:
+  extensions: [health_check]
+  pipelines:
+    traces:
+      receivers: [otlp, otlp/neocloud]
+      processors: [memory_limiter, transform/redact, batch]
+      exporters: [loadbalancing]
+    metrics:
+      receivers: [otlp, otlp/neocloud]
+      processors: [memory_limiter, batch]
+      exporters: [prometheusremotewrite]

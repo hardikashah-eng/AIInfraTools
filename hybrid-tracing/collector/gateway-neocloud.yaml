@@ -1,0 +1,66 @@
+# OpenTelemetry Collector (contrib) gateway in the neocloud.
+# Env: ONPREM_GATEWAY_ENDPOINT (the on-prem gateway's mTLS port, reached over the private link).
+# Sends outbound only. Strips prompt/completion content, and keeps a disk queue so a link outage delays
+# telemetry instead of dropping it. No sampling here: the on-prem tier decides per trace.
+extensions:
+  health_check:
+    endpoint: 0.0.0.0:13133
+  file_storage:
+    directory: /var/lib/otelcol/queue
+    timeout: 2s
+
+receivers:
+  otlp:
+    protocols:
+      grpc:
+        endpoint: 0.0.0.0:4317
+
+processors:
+  memory_limiter:
+    check_interval: 1s
+    limit_percentage: 80
+    spike_limit_percentage: 20
+  transform/redact:
+    error_mode: ignore
+    trace_statements:
+      - context: span
+        statements:
+          - 'delete_matching_keys(attributes, "^gen_ai\\.(prompt|completion|input\\.messages|output\\.messages|system_instructions)")'
+      - context: spanevent
+        statements:
+          - 'delete_matching_keys(attributes, "^gen_ai\\.(prompt|completion|input\\.messages|output\\.messages|system_instructions)")'
+  batch:
+    send_batch_size: 2048
+    timeout: 2s
+
+exporters:
+  otlp/onprem:
+    endpoint: ${env:ONPREM_GATEWAY_ENDPOINT}
+    compression: zstd
+    tls:
+      ca_file: /etc/otelcol/tls/onprem-ca.crt
+      cert_file: /etc/otelcol/tls/neocloud-gateway.crt
+      key_file: /etc/otelcol/tls/neocloud-gateway.key
+    sending_queue:
+      enabled: true
+      storage: file_storage
+      queue_size: 100000
+    retry_on_failure:
+      enabled: true
+      max_elapsed_time: 0 # keep retrying while the link is down; the disk queue holds the backlog
+
+service:
+  extensions: [health_check, file_storage]
+  pipelines:
+    traces:
+      receivers: [otlp]
+      processors: [memory_limiter, transform/redact, batch]
+      exporters: [otlp/onprem]
+    metrics:
+      receivers: [otlp]
+      processors: [memory_limiter, batch]
+      exporters: [otlp/onprem]
+    logs:
+      receivers: [otlp]
+      processors: [memory_limiter, batch]
+      exporters: [otlp/onprem]

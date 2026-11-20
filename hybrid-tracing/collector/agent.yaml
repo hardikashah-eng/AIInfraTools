@@ -1,0 +1,73 @@
+# OpenTelemetry Collector (contrib) agent: one per node, in both sites.
+# Env: SITE (onprem | neocloud), TIME_SERVER (an on-prem time server, as this site reaches it), GATEWAY_ENDPOINT.
+# It stamps every span, metric and log with the site and host, measures this node's clock against the shared
+# on-prem time servers (ntp receiver), and scrapes the serving engine and GPU exporters on the node.
+extensions:
+  health_check:
+    endpoint: 0.0.0.0:13133
+
+receivers:
+  otlp:
+    protocols:
+      grpc:
+        endpoint: 0.0.0.0:4317
+      http:
+        endpoint: 0.0.0.0:4318
+  # Clock offset of this node against the shared time reference (metric ntp.offset). 30 minutes is the
+  # receiver's minimum interval; for second-by-second health use clock/check-clock.sh as well.
+  ntp:
+    endpoint: ${env:TIME_SERVER}:123
+    collection_interval: 30m
+  prometheus:
+    config:
+      scrape_configs:
+        - job_name: vllm
+          scrape_interval: 15s
+          static_configs:
+            - targets: ["localhost:8000"]
+        - job_name: dcgm
+          scrape_interval: 15s
+          static_configs:
+            - targets: ["localhost:9400"]
+
+processors:
+  memory_limiter:
+    check_interval: 1s
+    limit_percentage: 80
+    spike_limit_percentage: 20
+  resourcedetection:
+    detectors: [env, system]
+    system:
+      hostname_sources: [os]
+    override: false
+  resource/site:
+    attributes:
+      - key: site
+        value: ${env:SITE}
+        action: upsert
+  batch: {}
+
+exporters:
+  otlp/gateway:
+    endpoint: ${env:GATEWAY_ENDPOINT}
+    tls:
+      insecure: true # inside the site's node network; use TLS if the gateway is reached across a boundary
+    sending_queue:
+      enabled: true
+      queue_size: 5000
+
+service:
+  extensions: [health_check]
+  pipelines:
+    traces:
+      receivers: [otlp]
+      processors: [memory_limiter, resourcedetection, resource/site, batch]
+      exporters: [otlp/gateway]
+    metrics:
+      receivers: [otlp, ntp, prometheus]
+      processors: [memory_limiter, resourcedetection, resource/site, batch]
+      exporters: [otlp/gateway]
+    logs:
+      receivers: [otlp]
+      processors: [memory_limiter, resourcedetection, resource/site, batch]
+      exporters: [otlp/gateway]
