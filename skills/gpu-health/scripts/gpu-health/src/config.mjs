@@ -92,6 +92,18 @@ export const DEFAULTS = {
     'resize': 'webhook', 'repartition': 'webhook', 'firmware-align': 'webhook', 'fabric-restart': 'webhook',
   },
   ingest: { mappings: {} },   // per vendor, merged over vendors.<v>.mapping: { nvidia: { fields: { METRIC: [field, scale] }, node: [labels], ... } }
+  // Flakiness dashboard (gpu-health flakiness): see src/flakiness.mjs.
+  flakiness: {
+    windowDays: 60,           // history to look back over
+    bounceDays: 7,            // failing again within this many days of returning to service is a bounce
+    holdDays: [7, 30],        // a repair holds if the GPU stays in service this long
+    rmaHardFailures: 3,       // hard failures in the window that make a GPU an RMA candidate
+    warnHours: 72,            // a hard failure counts as warned if the GPU was suspect within this many hours before
+    cohortRatio: 2,           // a group failing at this multiple of the fleet rate is flagged…
+    cohortMinDevices: 3,      // …when at least this many of its GPUs failed (one bad GPU is not a cohort)
+    minRepairs: 3,            // repairs needed before judging whether a repair kind holds
+    lostHoursPerFailure: 1,   // GPU-hours lost per GPU of a job when a device failure kills it (when results don't say)
+  },
   notify: { webhook: '' }, // Lark/Feishu or Slack incoming-webhook URL; empty = print only
 };
 

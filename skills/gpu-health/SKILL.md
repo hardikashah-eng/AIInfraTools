@@ -1,6 +1,6 @@
 ---
 name: gpu-health
-description: Checks GPU and accelerator fleet health and efficiency from NVIDIA DCGM, AMD, SambaNova or Google Cloud TPU telemetry, including mixed fleets. It finds failing and soon-to-fail devices from XID and vendor fault codes, ECC and row-remap trends, HBM temperature, throttling, power brake, PCIe/NVLink/XGMI errors, telemetry gaps and silent data corruption. It also finds stragglers slowing training, idle or oversized GPU allocations with $/week savings, ranks failure risk and measures fragmentation. It proposes fixes (quarantine, diagnostics, reset, drain, swap at checkpoint, scale in, reclaim) in an approval queue, and runs approved fixes as a dry run unless explicitly made live. Use for GPU health checks, deciding which GPUs to quarantine or repair, GPU utilization, waste and savings reports, finding stragglers, or acting on GPU alerts in NVIDIA or AMD clusters.
+description: Checks GPU and accelerator fleet health and efficiency from NVIDIA DCGM, AMD, SambaNova or Google Cloud TPU telemetry, including mixed fleets. It finds failing and soon-to-fail devices from XID and vendor fault codes, ECC and row-remap trends, HBM temperature, throttling, power brake, PCIe/NVLink/XGMI errors, telemetry gaps and silent data corruption. It also finds flaky GPUs that keep failing after repair, repairs that don't hold and groups of GPUs that fail together. It finds stragglers slowing training, idle or oversized GPU allocations with $/week savings, ranks failure risk and measures fragmentation. It proposes fixes (quarantine, diagnostics, reset, drain, swap at checkpoint, scale in, reclaim) in an approval queue, and runs approved fixes as a dry run unless explicitly made live. Use for GPU health checks, deciding which GPUs to quarantine or repair, GPU utilization, waste and savings reports, finding stragglers, or acting on GPU alerts in NVIDIA or AMD clusters.
 ---
 
 # GPU health
@@ -76,6 +76,23 @@ Requires Node.js 20+. Paths below are relative to this skill's folder. The CLI i
 - **Say what can't be seen.** When `coverage` lists blind checks for a vendor (Cloud TPU and SambaNova report no temperature, power or ECC), say so when you report that vendor's devices as healthy, and suggest diags, probes or fault events to cover the gap.
 - **Repairs differ by vendor.** The queue only proposes what the platform can do: `amd-smi` resets on AMD, a person with SNFM on SambaNova, and on Cloud TPU no device reset at all (restart or recreate the TPU VM, then a support case). Steps a person must do are webhook messages that say what to do. Don't suggest commands outside the queue to make up for it.
 - Vendor profiles, fault codes and how to add a vendor are in [references/VENDORS.md](references/VENDORS.md).
+
+## Flakiness
+
+Use this when asked which GPUs keep failing, whether repairs are working, or whether failures share a cause.
+
+```bash
+node scripts/gpu-health/tools/gpu-health.mjs flakiness --state ./gh --json
+node scripts/gpu-health/tools/gpu-health.mjs flakiness --state ./gh --format html --out flakiness.html
+```
+
+The JSON has `totals`, `devices` (the top 20 by score, each with a `verdict`), `repairs`, `hotCohorts` and `badput`.
+
+1. **Lead with the verdicts.** Report RMA candidates first, then flaky GPUs, each with its counts: exits, bounces (failed again within a week of coming back), diag passes followed by a failure, and device-caused job failures.
+2. **Repairs.** Point out repair kinds marked "rarely holds". For that fault class the next ladder step is the better first step. Say when there are too few repairs to judge.
+3. **Cohorts.** A flagged node, site, SKU or firmware means look for a shared cause before replacing parts one by one.
+4. **Limits.** History only covers the time gpu-health has been running. Job-failure cost is estimated unless the job-end results carry `lostGpuHours`. Say so when it matters.
+5. **Propose, don't act.** RMA and other changes still go through the action queue and its rules. Thresholds are in [references/FLAKINESS.md](references/FLAKINESS.md).
 
 ## Risk triage
 
