@@ -37,6 +37,10 @@ The full field list is in [docs/DATA-LAYER.md](docs/DATA-LAYER.md).
 
 `fleetops calibrate` fits FleetScope pools and the Inference Sizer to the measurements in the store, keeps each fit as a profile the tools read (`calibrate apply` for FleetScope graphs, `--calibration` for the sizer), checks each fit against held-out measurements, and raises drift records when new data leaves the acceptance bar. See [docs/CALIBRATION.md](docs/CALIBRATION.md), including results on MLPerf Inference v5.0: the sizer's spec-sheet defaults asked for 16 GPUs where the measured H100 and H200 systems used 8, and the calibrated profiles predict 8.
 
+## Root-cause analysis
+
+`fleetops rca` finds incidents (job-failure spikes, serving latency regressions) and ranks their likely causes with rules over the store: workload, hardware, change, infrastructure, KV-cache pressure, load and monitoring gaps. Every hypothesis cites its evidence and says how to confirm it; `rca eval` measures top-1/top-3 accuracy on labeled incidents. On the Philly week it finds six failure spikes and traces each to one tenant's retry storm across 100+ machines, with the GPUs ruled out. See [docs/RCA.md](docs/RCA.md).
+
 ## Public data
 
 `tools/fetch-public-data.sh DATA_DIR STORE_DIR` downloads the public traces used to validate this work and loads them into a store:
@@ -63,6 +67,7 @@ src/adapters/public.mjs  Azure LLM traces, MLPerf summaries, AcmeTrace
 src/adapters/time.mjs    timestamps with zones and US Pacific daylight saving
 src/export.mjs           store → gpu-health inputs, FleetScope trace CSV
 src/calibrate.mjs        FleetScope pool and Inference Sizer fits, held-out checks, drift, profiles
+src/rca.mjs              incident detection, causal rules, ranked hypotheses with evidence, evaluation
 tools/fleetops.mjs       CLI
 tools/fetch-public-data.sh
 ```
