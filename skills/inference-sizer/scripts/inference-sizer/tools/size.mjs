@@ -2,14 +2,15 @@
 // Inference Sizer from the command line.
 //
 //   node tools/size.mjs --model llama33-70b --gpu B200 [--set conc=800 --set tpot=25 ...]
-//                       [--input inputs.json|-] [--catalog specs/example.json] [--json] [--fleetscope graph.json]
+//                       [--input inputs.json|-] [--catalog specs/example.json] [--calibration profile.json] [--json] [--fleetscope graph.json]
 //   node tools/size.mjs --model llama33-70b --compare B200,H200,MI300X [--json]   # same targets on several GPUs, cheapest first
 //   node tools/size.mjs --list [--json]                                           # GPU and model ids (with specs in JSON)
 //
 // --input takes a JSON object of inputs ({ "model": "...", "gpu": "...", "conc": 800, "tpot": 25, ... }; "-" reads stdin).
 // --set takes any input name from the page (see docs/METHOD.md) and wins over --input. Percentages are whole numbers
 // except the engine efficiencies, which are fractions (effPrefill=0.4). --catalog adds or overrides GPUs and models
-// from a spec sheet or a Hugging Face config.json.
+// from a spec sheet or a Hugging Face config.json. --calibration applies measured engine efficiencies for the GPU and
+// model from a calibration profile (fleetops calibrate benchmarks); --input and --set still win over it.
 // Exit code: 0 a plan was found (for --compare: on at least one GPU), 1 none meets the targets, 2 usage error.
 import { readFileSync, writeFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
@@ -56,8 +57,20 @@ const m = models.find(x => x.id === modelId) || die(`Unknown model "${modelId}".
 const META = ['id', 'name', 'label', 'source', 'vendor', 'builtin', 'custom'];
 const coerce = v => (v === 'true' ? true : v === 'false' ? false : typeof v === 'string' && v !== '' && isFinite(+v) ? +v : v);
 
+let calibration = null;
+if (opt.calibration) { try { calibration = JSON.parse(readFileSync(opt.calibration, 'utf8')); } catch (e) { die(`--calibration: ${e.message}`); } }
+const EFF_KEYS = ['effPrefill', 'effDecodeBW', 'effDecodeComp', 'stepMs'];
+// The profile entry for this GPU and model, if the calibration has one: { key, eff: {…}, fitOn }.
+function calibrationFor(g) {
+  const p = calibration && calibration.sizer && (calibration.sizer[`${g.id}|${m.id}`] || calibration.sizer[`${g.id}|*`]);
+  if (!p) return null;
+  return { key: calibration.sizer[`${g.id}|${m.id}`] ? `${g.id}|${m.id}` : `${g.id}|*`, eff: Object.fromEntries(EFF_KEYS.filter(k => typeof p[k] === 'number').map(k => [k, p[k]])), fitOn: p.fitOn || '' };
+}
+
 function settingsFor(g) {
   const s = Object.assign({}, M.SETTINGS, m, g, { model: m.id, gpu: g.id, modelLabel: m.name, gpuLabel: g.label });
+  const cal = calibrationFor(g);
+  if (cal) Object.assign(s, cal.eff);
   const apply = (k, v) => { if (!(k in s)) die(`Unknown input "${k}". Inputs: ${Object.keys(s).filter(x => !META.includes(x)).join(', ')}`); s[k] = coerce(v); };
   for (const [k, v] of Object.entries(input)) if (!['model', 'gpu', 'compare'].includes(k)) apply(k, v);
   for (const kv of opt.set) { const i = kv.indexOf('='); apply(kv.slice(0, i), kv.slice(i + 1)); }
@@ -79,6 +92,7 @@ function planFor(g) {
     pricePerGpuHour: s.price, costPerHour: r.chosen ? r.chosen.provGPUs * s.price : null,
     costPerMOutputTokens: r.econ.perMOut, tpotSensitivity: r.sens,
     floors: { tpotS: r.tpotFloor, ttftS: r.ttftFloor },
+    calibration: (() => { const c = calibrationFor(g); return c ? { profile: c.key, fitOn: c.fitOn, efficiencies: Object.fromEntries(EFF_KEYS.map(k => [k, s[k]])) } : null; })(),
   };
   return { s, r, out };
 }
@@ -111,6 +125,7 @@ else {
   console.log(`  TTFT ${ms(out.estimates.ttftAvgS)} avg / ${ms(out.estimates.ttftPeakS)} peak prompt; TPOT ${ms(out.estimates.tpotS)} (targets ${s.ttft} / ${s.tpot} ms)`);
   if (isFinite(out.costPerMOutputTokens)) console.log(`  $${out.costPerMOutputTokens.toFixed(2)} per 1M output tokens at $${s.price}/GPU-hr`);
   console.log(`  ${r.reason}`);
+  if (out.calibration) console.log(`  calibrated efficiencies (${out.calibration.profile}, fit on ${out.calibration.fitOn || 'measurements'}): ${Object.entries(out.calibration.efficiencies).map(([k, v]) => `${k} ${v}`).join(', ')}`);
 }
 if (opt.fleetscope) {
   const x = X.toGraph(r);

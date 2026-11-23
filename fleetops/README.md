@@ -33,6 +33,10 @@ The store is a directory with one folder per record kind and one file per UTC da
 
 The full field list is in [docs/DATA-LAYER.md](docs/DATA-LAYER.md).
 
+## Calibration
+
+`fleetops calibrate` fits FleetScope pools and the Inference Sizer to the measurements in the store, keeps each fit as a profile the tools read (`calibrate apply` for FleetScope graphs, `--calibration` for the sizer), checks each fit against held-out measurements, and raises drift records when new data leaves the acceptance bar. See [docs/CALIBRATION.md](docs/CALIBRATION.md), including results on MLPerf Inference v5.0: the sizer's spec-sheet defaults asked for 16 GPUs where the measured H100 and H200 systems used 8, and the calibrated profiles predict 8.
+
 ## Public data
 
 `tools/fetch-public-data.sh DATA_DIR STORE_DIR` downloads the public traces used to validate this work and loads them into a store:
@@ -58,6 +62,7 @@ src/adapters/philly.mjs  Microsoft Philly traces
 src/adapters/public.mjs  Azure LLM traces, MLPerf summaries, AcmeTrace
 src/adapters/time.mjs    timestamps with zones and US Pacific daylight saving
 src/export.mjs           store → gpu-health inputs, FleetScope trace CSV
+src/calibrate.mjs        FleetScope pool and Inference Sizer fits, held-out checks, drift, profiles
 tools/fleetops.mjs       CLI
 tools/fetch-public-data.sh
 ```
