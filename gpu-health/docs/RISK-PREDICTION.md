@@ -4,6 +4,10 @@ Design for taking gpu-health's risk ranking further: each GPU gets a calibrated 
 
 Editable board: [GPU Failure Prediction & Risk-Aware Scheduling](https://claude.ai/artifact/EJ3a1712BQkfcQUFGsN9Dk)
 
+![GPU failure prediction and risk-aware scheduling](img/risk-prediction.svg)
+
+The same diagram as Mermaid, for editing in the repo:
+
 ```mermaid
 flowchart LR
   subgraph S1["1 · Signals"]
