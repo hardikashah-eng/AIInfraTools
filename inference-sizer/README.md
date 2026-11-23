@@ -24,7 +24,10 @@ node tools/size.mjs --model deepseek-v3 --gpu B200 --fleetscope ../fleetscope/sc
 node tools/size.mjs --model llama33-70b --compare B200,H200,MI300X --set tpot=25   # same targets on several GPUs, cheapest first
 echo '{"model":"llama33-70b","gpu":"H200","conc":400}' | node tools/size.mjs --input - --json
 node tools/size.mjs --list --json                              # full GPU and model specs, and every input name
+node tools/size.mjs --model llama33-70b --gpu H200 --set conc=800 --calibration profile.json   # measured efficiencies
 ```
+
+**Calibration.** The engine efficiencies (`effPrefill`, `effDecodeBW`, `effDecodeComp`) default to conservative spec-sheet values. `--calibration FILE` replaces them with values fitted to measurements for the same GPU and model. Make the file with `fleetops calibrate benchmarks` from MLPerf or `benchmark_serving` results. `--input` and `--set` still win, and the output says which profile was used. On MLPerf Inference v5.0 Llama 2 70B server runs, the defaults asked for twice the GPUs the measured 8-GPU systems used; see [fleetops/docs/CALIBRATION.md](../fleetops/docs/CALIBRATION.md).
 
 Develop: `npm test`, then `npm run build` to rebuild `dist/index.html` from `src/`.
 

@@ -58,6 +58,8 @@ Requires Node.js 20+. Paths below are relative to this skill's folder. The CLI i
 
 Pass `--catalog FILE`, where FILE is a Hugging Face `config.json` or a spec sheet (JSON or CSV), to add or override models and GPUs. The format and an example are in [references/SPEC-SHEETS.md](references/SPEC-SHEETS.md) and `assets/example.json`. Check the result with `--list --json`.
 
+If the user has a calibration profile (from `fleetops calibrate benchmarks`), pass `--calibration FILE`: it replaces the default engine efficiencies with measured ones for that GPU and model. The JSON's `calibration` field shows which profile entry was used. Say so when you report the plan, since the defaults are conservative and calibrated plans can need far fewer GPUs.
+
 ## Exit codes
 
 - 0: a plan was found (for `--compare`, on at least one GPU).
