@@ -103,7 +103,7 @@ When a whole node's telemetry thins, the GPUs aren't blamed: one exporter check 
 - **Training:** `swap-at-checkpoint` labels the node so your launcher or elastic agent checkpoints and restarts without it. The job never crashes on the GPU.
 - **Inference:** `drain-inference` flips the replica's `gpu-health.aiinfra/serving` label so the Service stops sending it new requests while in-flight ones finish. Select on that label in your Service, and set it to `"true"` in the pod template. The reason text warns when the replica is the only one.
 
-**Risk** is a rules-first score that combines the signals above with spare rows used and past quarantines. Exact failure times are hard to predict, but a ranking is useful. Once quarantine outcomes accumulate, swap in a learned ranker with the same interface (`src/risk.mjs`).
+**Risk** is a rules-first score that combines the signals above with spare rows used and past quarantines. Exact failure times are hard to predict, but a ranking is useful. Once quarantine outcomes accumulate, swap in a learned ranker with the same interface (`src/risk.mjs`). The plan for calibrated failure probabilities, risk tiers that keep critical jobs on low-risk GPUs, and a test suite that finds weak GPUs is in [RISK-PREDICTION.md](docs/RISK-PREDICTION.md).
 
 ## Actions and approval
 

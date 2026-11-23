@@ -69,6 +69,20 @@ Requires Node.js 20+. Paths below are relative to this skill's folder. The CLI i
    - `receipt JOB --json` shows what one job was given vs what it used.
    - `serve` starts an approval page for people, with per-person tokens.
 
+## Risk triage
+
+Use this when asked which GPUs are likely to fail, whether a GPU is safe for a critical job, or where to place one.
+
+1. **Rank.** Run `analyze` as above. The `risk` list in the JSON holds up to 10 GPUs scoring 0.05 or more, highest first. Each has `score`, `tier` (low below 0.2, medium below 0.5, high from 0.5) and `why`. GPUs already quarantined, in repair or in RMA are left out.
+2. **Explain.** Give the top GPUs' `why` strings in plain terms, strongest first. The score is a rules-based ranking, not a calibrated failure probability: use it to compare GPUs, and never present it as "an X% chance of failing".
+3. **Keep critical work on low-risk GPUs.**
+   - Critical or large synchronous jobs: only `serving` GPUs that are tier `low` or not in the list.
+   - Tier `medium`: preemptible or checkpointed work.
+   - Tier `high`: the queue already proposes `avoid-large-jobs` and `deep-diag-next-boundary`, plus `swap-at-checkpoint` or `drain-inference` for jobs on it.
+   - A job's exposure: estimate it as 1 − ∏(1 − score) over its GPUs, counting GPUs missing from the list as 0. Present it as a rough comparison between placements, not a probability.
+4. **Propose, don't act.** List the relevant open action ids with what each does. The rules for acting on a cluster above apply.
+5. **Finding weak GPUs.** If asked for a burn-in or a test that finds GPUs likely to fail, use the test suite in [references/RISK-PREDICTION.md](references/RISK-PREDICTION.md#test-workloads-that-find-weak-gpus). Its results go back in through `--probes` and `--results`. Calibrated tiers, job risk budgets and the learned model in that file are planned, not built: say so if asked for them.
+
 ## What the GPU states mean
 
 - `serving`: the GPU takes new jobs.
