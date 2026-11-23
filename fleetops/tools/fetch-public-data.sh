@@ -27,6 +27,11 @@ for sys in closed/NVIDIA/results/DGX-H100_H100-SXM-80GBx8_TRT closed/NVIDIA/resu
   p="$sys/llama2-70b-99/Server/performance/run_1/mlperf_log_summary.txt"
   mkdir -p "mlperf/$(dirname "$p")"; [ -f "mlperf/$p" ] || curl -fsSL -o "mlperf/$p" "$MLP/$p"
 done
+# the low-latency ("interactive") runs on the same systems: held out to check calibrations fitted on the runs above
+for sys in closed/NVIDIA/results/H200-SXM-141GBx8_TRT closed/NVIDIA/results/B200-SXM-180GBx8_TRT; do
+  p="$sys/llama2-70b-interactive-99/Server/performance/run_1/mlperf_log_summary.txt"
+  mkdir -p "mlperf/$(dirname "$p")"; [ -f "mlperf/$p" ] || curl -fsSL -o "mlperf/$p" "$MLP/$p"
+done
 
 [ -f acme_trace_kalos.csv ] || curl -fsSL -o acme_trace_kalos.csv https://raw.githubusercontent.com/InternLM/AcmeTrace/main/data/job_trace/trace_kalos.csv
 
