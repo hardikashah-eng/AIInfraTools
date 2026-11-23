@@ -1,0 +1,3 @@
+NodeName=gpu01 Arch=x86_64 CPUTot=192 Gres=gpu:h100:8 State=IDLE
+NodeName=gpu02 Arch=x86_64 CPUTot=192 Gres=gpu:mi300x:8 State=MIXED
+NodeName=cpu01 Arch=x86_64 CPUTot=64 Gres=(null) State=IDLE

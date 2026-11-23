@@ -1,0 +1,4 @@
+JobID|JobName|State|ExitCode|Start|End|NodeList|AllocTRES
+101|train|NODE_FAIL|0:0|2026-11-20T10:00:00|2026-11-20T12:00:00|gpu[01-02]|cpu=64,gres/gpu:h100=16,node=2
+102|eval|COMPLETED|0:0|2026-11-20T10:00:00|2026-11-20T10:30:00|gpu01|cpu=8,gres/gpu=1
+103|prep|RUNNING|0:0|2026-11-20T10:00:00|Unknown|gpu01|cpu=8

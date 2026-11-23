@@ -1,0 +1,3 @@
+job_id,user,node_num,gpu_num,cpu_num,mem_per_pod_GB,shared_mem_per_pod,type,state,submit_time,start_time,end_time,fail_time,stop_time,duration,queue,gpu_time
+j1,u1,8,64,960,1000,100.0,Pretrain,NODE_FAIL,2023-05-17 11:00:58+00:00,2023-05-17 11:01:08+00:00,2023-05-17 12:01:16+00:00,2023-05-17 12:01:16+00:00,,3608,10.0,230912.0
+j2,u1,1,8,120,100,10.0,SFT,COMPLETED,2023-05-17 11:00:58+00:00,2023-05-17 11:01:08+00:00,2023-05-17 11:31:08+00:00,,,1800,10.0,14400.0

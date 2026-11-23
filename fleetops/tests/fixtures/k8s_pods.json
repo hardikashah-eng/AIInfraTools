@@ -1,0 +1,3 @@
+{"items":[{"metadata":{"name":"chat-7d9f","namespace":"serving","labels":{"app":"chat","team":"serving"},"ownerReferences":[{"kind":"ReplicaSet","name":"chat-7d9"}]},
+  "spec":{"nodeName":"gpu-a","containers":[{"resources":{"limits":{"nvidia.com/gpu":"4"}}}]},"status":{"phase":"Running","startTime":"2026-11-20T10:00:00Z"}},
+ {"metadata":{"name":"web-1","namespace":"web","labels":{"app":"web"}},"spec":{"nodeName":"cpu-a","containers":[{"resources":{}}]},"status":{"phase":"Running"}}]}

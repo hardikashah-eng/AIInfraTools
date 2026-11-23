@@ -1,0 +1,5 @@
+@@0123456789abcdef|1763640000|alice|Bump vLLM image to 0.11.2
+clusters/prod/serving/chat/deployment.yaml
+
+@@fedcba9876543210|1763643600|bob|Upgrade NVIDIA driver to 575
+clusters/prod/nodes/driver.yaml

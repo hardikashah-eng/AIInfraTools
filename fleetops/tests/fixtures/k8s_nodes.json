@@ -1,0 +1,2 @@
+{"items":[{"metadata":{"name":"gpu-a","labels":{"nvidia.com/gpu.product":"NVIDIA-H100-80GB-HBM3","topology.kubernetes.io/zone":"us-west-2a"}},"status":{"capacity":{"cpu":"192","nvidia.com/gpu":"8"}}},
+ {"metadata":{"name":"cpu-a","labels":{}},"status":{"capacity":{"cpu":"64"}}}]}

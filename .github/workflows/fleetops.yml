@@ -1,0 +1,23 @@
+# Runs the fleetops tests.
+name: fleetops
+on:
+  pull_request:
+    paths:
+      - 'fleetops/**'
+      - 'gpu-health/src/**'
+      - 'fleetscope/src/**'
+      - 'inference-sizer/src/**'
+      - '.github/workflows/fleetops.yml'
+permissions:
+  contents: read
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Tests
+        working-directory: fleetops
+        run: npm test
