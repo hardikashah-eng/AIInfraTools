@@ -120,3 +120,39 @@ export function demoCluster() {
 }
 
 export const toJsonl = arr => arr.map(x => JSON.stringify(x)).join('\n') + '\n';
+
+// Mixed-vendor demo: one node each of AMD MI300X, SambaNova RDUs and Cloud TPU chips, two days of telemetry.
+//   a1/1  AMD GPU with an uncorrectable RAS error (fault event)        → quarantined; first repair step amd-smi reset
+//   s1/2  SambaNova RDU removed by the runtime (FTYPE_RDU_REMOVED)     → quarantined
+//   t1/3  TPU chip reported unhealthy                                  → quarantined; no device reset on Cloud TPU
+//   t1/0  planned TPU host maintenance                                 → ignored (not a device fault)
+// Each vendor reports only what its real telemetry has, so the coverage table shows each one's blind spots.
+export function demoMixed({ now = DEMO_NOW, days = 2, step = 600, seed = 21 } = {}) {
+  const R = rng(seed), samples = [];
+  const j = (v, a) => +Math.max(0, Math.min(1, v + (R() - 0.5) * 2 * a)).toFixed(3);
+  const sbe = {};
+  for (let t = now - days * 86400; t <= now; t += step) {
+    for (let d = 0; d < 4; d++) {
+      const g = String(d), k = 'a1/' + g;
+      sbe[k] = (sbe[k] || 3) + (R() < 0.003 ? 1 : 0);
+      const sm = j(0.78, 0.04), powerW = Math.round(750 * (0.2 + 0.7 * sm));
+      samples.push({ t, site: 'onprem', node: 'a1', gpu: g, vendor: 'amd', kind: 'gpu', sku: 'MI300X', sm, tensor: sm, dram: j(0.4, 0.05), memUsedGB: 170, memTotalGB: 192,
+        clockMHz: 2100, tempC: +(40 + 30 * sm + (R() - 0.5) * 2).toFixed(1), memTempC: +(48 + 30 * sm + (R() - 0.5) * 2).toFixed(1), powerW,
+        eccSbeTotal: Math.floor(sbe[k]), eccDbeTotal: 0, linkErrTotal: 0, linkUeTotal: 0, pcieGen: 5, pcieGenMax: 5, faults: [] });
+      samples.push({ t, site: 'onprem', node: 's1', gpu: g, vendor: 'sambanova', kind: 'rdu', sku: 'RDU', tensor: j(0.35, 0.05), sm: j(0.6, 0.05), clockMHz: 1600, faultCountTotal: 4, faults: [] });
+      samples.push({ t, site: 'gcp', node: 't1', gpu: g, vendor: 'tpu', kind: 'tpu', sku: 'v5p', tensor: j(0.5, 0.05), sm: j(0.9, 0.03), memUsedGB: 80, memTotalGB: 95, faults: [] });
+    }
+  }
+  const jobs = [
+    { id: 'train-amd', class: 'training', owner: 'pretrain-team', namespace: 'train', start: now - 3 * 86400, gpus: [0, 1, 2, 3].map(i => ({ node: 'a1', gpu: String(i) })) },
+    { id: 'serve-rdu', class: 'inference', owner: 'serving-team', namespace: 'serving', gpusPerReplica: 4, start: now - 3 * 86400, gpus: [0, 1, 2, 3].map(i => ({ node: 's1', gpu: String(i) })) },
+    { id: 'train-tpu', class: 'training', owner: 'research', namespace: 'train', start: now - 3 * 86400, gpus: [0, 1, 2, 3].map(i => ({ node: 't1', gpu: String(i) })) },
+  ];
+  const results = [
+    { t: now - 2 * 3600, kind: 'fault', node: 'a1', gpu: '1', code: 'ras_uncorrectable', detail: 'UMC uncorrectable error' },
+    { t: now - 3600, kind: 'fault', node: 's1', gpu: '2', code: 'FTYPE_RDU_REMOVED', detail: 'SNFM: RDU removed' },
+    { t: now - 90 * 60, kind: 'fault', node: 't1', gpu: '3', code: 'tpu_chip_unhealthy' },
+    { t: now - 5 * 3600, kind: 'fault', node: 't1', gpu: '0', code: 'tpu_maintenance' },
+  ];
+  return { samples, jobs, results };
+}

@@ -77,4 +77,8 @@ test('gpu-health: demo, analyze digest, approval needs a name, execute is a dry 
   assert.equal(ex.executed[0].outcome, 'dry-run'); assert.equal(ex.executed[0].commands[0][0], 'kubectl');
   const live = json(d, [cli, 'actions', 'execute', id, '--live', ...st, '--json']);
   assert.match(live.note, /still a dry-run/); assert.equal(live.executed[0].outcome, 'dry-run');
+  const mixed = json(d, [cli, 'demo', '--mixed', '--out', 'mixed', '--json']);
+  assert.deepEqual(mixed.gpusNotServing.map(g => g.gpu).sort(), ['a1/1', 's1/2', 't1/3']);
+  assert.ok(mixed.coverage.find(c => c.vendor === 'tpu').blind.includes('ecc'));
+  assert.ok(!mixed.openActions.some(a => a.id.startsWith('gpu-reset:t1/')));
 });

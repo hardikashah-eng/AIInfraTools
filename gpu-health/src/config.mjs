@@ -1,4 +1,5 @@
 // Defaults. Override any part with a JSON config file (deep-merged). See docs/CONFIG.md.
+import { VENDORS } from './vendors.mjs';
 
 export const DEFAULTS = {
   pricePerGpuHour: { default: 4.0 },               // by sku; used for savings
@@ -31,25 +32,22 @@ export const DEFAULTS = {
     signalCooldownMin: 120,   // a cleared soft signal stays quiet this long
     sdcSoft: 1, sdcHard: 2, sdcWindowDays: 7, // silent-data-corruption events per GPU: suspect / quarantine
   },
+  // Fault codes that mean the same on every vendor. Vendor-specific codes (NVIDIA XIDs, AMD RAS events, SambaNova and
+  // TPU fault types) live in the vendor profiles (src/vendors.mjs). Codes listed here win over a vendor's, so this is
+  // also where to override one: fault code -> { class, severity: hard (quarantine now) | soft (suspect) | ignore }.
   faults: {
-    // fault code -> { class, severity: hard (quarantine now) | soft (Suspect) }
-    xid48: { class: 'ecc', severity: 'hard' }, xid64: { class: 'ecc', severity: 'hard' }, xid95: { class: 'ecc', severity: 'hard' },
-    xid94: { class: 'ecc', severity: 'hard' }, xid63: { class: 'ecc', severity: 'soft' }, xid92: { class: 'ecc', severity: 'soft' },
-    xid79: { class: 'bus', severity: 'hard' }, xid74: { class: 'link', severity: 'hard' },
-    xid119: { class: 'firmware', severity: 'hard' }, xid120: { class: 'firmware', severity: 'hard' },
-    xid13: { class: 'app', severity: 'ignore' }, xid31: { class: 'app', severity: 'ignore' }, xid43: { class: 'app', severity: 'ignore' },
-    ras_uncorrectable: { class: 'ecc', severity: 'hard' }, ras_correctable: { class: 'ecc', severity: 'soft' },
-    gpu_lost: { class: 'bus', severity: 'hard' },
-    xid145: { class: 'link', severity: 'hard' }, xid109: { class: 'app', severity: 'soft' }, // 109 can be a driver issue: confirm with a diag
+    gpu_lost: { class: 'bus', severity: 'hard' }, device_lost: { class: 'bus', severity: 'hard' },
   },
+  vendors: VENDORS,
   // Remediation ladder by fault class: the cheapest step first. Each step is an action kind (see executors).
   ladder: {
     ecc: ['gpu-reset', 'node-reboot', 'rma'], bus: ['node-reboot', 'rma'], link: ['fabric-restart', 'node-reboot', 'rma'],
     firmware: ['gpu-reset', 'firmware-align', 'rma'], pcie: ['node-reboot', 'reseat', 'rma'], thermal: ['facilities-check', 'reseat', 'rma'],
     slow: ['config-reset', 'gpu-reset', 'reseat', 'rma'], stale: ['exporter-check'], default: ['gpu-reset', 'node-reboot', 'rma'],
     power: ['facilities-check', 'reseat', 'rma'], telemetry: ['exporter-check', 'node-reboot', 'rma'], sdc: ['gpu-reset', 'rma'],
+    platform: ['gpu-reset', 'node-reboot', 'rma'],
   },
-  diagLevelByClass: { ecc: 3, bus: 3, link: 3, firmware: 2, pcie: 2, thermal: 3, slow: 3, stale: 1, power: 3, telemetry: 2, sdc: 4, default: 2 },
+  diagLevelByClass: { ecc: 3, bus: 3, link: 3, firmware: 2, pcie: 2, thermal: 3, slow: 3, stale: 1, power: 3, telemetry: 2, sdc: 4, platform: 3, default: 2 },
   // What may happen without a person. auto = executes at once; approve = queued for approval; never = suggestion only.
   policy: {
     dryRun: true,             // commands run only with this false AND --live
@@ -93,7 +91,7 @@ export const DEFAULTS = {
     'notify-owner': 'webhook', 'rma': 'webhook', 'reseat': 'webhook', 'facilities-check': 'webhook', 'exporter-check': 'webhook',
     'resize': 'webhook', 'repartition': 'webhook', 'firmware-align': 'webhook', 'fabric-restart': 'webhook',
   },
-  ingest: { mappings: {} },   // per vendor: { nvidia: { fields: { METRIC: [field, scale] }, node: [labels], ... } }
+  ingest: { mappings: {} },   // per vendor, merged over vendors.<v>.mapping: { nvidia: { fields: { METRIC: [field, scale] }, node: [labels], ... } }
   notify: { webhook: '' }, // Lark/Feishu or Slack incoming-webhook URL; empty = print only
 };
 

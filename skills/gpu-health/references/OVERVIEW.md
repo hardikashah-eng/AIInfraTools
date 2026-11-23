@@ -2,7 +2,7 @@
 
 Finds unhealthy and wasted GPUs, suggests what to do about each one, and runs the fix once it's approved.
 
-It reads the GPU telemetry you already collect (NVIDIA dcgm-exporter, AMD device-metrics-exporter, or normalized JSON lines) and answers four questions:
+It reads the accelerator telemetry you already collect (NVIDIA dcgm-exporter, AMD device-metrics-exporter, SambaNova's hardware-monitoring exporter, Cloud TPU metrics from libtpu, or normalized JSON lines) and answers four questions. Fleets can mix vendors: see [VENDORS.md](VENDORS.md).
 
 1. **Is this GPU healthy enough for the next job?** Each GPU has a lifecycle state, and only `serving` GPUs take new work. Missing data counts as unhealthy (fail-closed).
 2. **Is the allocation used?** It compares what each job was given with what it used (compute, memory bandwidth, and peak memory) and works out the savings in $/week.
@@ -18,6 +18,7 @@ No dependencies: Node 20+.
 ```bash
 cd gpu-health
 node tools/gpu-health.mjs demo            # 32-GPU demo fleet with planted problems → gpu-health-demo/report.html
+node tools/gpu-health.mjs demo --mixed --out mixed-demo   # AMD + SambaNova + Cloud TPU fleet, one planted fault each
 node tools/gpu-health.mjs actions list --state gpu-health-demo/state
 node tools/gpu-health.mjs actions approve scale-in:embed-svc --by you --state gpu-health-demo/state
 node tools/gpu-health.mjs actions execute --state gpu-health-demo/state     # dry-run: prints the kubectl it would run
@@ -168,18 +169,19 @@ Every command takes `--json` and prints one JSON object, for scripts and LLM age
 | `--jobs` JSON | `[{ id, class, owner, namespace, start, end?, gpusPerReplica?, gpus: [{node, gpu}] }]`, from your scheduler | efficiency, savings, owner notices |
 | `--steps` JSONL | `{ job, rank, step, t, computeMs }`, from a training-loop hook | straggler detection (best) |
 | `--probes` JSONL | `{ t, node, gpu, sku, firmware, site, gemmTflops, hbmGBs, linkGBs? }`, from a short benchmark between jobs | speed index |
-| `--results` JSONL | `{ t, node, gpu, kind: diag\|burnin\|release, pass, level?, detail? }`, written by your diag jobs; `{ t, kind: sdc, job, rank, type }` from the training loop | moving GPUs through repair; SDC |
+| `--results` JSONL | `{ t, node, gpu, kind: diag\|burnin\|release, pass, level?, detail? }`, written by your diag jobs; `{ t, kind: sdc, job, rank, type }` from the training loop; `{ t, kind: fault, node, gpu, code }` for faults from logs or a vendor's fault manager | moving GPUs through repair; SDC; faults outside metrics |
 | `--cluster` JSON | `{ nodes: [{ node, gpus: [{ gpu, alloc }] }], pending: [{ job, gpus? , fraction? }] }` | fragmentation |
 
-Metric names for dcgm-exporter and AMD's exporter are in `src/ingest.mjs` (`MAPPINGS`). Check them against the exporter versions you run, and override any of them under `ingest.mappings`. AMD's default metrics expose no separate matrix-core counter, so GFX activity stands in for tensor activity. On MI300-series and later, ROCm's XGMI health field isn't evaluated, so link faults are read from the XGMI_WAFL RAS counters instead. On NVIDIA, power brake and throttling are decoded from the clock-event-reason bitmask.
+Metric names for each vendor's exporter are in its profile in `src/vendors.mjs`. Check them against the exporter versions you run, and override any of them under `ingest.mappings` (or the whole profile under `vendors`; see [VENDORS.md](VENDORS.md)). AMD's default metrics expose no separate matrix-core counter, so GFX activity stands in for tensor activity. On MI300-series and later, ROCm's XGMI health field isn't evaluated, so link faults are read from the XGMI_WAFL RAS counters instead. On NVIDIA, power brake and throttling are decoded from the clock-event-reason bitmask.
 
 ### Commands the executors run
 
-The defaults target Kubernetes (`kubectl label/taint/drain/scale`), `ssh` for `nvidia-smi -r` and reboots, a diag Job image you supply, and a webhook (Lark/Feishu or Slack) for owner notices, RMA tickets and other steps that need a person. Replace them for Slurm (`scontrol update nodename=… state=drain reason=…`), AMD (`amd-smi reset`, AGFHC), or your own tooling in the config. The process needs RBAC to label, taint and drain nodes and to scale deployments; [deploy/rbac.yaml](deploy/rbac.yaml) is a starting point.
+The defaults target Kubernetes (`kubectl label/taint/drain/scale`), `ssh` for device resets (`nvidia-smi -r` on NVIDIA, `amd-smi reset --gpureset` on AMD) and reboots, a diag Job image you supply, and a webhook (Lark/Feishu or Slack) for owner notices, RMA tickets and other steps that need a person. On SambaNova and Cloud TPU, steps that only the vendor's tools or the provider can do are posted as a webhook saying what to do. Replace any of them for Slurm (`scontrol update nodename=… state=drain reason=…`), AGFHC or your own tooling in the config. The process needs RBAC to label, taint and drain nodes and to scale deployments; [deploy/rbac.yaml](deploy/rbac.yaml) is a starting point.
 
 ## Files
 
 ```
+src/vendors.mjs        vendor profiles: metric maps, fault codes, executors, unsupported actions, coverage
 src/ingest.mjs         exporter text and JSONL → normalized samples
 src/health.mjs         lifecycle state machine, signals, circuit breaker, strike rule
 src/efficiency.mjs     effective utilization, verdicts, stragglers, speed index
@@ -192,4 +194,5 @@ src/report.mjs         Markdown / HTML report, job receipts
 src/server.mjs         approval page and API
 src/synth.mjs          demo fleet
 tools/gpu-health.mjs   CLI
+tools/tpu-collect.py   Cloud TPU collector: libtpu metrics → JSONL samples
 ```
