@@ -1,0 +1,16 @@
+================================================
+MLPerf Results Summary
+================================================
+SUT name : PySUT
+Scenario : Server
+Mode     : PerformanceOnly
+Completed samples per second    : 100.00
+Completed tokens per second: 29000.00
+Result is : VALID
+50.00 percentile first token latency (ns)   : 400000000
+99.00 percentile first token latency (ns)   : 1000000000
+50.00 percentile time to output token (ns)   : 150000000
+99.00 percentile time to output token (ns)   : 180000000
+target_qps : 101.5
+ttft_latency (ns): 2000000000
+tpot_latency (ns): 200000000

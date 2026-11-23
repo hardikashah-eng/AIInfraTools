@@ -1,0 +1,6 @@
+time,machineId,gpu0_util,gpu1_util,gpu2_util,gpu3_util,gpu4_util,gpu5_util,gpu6_util,gpu7_util
+2017-11-08 00:00:00 PST,m1,100.0,50.0,NA,0.0,
+2017-11-08 00:01:00 PST,m1,80.0,50.0,NA,0.0,
+2017-11-08 00:02:00 PST,m1,60.0,NA,NA,0.0,
+2017-11-08 00:00:00 PST,m2,10.0,20.0,
+2017-11-08 00:01:00 PST,m2,30.0,40.0,
