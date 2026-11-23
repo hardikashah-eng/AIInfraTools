@@ -24,3 +24,8 @@ jobs:
           node tools/gpu-health.mjs demo --out /tmp/gh-demo
           test -s /tmp/gh-demo/report.html
           node tools/gpu-health.mjs actions list --state /tmp/gh-demo/state | grep -q 'scale-in:embed-svc'
+      - name: Mixed-vendor demo runs and reports coverage
+        working-directory: gpu-health
+        run: |
+          node tools/gpu-health.mjs demo --mixed --out /tmp/gh-mixed
+          grep -q 'Telemetry coverage' /tmp/gh-mixed/report.md

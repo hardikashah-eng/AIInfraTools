@@ -11,12 +11,14 @@
 //   - HBM temperature: above peers at similar power, and rising against the GPU's own history at the same power
 //   - power-brake slowdowns, thermal throttling, GPU temperature above peers
 //   - corrected-ECC rate, pending row remaps, PCIe downtraining under load, link (NVLink/XGMI) error rate
+//   - new faults in a vendor's own platform fault counter (SambaNova)
 //   - telemetry thinning on one GPU while its node-mates report normally (detachment often shows up only this way)
 //   - silent-data-corruption events from the training loop (NaN/Inf, loss or gradient spikes, replay mismatch)
 // Peers are the other GPUs on the same node running the same job when there are enough of them (same load, same
 // cooling), otherwise same-SKU GPUs at similar power. Windowed signals must fire in N of the last K windows
 // (persistence), and a signal that cleared stays quiet for a cooldown, so one noisy hour doesn't flip a GPU.
 import { indexByGpu, pct, speedIndex, intervalSec } from './efficiency.mjs';
+import { faultDef, ladderFor } from './vendors.mjs';
 
 const med = a => pct(a, 0.5);
 const n = v => (typeof v === 'number' && !Number.isNaN(v) ? v : null);
@@ -88,11 +90,11 @@ function windowSignals(m, cfg) {
   return out;
 }
 
-// SDC events (results with kind 'sdc') attributed to a GPU directly or through job + rank.
-function sdcByGpu(results, jobs) {
+// Results of one kind ('sdc', 'fault') attributed to a device directly or through job + rank.
+function resultsByGpu(results, jobs, kind) {
   const m = new Map();
   for (const r of results || []) {
-    if (r.kind !== 'sdc') continue;
+    if (r.kind !== kind) continue;
     let k = r.node != null && r.gpu != null ? r.node + '/' + r.gpu : null;
     if (!k && r.job != null && r.rank != null) { const j = (jobs || []).find(x => x.id === r.job); const g = j && j.gpus[r.rank]; if (g) k = g.node + '/' + g.gpu; }
     if (!k) continue;
@@ -108,7 +110,9 @@ export function evidence(samples, probes, cfg, now, { jobs = [], results = [], l
   const byGpu = indexByGpu(samples);
   const jobOf = jobIndex(jobs);
   const speed = speedIndex(probes);
-  const sdc = sdcByGpu(results, jobs);
+  const sdc = resultsByGpu(results, jobs, 'sdc');
+  // Fault events from logs or a vendor's fault manager (TPU, SambaNova SNFM, XIDs from dmesg): { t, kind: 'fault', node, gpu, code }
+  const faultEvents = resultsByGpu(results, jobs, 'fault');
   const full = windowMetrics(byGpu, now - lookbackH * 3600, now, jobOf);
   // persistence windows, newest first
   const winSec = h.persistWindowMin * 60;
@@ -142,14 +146,15 @@ export function evidence(samples, probes, cfg, now, { jobs = [], results = [], l
     }
     const faultT = {};
     for (const s of w) for (const f of s.faults || []) faultT[f] = Math.max(faultT[f] || 0, s.t);
-    const dbe = lastIncrease(w, 'eccDbeTotal'), linkUe = lastIncrease(w, 'linkUeTotal');
+    for (const r of faultEvents.get(k) || []) if (r.code && r.t > now - lookbackH * 3600 && r.t <= now) faultT[r.code] = Math.max(faultT[r.code] || 0, r.t);
+    const dbe = lastIncrease(w, 'eccDbeTotal'), linkUe = lastIncrease(w, 'linkUeTotal'), vendorFaults = lastIncrease(w, 'faultCountTotal');
     const t = thin.get(k) || { missing: 0, vanished: [] };
     const nt = nodeThin.get(last.node) || [];
     const sdcEvents = (sdc.get(k) || []).filter(r => r.t > now - h.sdcWindowDays * 86400 && r.t <= now);
     out.set(k, {
-      key: k, node: last.node, gpu: String(last.gpu), site: last.site || '', sku: last.sku || '', vendor: last.vendor || '', job: (jobOf.get(k) || {}).job,
+      key: k, node: last.node, gpu: String(last.gpu), site: last.site || '', sku: last.sku || '', vendor: last.vendor || '', kind: last.kind || '', job: (jobOf.get(k) || {}).job,
       lastT: last.t, intervalSec: intervalSec(arr), faults: Object.keys(faultT), faultT,
-      dbe: dbe.delta, dbeT: dbe.t, linkUe: linkUe.delta, linkUeT: linkUe.t,
+      dbe: dbe.delta, dbeT: dbe.t, linkUe: linkUe.delta, linkUeT: linkUe.t, vendorFaults: vendorFaults.delta, vendorFaultsT: vendorFaults.t,
       sbeRate: m.sbeRate || 0, linkErrRate: m.linkErrRate || 0, throttleBusy: m.throttleBusy || 0, brakeBusy: m.brakeBusy || 0,
       tempOverPeers: m.tempOverPeers || 0, memTempOverPeers: m.memTempOverPeers || 0, memTempRise, peerScope: m.peerScope,
       pcieDowntrained: !!m.pcieDowntrained, pcieNow: m.pcieNow,
@@ -168,12 +173,13 @@ export function evidence(samples, probes, cfg, now, { jobs = [], results = [], l
 export function signals(ev, cfg) {
   const h = cfg.health, out = [];
   for (const f of ev.faults) {
-    const d = cfg.faults[f] || { class: 'default', severity: 'soft' };
+    const d = faultDef(cfg, ev.vendor, f);
     if (d.severity === 'ignore') continue;
     out.push({ key: 'fault-' + f, class: d.class, severity: d.severity, why: `fault ${f}`, t: ev.faultT[f] });
   }
   if (ev.dbe > 0) out.push({ key: 'dbe', class: 'ecc', severity: 'hard', why: `${ev.dbe} uncorrectable ECC error(s)`, t: ev.dbeT });
   if (ev.linkUe > 0) out.push({ key: 'link-ue', class: 'link', severity: 'hard', why: `${ev.linkUe} uncorrectable link error(s) (NVLink/XGMI)`, t: ev.linkUeT });
+  if (ev.vendorFaults > 0) out.push({ key: 'vendor-faults', class: 'platform', severity: 'soft', why: `${ev.vendorFaults} new fault(s) in the vendor's platform fault count on ${ev.node}: check its fault log for the device`, t: ev.vendorFaultsT });
   if (ev.remapFailed > 0) out.push({ key: 'remap-failed', class: 'ecc', severity: 'hard', why: 'row remapping failed (no spare rows)', t: ev.lastT });
   if (ev.remapPending > 0) out.push({ key: 'remap-pending', class: 'ecc', severity: 'soft', why: 'row remap pending: needs a GPU reset' });
   // windowed signals: must fire in N of the K windows that have data (all of them when fewer than N have data)
@@ -220,7 +226,7 @@ export function assessHealth({ samples, probes = [], results = [], jobs = [], pr
     const watch = new Set(p.watch || []);
     const soft = sig.filter(s => s.severity === 'soft' && !(cooldown[s.key] > now) && !watch.has(s.key));
     const stale = staleKeys.includes(k);
-    const r = Object.assign({}, p, { key: k, node: e.node, gpu: String(e.gpu), sku: e.sku || p.sku || '', site: e.site || p.site || '', signals: sig, stale, evidence: e, cooldown, watch: [...watch].filter(w => sig.some(s => s.key === w)) });
+    const r = Object.assign({}, p, { key: k, node: e.node, gpu: String(e.gpu), sku: e.sku || p.sku || '', site: e.site || p.site || '', vendor: e.vendor || p.vendor || '', kind: e.kind || p.kind || '', signals: sig, stale, evidence: e, cooldown, watch: [...watch].filter(w => sig.some(s => s.key === w)) });
     const go = (state, cls, why) => {
       if (state === 'quarantined' && p.remediatedAt && now - p.remediatedAt < cfg.health.strikeWindowDays * 86400) { state = 'rma'; why = `${why}; second failure within ${cfg.health.strikeWindowDays} days of a fix`; }
       if (state !== p.state) { r.since = now; r.history = [...(p.history || []), { t: now, state, why }].slice(-20); if (state === 'quarantined') r.ladderStep = 0; }
@@ -234,7 +240,7 @@ export function assessHealth({ samples, probes = [], results = [], jobs = [], pr
       const d = latestResult(results, k, p.since, ['diag']);
       if (d && d.pass) go('burnin', p.faultClass, `diag level ${d.level || '?'} passed; burn-in next`);
       else if (d && !d.pass) {
-        const ladder = cfg.ladder[p.faultClass] || cfg.ladder.default;
+        const ladder = ladderFor(cfg, r.vendor, p.faultClass);
         r.ladderStep = Math.min((p.ladderStep || 0) + 1, ladder.length - 1);
         r.state = ladder[r.ladderStep] === 'rma' ? 'rma' : 'remediate'; r.since = now; r.why = `diag failed${d.detail ? ': ' + d.detail : ''}; next step ${ladder[r.ladderStep]}`;
         r.history = [...(p.history || []), { t: now, state: r.state, why: r.why }].slice(-20);
@@ -265,4 +271,4 @@ export function assessHealth({ samples, probes = [], results = [], jobs = [], pr
 }
 
 // Strip bulky fields before saving state.
-export const persistable = h => ({ lastRun: h.now, gpus: Object.fromEntries(Object.entries(h.gpus).map(([k, g]) => [k, { state: g.state, since: g.since, faultClass: g.faultClass, why: g.why, ladderStep: g.ladderStep || 0, remediatedAt: g.remediatedAt, watch: g.watch, cooldown: g.cooldown, signalKeys: g.signalKeys, history: g.history || [], sku: g.sku, site: g.site }])) });
+export const persistable = h => ({ lastRun: h.now, gpus: Object.fromEntries(Object.entries(h.gpus).map(([k, g]) => [k, { state: g.state, since: g.since, faultClass: g.faultClass, why: g.why, ladderStep: g.ladderStep || 0, remediatedAt: g.remediatedAt, watch: g.watch, cooldown: g.cooldown, signalKeys: g.signalKeys, history: g.history || [], sku: g.sku, site: g.site, vendor: g.vendor, kind: g.kind }])) });

@@ -4,6 +4,7 @@
 // match SAFE, so a node or job name can't smuggle in options or extra commands. Dry-run (the default) returns the
 // commands without running them.
 import { spawnSync } from 'node:child_process';
+import { executorFor } from './vendors.mjs';
 
 export const SAFE = /^[A-Za-z0-9][A-Za-z0-9._:\/=-]{0,252}$/;
 
@@ -17,17 +18,18 @@ export function fill(template, vars) {
   }));
 }
 
-export const varsOf = a => Object.assign({ node: a.node, gpu: a.gpu, job: a.job, reason: a.reasonCode }, a.params || {});
+export const varsOf = a => Object.assign({ node: a.node, gpu: a.gpu, job: a.job, vendor: a.vendor, reason: a.reasonCode }, a.params || {});
 
-export function message(a) {
-  const target = [a.job && `job ${a.job}`, a.node && `${a.node}${a.gpu != null ? '/gpu' + a.gpu : ''}`].filter(Boolean).join(' on ');
-  return `[gpu-health] ${a.kind} ${target}: ${a.reason}${a.weekly ? ` (≈$${Math.round(a.weekly)}/week)` : ''}${a.approvedBy ? ` — approved by ${a.approvedBy}` : ''}`;
+export function message(a, howTo) {
+  const target = [a.job && `job ${a.job}`, a.node && `${a.node}${a.gpu != null ? '/' + (a.vendor && a.vendor !== 'nvidia' && a.vendor !== 'amd' ? 'dev' : 'gpu') + a.gpu : ''}`].filter(Boolean).join(' on ');
+  return `[gpu-health] ${a.kind} ${target}: ${howTo ? String(a.reason).replace(/[.\s]+$/, '') + '.' : a.reason}${a.weekly ? ` (≈$${Math.round(a.weekly)}/week)` : ''}${howTo ? ` To do: ${howTo}` : ''}${a.approvedBy ? ` — approved by ${a.approvedBy}` : ''}`;
 }
 
 export function plan(a, cfg) {
-  const t = cfg.executors[a.kind];
-  if (!t) throw new Error(`no executor configured for ${a.kind}`);
+  const t = executorFor(cfg, a.vendor, a.kind);
+  if (!t) throw new Error(`no executor configured for ${a.kind}${a.vendor ? ` (${a.vendor})` : ''}`);
   if (t === 'webhook') return { webhook: true, text: message(a) };
+  if (t.webhook) return { webhook: true, text: message(a, t.webhook) }; // a step a person does: post what to do
   return { commands: t.map(argv => fill(argv, varsOf(a))) };
 }
 

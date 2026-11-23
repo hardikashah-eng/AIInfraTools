@@ -33,7 +33,7 @@ export function rankRisk(health, cfg) {
     if (!g.evidence || ['quarantined', 'remediate', 'rma'].includes(g.state)) continue; // already out of service
     const c = contributions(g.evidence, g, cfg);
     const score = 1 - c.reduce((t, x) => t * (1 - x.p), 1);
-    rows.push({ key: g.key, node: g.node, gpu: g.gpu, sku: g.sku, state: g.state, score, tier: score >= 0.5 ? 'high' : score >= 0.2 ? 'medium' : 'low', why: c.sort((a, b) => b.p - a.p).map(x => x.why) });
+    rows.push({ key: g.key, node: g.node, gpu: g.gpu, sku: g.sku, vendor: g.vendor, kind: g.kind, state: g.state, score, tier: score >= 0.5 ? 'high' : score >= 0.2 ? 'medium' : 'low', why: c.sort((a, b) => b.p - a.p).map(x => x.why) });
   }
   return rows.sort((a, b) => b.score - a.score);
 }

@@ -6,6 +6,7 @@ import { rankRisk } from './risk.mjs';
 import { fragmentation, partitionPlan } from './fragmentation.mjs';
 import { suggest } from './actions.mjs';
 import { priceFor } from './config.mjs';
+import { coverage } from './vendors.mjs';
 
 export function analyze({ samples, jobs = [], steps = [], probes = [], results = [], cluster = null, prev = { gpus: {} }, cfg, now, windowDays = 7 }) {
   if (!samples.length) throw new Error('no samples');
@@ -37,6 +38,7 @@ export function analyze({ samples, jobs = [], steps = [], probes = [], results =
   };
   const analysis = {
     generatedAt: now, summary, health, stragglers, recommendations, risk, fragmentation: frag, partitionPlan: pplan, jobs,
+    coverage: coverage(samples.filter(s => s.t >= window.from), cfg),
     jobUsage: jobStats.map(js => ({ job: js.job.id, class: js.job.class, owner: js.job.owner || '', gpus: js.gpus.length, sku: js.sku, usage: js.cls, usageText: CLASS_TEXT[js.cls],
       tensorP50: js.st.tensorP50, smP50: js.st.smP50, dramP50: js.st.dramP50, effP50: js.st.effP50, effP95: js.st.effP95, memPeakGB: js.st.memPeakGB, memTotalGB: js.st.memTotalGB, memSource: js.st.memSource, hours: js.st.hours })),
   };

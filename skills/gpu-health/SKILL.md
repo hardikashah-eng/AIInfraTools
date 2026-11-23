@@ -1,6 +1,6 @@
 ---
 name: gpu-health
-description: Checks GPU fleet health and efficiency from NVIDIA DCGM or AMD exporter telemetry. It finds failing and soon-to-fail GPUs from XID faults, ECC and row-remap trends, HBM temperature, throttling, power brake, PCIe/NVLink/XGMI errors, telemetry gaps and silent data corruption. It also finds stragglers slowing training, idle or oversized GPU allocations with $/week savings, ranks failure risk and measures fragmentation. It proposes fixes (quarantine, diagnostics, reset, drain, swap at checkpoint, scale in, reclaim) in an approval queue, and runs approved fixes as a dry run unless explicitly made live. Use for GPU health checks, deciding which GPUs to quarantine or repair, GPU utilization, waste and savings reports, finding stragglers, or acting on GPU alerts in NVIDIA or AMD clusters.
+description: Checks GPU and accelerator fleet health and efficiency from NVIDIA DCGM, AMD, SambaNova or Google Cloud TPU telemetry, including mixed fleets. It finds failing and soon-to-fail devices from XID and vendor fault codes, ECC and row-remap trends, HBM temperature, throttling, power brake, PCIe/NVLink/XGMI errors, telemetry gaps and silent data corruption. It also finds stragglers slowing training, idle or oversized GPU allocations with $/week savings, ranks failure risk and measures fragmentation. It proposes fixes (quarantine, diagnostics, reset, drain, swap at checkpoint, scale in, reclaim) in an approval queue, and runs approved fixes as a dry run unless explicitly made live. Use for GPU health checks, deciding which GPUs to quarantine or repair, GPU utilization, waste and savings reports, finding stragglers, or acting on GPU alerts in NVIDIA or AMD clusters.
 ---
 
 # GPU health
@@ -20,16 +20,17 @@ Requires Node.js 20+. Paths below are relative to this skill's folder. The CLI i
 
 1. **Get telemetry.**
    - Normalized JSON lines: `--samples FILE`.
-   - Saved exporter scrapes (dcgm-exporter or AMD device-metrics-exporter Prometheus text): `--prom FILE[,FILE]`.
+   - Saved exporter scrapes (dcgm-exporter, AMD device-metrics-exporter or SambaNova's exporter, as Prometheus text): `--prom FILE[,FILE]`. The vendor is detected from the metric names; `--vendor` forces it.
+   - Cloud TPU: JSONL samples from `scripts/gpu-health/tools/tpu-collect.py`, run on each TPU VM.
    - A jobs file (`--jobs`, from the scheduler) is needed for efficiency, savings and owner notices.
    - Optional:
      - `--steps`: per-rank step timings, for stragglers;
      - `--probes`: benchmark results;
-     - `--results`: diag results and SDC events from the training loop;
+     - `--results`: diag results, SDC events from the training loop, and fault events from logs or a vendor's fault manager (`{ t, kind: "fault", node, gpu, code }`);
      - `--cluster`: allocation snapshot, for fragmentation;
      - `--config`: prices, thresholds and policy.
 
-   Formats are in [references/OVERVIEW.md](references/OVERVIEW.md#inputs). With no data, `demo --json` builds a 32-GPU demo fleet with planted problems.
+   Formats are in [references/OVERVIEW.md](references/OVERVIEW.md#inputs). With no data, `demo --json` builds a 32-GPU demo fleet with planted problems, and `demo --mixed --json` an AMD, SambaNova and Cloud TPU fleet.
 
 2. **Analyze.**
    ```bash
@@ -40,6 +41,7 @@ Requires Node.js 20+. Paths below are relative to this skill's folder. The CLI i
    - `gpusNotServing`: each GPU with its state, why, and the signal keys behind it.
    - `recommendations`: per job, with lever, action, $/week, confidence and an explanation.
    - `risk`, `fragmentation`, `partitionPlan` and `jobUsage`.
+   - `coverage`: per vendor, the health checks its telemetry supports and the ones it is blind to.
    - `openActions`: the queue.
 
 3. **Explain.** Start with what needs attention now: quarantined GPUs and what they affect. Then:
@@ -68,6 +70,12 @@ Requires Node.js 20+. Paths below are relative to this skill's folder. The CLI i
    - `report --format html --out report.html` (or `--format md`) writes it.
    - `receipt JOB --json` shows what one job was given vs what it used.
    - `serve` starts an approval page for people, with per-person tokens.
+
+## Mixed and non-NVIDIA fleets
+
+- **Say what can't be seen.** When `coverage` lists blind checks for a vendor (Cloud TPU and SambaNova report no temperature, power or ECC), say so when you report that vendor's devices as healthy, and suggest diags, probes or fault events to cover the gap.
+- **Repairs differ by vendor.** The queue only proposes what the platform can do: `amd-smi` resets on AMD, a person with SNFM on SambaNova, and on Cloud TPU no device reset at all (restart or recreate the TPU VM, then a support case). Steps a person must do are webhook messages that say what to do. Don't suggest commands outside the queue to make up for it.
+- Vendor profiles, fault codes and how to add a vendor are in [references/VENDORS.md](references/VENDORS.md).
 
 ## Risk triage
 

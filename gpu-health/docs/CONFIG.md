@@ -40,9 +40,9 @@ Pass `--config my.json`. The file is deep-merged over the defaults in `src/confi
 
 ## Faults and the repair ladder
 
-`faults` maps a fault code to `{ class, severity }`. Severity is `hard` (quarantine now), `soft` (suspect), or `ignore` (application errors such as XID 13/31/43).
+`faults` maps a fault code to `{ class, severity }`. Severity is `hard` (quarantine now), `soft` (suspect), or `ignore` (application errors such as XID 13/31/43). Vendor-specific codes (XIDs, AMD RAS events, SambaNova and TPU fault types) are in the vendor profiles; a code listed under `faults` overrides every vendor. See [VENDORS.md](VENDORS.md).
 
-`ladder` lists the repair steps for each class, cheapest first. A failed diag moves the GPU one step up its ladder.
+`ladder` lists the repair steps for each class, cheapest first. A failed diag moves the GPU one step up its ladder. A vendor profile can replace the ladder, and steps its platform can't do (a device reset on Cloud TPU, say) are skipped.
 
 ```json
 { "faults": { "xid63": { "class": "ecc", "severity": "hard" } },
@@ -72,7 +72,7 @@ Action kinds:
 | `quarantine` / `release` | health | label + taint the node for that GPU / remove the taint |
 | `run-diag` | quarantine, burn-in | create a diag Job (`{level}` = 1–4) |
 | `deep-diag-next-boundary` | suspect, high risk, straggler | label the node so the scheduler runs a diag before the next job |
-| `gpu-reset` / `config-reset` | ladder, pending remap | `ssh node nvidia-smi -r -i N` / `-rgc` |
+| `gpu-reset` / `config-reset` | ladder, pending remap | `ssh node nvidia-smi -r -i N` / `-rgc`; on AMD `amd-smi reset --gpureset --gpu N`; on SambaNova a webhook asking for an SNFM reset; not offered on Cloud TPU |
 | `node-reboot` | ladder | `kubectl drain`, then reboot |
 | `avoid-large-jobs` | high risk | label so large synchronous jobs avoid the GPU |
 | `scale-in` | oversized inference | `kubectl scale deployment --replicas={replicas}` |
@@ -83,7 +83,7 @@ Action kinds:
 
 ## Executors
 
-Each action kind maps to a list of argv arrays, run in order without a shell, or to `"webhook"`. Placeholders: `{node} {gpu} {job} {namespace} {replicas} {level} {fraction} {reason}`. Each value filled in must match `^[A-Za-z0-9][A-Za-z0-9._:/=-]{0,252}$`. Anything else, including values starting with `-`, stops the action.
+Each action kind maps to a list of argv arrays, run in order without a shell, or to `"webhook"`, or to `{ "webhook": "what a person should do" }`. A vendor profile's `executors` win over these for its devices (`vendors.<v>.executors`). Placeholders: `{node} {gpu} {job} {namespace} {replicas} {level} {fraction} {reason} {vendor}`. Each value filled in must match `^[A-Za-z0-9][A-Za-z0-9._:/=-]{0,252}$`. Anything else, including values starting with `-`, stops the action.
 
 Slurm example. Draining in Slurm is per node, so quarantining one GPU drains the whole node:
 
@@ -93,13 +93,11 @@ Slurm example. Draining in Slurm is per node, so quarantining one GPU drains the
     "release":    [["scontrol", "update", "nodename={node}", "state=resume"]] } }
 ```
 
-AMD reset: `[["ssh", "{node}", "sudo", "amd-smi", "reset", "--gpureset", "-g", "{gpu}"]]`.
-
 `notify.webhook` takes a Lark/Feishu or Slack incoming-webhook URL; the message format is picked from the host. When it is empty, messages are printed only.
 
 ## Metric names
 
-`ingest.mappings.<vendor>` overrides the exporter names in `src/ingest.mjs`. `fields` entries merge with the defaults; each value is `[sampleField, scale]`.
+`ingest.mappings.<vendor>` overrides the exporter names in the vendor profiles (`src/vendors.mjs`). `fields` entries merge with the defaults; each value is `[sampleField, scale, agg?]`. Pass `--vendor` to force the vendor when detection from metric names isn't enough. To change a whole profile, or add a vendor, see [VENDORS.md](VENDORS.md).
 
 ```json
 { "ingest": { "mappings": { "amd": { "fields": { "gpu_mma_activity": ["tensor", 0.01] } } } } }

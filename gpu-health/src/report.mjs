@@ -8,6 +8,10 @@ const esc = s => String(s ?? '').replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '
 const lever = r => (['fewer-gpus', 'partition'].includes(r.lever) ? `${r.lever} → ${r.rightSize.shape}` : r.lever);
 const risky = a => a.risk.filter(r => r.score >= 0.05);
 const STATE_ORDER = ['rma', 'quarantined', 'remediate', 'burnin', 'ready', 'suspect', 'serving'];
+// Coverage is worth showing when the fleet is mixed or some vendor's telemetry can't support a check.
+const showCoverage = a => (a.coverage || []).length > 1 || (a.coverage || []).some(c => c.blind.length);
+const CHECK_TEXT = { utilization: 'utilization', memory: 'memory use', ecc: 'ECC', rowRemap: 'row remap', temperature: 'temperature', hbmTemperature: 'HBM temperature', power: 'power', throttle: 'throttling', pcie: 'PCIe link', interconnect: 'interconnect errors' };
+const checks = l => l.map(c => CHECK_TEXT[c] || c).join(', ') || '–';
 
 function sections(a, actions) {
   const s = a.summary;
@@ -30,6 +34,10 @@ export function markdown(a, actions) {
   L.push('', '## Health', '', '| GPU | SKU | State | Why |', '|---|---|---|---|');
   for (const g of notServing) L.push(`| ${g.key} | ${g.sku} | ${g.state} | ${g.why || ''} |`);
   if (!notServing.length) L.push('| – | – | all serving | |');
+  if (showCoverage(a)) {
+    L.push('', '## Telemetry coverage', '', 'Checks that need a field a vendor doesn\'t report don\'t run for its devices. Cover the blind spots with diags and probes.', '', '| Vendor | Devices | Checks running | Blind to |', '|---|---|---|---|');
+    for (const c of a.coverage) L.push(`| ${c.name} (${c.kind}) | ${c.devices} | ${checks(c.checks)} | ${checks(c.blind)} |`);
+  }
   L.push('', '## Failure risk (top 5)', '', '| GPU | State | Score | Why |', '|---|---|---|---|');
   for (const r of risky(a).slice(0, 5)) L.push(`| ${r.key} | ${r.state} | ${Math.round(r.score * 100)} (${r.tier}) | ${r.why.join(', ') || '–'} |`);
   L.push('', '## Job usage', '', '| Job | Class | GPUs | Tensor p50 | SM p50 | HBM bw p50 | Effective p50 / p95 | Verdict |', '|---|---|---|---|---|---|---|---|');
@@ -72,6 +80,7 @@ ${a.health.breaker ? `<div class="alert">${a.health.staleCount} of ${a.health.fl
 ${rows(a.recommendations, r => `<tr><td><b>${esc(r.job)}</b><div class="why">${esc(r.text)}</div></td><td>${r.gpus} ${esc(r.sku)}</td><td>${esc(r.usage)}<br>${bar(r.effP50)}</td><td class="n">${gb(r.memPeakGB)} / ${gb(r.memTotalGB)} GB${r.memSource === 'framework' ? '' : '*'}</td><td>${esc(lever(r))}</td><td class="n"><b>${$(r.weekly)}</b></td><td><span class="pill ${r.confidence === 'high' ? 'low' : r.confidence === 'low' ? 'high' : 'medium'}">${r.confidence}</span></td></tr>`) || '<tr><td colspan="7">Nothing to save.</td></tr>'}</table>
 <p class="why">* driver-reported memory: an upper bound, since frameworks reserve memory up front.</p>
 <h2>Health</h2><table><tr><th>GPU</th><th>SKU</th><th>State</th><th>Why</th></tr>${rows(notServing, g => `<tr><td>${esc(g.key)}</td><td>${esc(g.sku)}</td><td><span class="pill ${g.state}">${g.state}</span></td><td class="why">${esc(g.why)}</td></tr>`) || '<tr><td colspan="4">All GPUs serving.</td></tr>'}</table>
+${showCoverage(a) ? `<h2>Telemetry coverage</h2><table><tr><th>Vendor</th><th>Devices</th><th>Checks running</th><th>Blind to</th></tr>${rows(a.coverage, c => `<tr><td>${esc(c.name)} <span class="why">${esc(c.kind)}</span></td><td class="n">${c.devices}</td><td class="why">${esc(checks(c.checks))}</td><td class="why">${esc(checks(c.blind))}</td></tr>`)}</table><p class="why">Checks that need a field a vendor doesn't report don't run for its devices. Cover the blind spots with diags and probes.</p>` : ''}
 <h2>Failure risk</h2><table><tr><th>GPU</th><th>State</th><th>Score</th><th>Why</th></tr>${rows(risky(a).slice(0, 8), r => `<tr><td>${esc(r.key)}</td><td>${r.state}</td><td><span class="pill ${r.tier}">${Math.round(r.score * 100)}</span></td><td class="why">${esc(r.why.join(', ') || '–')}</td></tr>`) || '<tr><td colspan="4">No GPU stands out.</td></tr>'}</table>
 <h2>Job usage</h2><table><tr><th>Job</th><th>Class</th><th>GPUs</th><th>Tensor</th><th>SM</th><th>HBM bw</th><th>Effective p50 / p95</th><th>Verdict</th></tr>
 ${rows(a.jobUsage, u => `<tr><td>${esc(u.job)}</td><td>${esc(u.class)}</td><td class="n">${u.gpus}</td><td class="n">${pc(u.tensorP50)}</td><td class="n">${pc(u.smP50)}</td><td class="n">${pc(u.dramP50)}</td><td>${pc(u.effP50)} / ${pc(u.effP95)}${bar(u.effP50)}</td><td class="why">${esc(u.usageText)}</td></tr>`)}</table>

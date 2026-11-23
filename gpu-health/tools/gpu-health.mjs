@@ -10,13 +10,14 @@ import { persistable } from '../src/health.mjs';
 import { Store } from '../src/actions.mjs';
 import { markdown, html, receipt } from '../src/report.mjs';
 import { createServer } from '../src/server.mjs';
-import { demoSamples, demoJobs, demoSteps, demoProbes, demoCluster, demoResults, toJsonl } from '../src/synth.mjs';
+import { demoSamples, demoJobs, demoSteps, demoProbes, demoCluster, demoResults, demoMixed, toJsonl } from '../src/synth.mjs';
 
 const HELP = `gpu-health — GPU health, efficiency and savings, with an approval queue for fixes
 
-  gpu-health demo [--out DIR]                      build a demo fleet with planted problems and analyze it
+  gpu-health demo [--out DIR] [--mixed]            build a demo fleet with planted problems and analyze it
+                                                   (--mixed: AMD, SambaNova and Cloud TPU nodes instead)
   gpu-health analyze --samples F[,F] --jobs F      analyze; writes STATE/analysis.json and updates the action queue
-        [--prom F[,F]] [--steps F] [--probes F] [--results F] [--cluster F] [--config F] [--days 7] [--now EPOCH]
+        [--prom F[,F]] [--vendor nvidia|amd|sambanova] [--steps F] [--probes F] [--results F] [--cluster F] [--config F] [--days 7] [--now EPOCH]
         [--execute [--live]]                       also run actions the policy approves automatically
   gpu-health actions list [--status open|all|proposed|approved|executed|rejected]
   gpu-health actions approve ID... --by NAME
@@ -58,7 +59,7 @@ function digest(a, store) { // what a person or an agent needs from one analysis
   const notServing = Object.values(a.health.gpus).filter(g => g.state !== 'serving' || g.stale)
     .map(g => ({ gpu: g.key, sku: g.sku, state: g.state, schedulable: g.schedulable, why: g.why, signals: (g.signals || []).map(x => x.key) }));
   return { summary: a.summary, breaker: a.health.breaker, gpusNotServing: notServing, recommendations: a.recommendations.map(r => ({ job: r.job, class: r.class, gpus: r.gpus, usage: r.usage, lever: r.lever, action: r.action, weekly: r.weekly, confidence: r.confidence, text: r.text })),
-    risk: a.risk.filter(r => r.score >= 0.05).slice(0, 10), fragmentation: a.fragmentation, partitionPlan: a.partitionPlan, jobUsage: a.jobUsage,
+    risk: a.risk.filter(r => r.score >= 0.05).slice(0, 10), fragmentation: a.fragmentation, partitionPlan: a.partitionPlan, jobUsage: a.jobUsage, coverage: a.coverage,
     openActions: store.list('open').map(x => ({ id: x.id, kind: x.kind, target: x.target, mode: x.mode, status: x.status, severity: x.severity, weekly: x.weekly, reason: x.reason })) };
 }
 
@@ -109,13 +110,15 @@ async function main() {
     const data = path.join(out, 'data'); fs.mkdirSync(data, { recursive: true });
     const write = (n, v) => fs.writeFileSync(path.join(data, n), v);
     const now = o.now ? +o.now : Math.floor(Date.now() / 1000 / 600) * 600; // ends now, so approvals can be executed straight away
-    const jobs = demoJobs(now), steps = demoSteps({ now }), probes = demoProbes({ now }), results = demoResults({ now });
-    write('samples.jsonl', toJsonl(demoSamples({ now }))); write('jobs.json', JSON.stringify(jobs, null, 1)); write('steps.jsonl', toJsonl(steps));
-    write('probes.jsonl', toJsonl(probes)); write('results.jsonl', toJsonl(results)); write('cluster.json', JSON.stringify(demoCluster(), null, 1));
-    write('config.json', JSON.stringify({ pricePerGpuHour: { B200: 6.0, H200: 4.5, default: 4.0 } }, null, 1));
+    const mixed = o.mixed ? demoMixed({ now }) : null;
+    const jobs = mixed ? mixed.jobs : demoJobs(now), steps = mixed ? [] : demoSteps({ now }), probes = mixed ? [] : demoProbes({ now }), results = mixed ? mixed.results : demoResults({ now });
+    const cluster = mixed ? null : demoCluster();
+    write('samples.jsonl', toJsonl(mixed ? mixed.samples : demoSamples({ now }))); write('jobs.json', JSON.stringify(jobs, null, 1)); write('steps.jsonl', toJsonl(steps));
+    write('probes.jsonl', toJsonl(probes)); write('results.jsonl', toJsonl(results)); if (cluster) write('cluster.json', JSON.stringify(cluster, null, 1));
+    write('config.json', JSON.stringify({ pricePerGpuHour: { B200: 6.0, H200: 4.5, MI300X: 4.0, RDU: 5.0, v5p: 4.2, default: 4.0 } }, null, 1));
     o.state = path.join(out, 'state'); o.config = path.join(data, 'config.json');
     if (fs.existsSync(o.state)) fs.rmSync(o.state, { recursive: true });
-    const { a, store, dir, cfg } = runAnalysis(o, { samples: readSamples(read(path.join(data, 'samples.jsonl'))), jobs, steps, probes, results, cluster: demoCluster(), now });
+    const { a, store, dir, cfg } = runAnalysis(o, { samples: readSamples(read(path.join(data, 'samples.jsonl'))), jobs, steps, probes, results, cluster, now });
     fs.writeFileSync(path.join(out, 'report.md'), markdown(a, store.list()));
     fs.writeFileSync(path.join(out, 'report.html'), html(a, store.list()));
     printSummary(a, store);
@@ -130,7 +133,8 @@ async function main() {
   if (cmd === 'analyze') {
     const samples = [];
     for (const f of list(o.samples)) samples.push(...readSamples(read(f)));
-    for (const f of list(o.prom)) samples.push(...samplesFromExporter(read(f), { t: o.now ? +o.now : undefined, mappings: config(o).ingest.mappings }));
+    const cfgIn = config(o);
+    for (const f of list(o.prom)) samples.push(...samplesFromExporter(read(f), { t: o.now ? +o.now : undefined, vendor: o.vendor && o.vendor !== true ? o.vendor : undefined, vendors: cfgIn.vendors, mappings: cfgIn.ingest.mappings }));
     if (!samples.length) throw new Error('give --samples (JSONL) and/or --prom (exporter text)');
     const input = { samples, jobs: o.jobs ? readJson(o.jobs) : [], steps: o.steps ? readJsonl(o.steps) : [], probes: o.probes ? readJsonl(o.probes) : [],
       results: o.results ? readJsonl(o.results) : [], cluster: o.cluster ? readJson(o.cluster) : null };
@@ -191,7 +195,7 @@ async function main() {
     const tick = async () => {
       const t = Math.floor(Date.now() / 1000);
       const got = [];
-      for (const u of urls) { try { const r = await fetch(u, { signal: AbortSignal.timeout(10000) }); got.push(...samplesFromExporter(await r.text(), { t, mappings: config(o).ingest.mappings })); } catch (e) { console.error(`scrape ${u}: ${e.message}`); } }
+      for (const u of urls) { try { const r = await fetch(u, { signal: AbortSignal.timeout(10000) }); got.push(...samplesFromExporter(await r.text(), { t, vendor: o.vendor && o.vendor !== true ? o.vendor : undefined, vendors: config(o).vendors, mappings: config(o).ingest.mappings })); } catch (e) { console.error(`scrape ${u}: ${e.message}`); } }
       fs.appendFileSync(sf, toJsonl(got));
       const all = readSamples(read(sf)).filter(s => s.t > t - keepDays * 86400);
       if (all.length > got.length * 50) fs.writeFileSync(sf, toJsonl(all)); // trim old samples now and then
