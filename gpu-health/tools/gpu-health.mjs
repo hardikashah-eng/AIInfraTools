@@ -10,7 +10,8 @@ import { persistable } from '../src/health.mjs';
 import { Store } from '../src/actions.mjs';
 import { markdown, html, receipt } from '../src/report.mjs';
 import { createServer } from '../src/server.mjs';
-import { demoSamples, demoJobs, demoSteps, demoProbes, demoCluster, demoResults, demoMixed, toJsonl } from '../src/synth.mjs';
+import { demoSamples, demoJobs, demoSteps, demoProbes, demoCluster, demoResults, demoMixed, demoHistory, toJsonl } from '../src/synth.mjs';
+import { flakinessFromState, flakinessHtml, flakinessMarkdown, flakinessDigest, recordTransitions, recordResults } from '../src/flakiness.mjs';
 
 const HELP = `gpu-health — GPU health, efficiency and savings, with an approval queue for fixes
 
@@ -25,6 +26,8 @@ const HELP = `gpu-health — GPU health, efficiency and savings, with an approva
   gpu-health actions execute [ID...] [--live]      run approved actions (dry-run unless --live AND policy.dryRun=false)
   gpu-health report [--format md|html] [--out F]   report from the last analysis
   gpu-health receipt JOB                           what one job was given vs what it used
+  gpu-health flakiness [--days 60] [--format html|md] [--out F] [--results F]
+                                                   GPUs that keep failing, whether repairs hold, where failures cluster
   gpu-health serve [--port 8787] [--host 127.0.0.1] [--allow-live]   approval page (needs GPU_HEALTH_TOKENS or GPU_HEALTH_TOKEN)
   gpu-health watch --scrape URL[,URL] --jobs F [--interval 60] [--execute [--live]]   scrape exporters and analyze on a loop
 
@@ -76,7 +79,10 @@ function runAnalysis(o, input) {
   const cfg = config(o), dir = stateDir(o);
   const store = new Store(dir);
   const results = [...(input.results || []), ...releaseResults(store)];
-  const a = analyze(Object.assign({}, input, { results, prev: prevHealth(dir), cfg, windowDays: +(o.days || 7), now: o.now ? +o.now : input.now }));
+  const prev = prevHealth(dir);
+  const a = analyze(Object.assign({}, input, { results, prev, cfg, windowDays: +(o.days || 7), now: o.now ? +o.now : input.now }));
+  recordTransitions(dir, prev, a.health); // history for the flakiness view
+  recordResults(dir, input.results);
   fs.writeFileSync(path.join(dir, 'health.json'), JSON.stringify(persistable(a.health), null, 1));
   fs.writeFileSync(path.join(dir, 'analysis.json'), JSON.stringify(a));
   store.merge(a.suggestions, cfg, a.generatedAt);
@@ -118,14 +124,19 @@ async function main() {
     write('config.json', JSON.stringify({ pricePerGpuHour: { B200: 6.0, H200: 4.5, MI300X: 4.0, RDU: 5.0, v5p: 4.2, default: 4.0 } }, null, 1));
     o.state = path.join(out, 'state'); o.config = path.join(data, 'config.json');
     if (fs.existsSync(o.state)) fs.rmSync(o.state, { recursive: true });
+    const hist = mixed ? { events: [], audit: [], results: [] } : demoHistory({ now }); // 60 days of earlier state changes, repairs and job failures, for the flakiness view
+    fs.mkdirSync(o.state, { recursive: true });
+    fs.writeFileSync(path.join(o.state, 'events.jsonl'), toJsonl(hist.events)); fs.writeFileSync(path.join(o.state, 'audit.jsonl'), toJsonl(hist.audit)); fs.writeFileSync(path.join(o.state, 'results.jsonl'), toJsonl(hist.results));
     const { a, store, dir, cfg } = runAnalysis(o, { samples: readSamples(read(path.join(data, 'samples.jsonl'))), jobs, steps, probes, results, cluster, now });
     fs.writeFileSync(path.join(out, 'report.md'), markdown(a, store.list()));
     fs.writeFileSync(path.join(out, 'report.html'), html(a, store.list()));
+    const flaky = flakinessFromState(dir, cfg);
+    fs.writeFileSync(path.join(out, 'flakiness.html'), flakinessHtml(flaky)); fs.writeFileSync(path.join(out, 'flakiness.md'), flakinessMarkdown(flaky));
     printSummary(a, store);
     say(`\nauto-approved actions, dry-run:`);
     await execApproved(store, cfg, {}, a.summary.gpus, null, a.generatedAt);
-    OUT.files = { reportHtml: path.join(out, 'report.html'), reportMd: path.join(out, 'report.md'), state: dir, data: data };
-    say(`\nwrote ${path.relative(process.cwd(), out)}/report.html and report.md; state in ${path.relative(process.cwd(), dir)}`);
+    OUT.files = { reportHtml: path.join(out, 'report.html'), reportMd: path.join(out, 'report.md'), flakinessHtml: path.join(out, 'flakiness.html'), state: dir, data: data };
+    say(`\nwrote ${path.relative(process.cwd(), out)}/report.html, report.md and flakiness.html; state in ${path.relative(process.cwd(), dir)}`);
     say(`next: node tools/gpu-health.mjs actions list --state ${path.relative(process.cwd(), dir)}`);
     return;
   }
@@ -176,6 +187,14 @@ async function main() {
     }
     if (J) { Object.assign(OUT, digest(a, store)); return; }
     const text = o.format === 'html' ? html(a, store.list()) : markdown(a, store.list());
+    if (o.out && o.out !== true) { fs.writeFileSync(o.out, text); console.log(`wrote ${o.out}`); } else process.stdout.write(text);
+    return;
+  }
+
+  if (cmd === 'flakiness') {
+    const f = flakinessFromState(stateDir(o), config(o), { days: o.days ? +o.days : undefined, now: o.now ? +o.now : undefined, results: o.results ? readJsonl(o.results) : [], jobs: o.jobs ? readJson(o.jobs) : undefined });
+    if (J) { Object.assign(OUT, flakinessDigest(f)); return; }
+    const text = o.format === 'html' ? flakinessHtml(f) : flakinessMarkdown(f);
     if (o.out && o.out !== true) { fs.writeFileSync(o.out, text); console.log(`wrote ${o.out}`); } else process.stdout.write(text);
     return;
   }

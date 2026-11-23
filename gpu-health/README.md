@@ -9,6 +9,8 @@ It reads the accelerator telemetry you already collect (NVIDIA dcgm-exporter, AM
 3. **Which GPU fails next?** It ranks GPUs by risk, so the riskiest get a deep diag first and are kept off large synchronous jobs.
 4. **Is free capacity usable?** It finds free GPUs that waiting jobs can't use, and the smallest partition layout for small workloads.
 
+Over time it also answers a fifth: **which GPUs keep coming back broken?** The [flakiness view](docs/FLAKINESS.md) looks back over each GPU's history for repeat failures, repairs that don't hold, and groups of GPUs that fail together.
+
 Every finding becomes an **action** in a queue. Your policy decides whether an action runs automatically, waits for a person to approve it, or is shown only as a suggestion. Approved actions run as fixed commands (no shell). They are dry-run by default, and every step is written to an audit log.
 
 No dependencies: Node 20+.
@@ -17,7 +19,7 @@ No dependencies: Node 20+.
 
 ```bash
 cd gpu-health
-node tools/gpu-health.mjs demo            # 32-GPU demo fleet with planted problems → gpu-health-demo/report.html
+node tools/gpu-health.mjs demo            # 32-GPU demo fleet with planted problems → gpu-health-demo/report.html and flakiness.html
 node tools/gpu-health.mjs demo --mixed --out mixed-demo   # AMD + SambaNova + Cloud TPU fleet, one planted fault each
 node tools/gpu-health.mjs actions list --state gpu-health-demo/state
 node tools/gpu-health.mjs actions approve scale-in:embed-svc --by you --state gpu-health-demo/state
@@ -154,6 +156,9 @@ node tools/gpu-health.mjs analyze --samples samples.jsonl --jobs jobs.json --ste
 node tools/gpu-health.mjs watch --scrape http://n1:9400/metrics,http://n2:9400/metrics --jobs jobs.json \
      --config my.json --state /var/lib/gpu-health --execute --live
 
+# GPUs that keep failing, whether repairs hold, where failures cluster (see docs/FLAKINESS.md)
+node tools/gpu-health.mjs flakiness --format html --out flakiness.html --state /var/lib/gpu-health
+
 # weekly report (cron), and receipts for owners
 node tools/gpu-health.mjs report --format html --out weekly.html --state /var/lib/gpu-health
 node tools/gpu-health.mjs receipt embed-svc --state /var/lib/gpu-health
@@ -169,7 +174,7 @@ Every command takes `--json` and prints one JSON object, for scripts and LLM age
 | `--jobs` JSON | `[{ id, class, owner, namespace, start, end?, gpusPerReplica?, gpus: [{node, gpu}] }]`, from your scheduler | efficiency, savings, owner notices |
 | `--steps` JSONL | `{ job, rank, step, t, computeMs }`, from a training-loop hook | straggler detection (best) |
 | `--probes` JSONL | `{ t, node, gpu, sku, firmware, site, gemmTflops, hbmGBs, linkGBs? }`, from a short benchmark between jobs | speed index |
-| `--results` JSONL | `{ t, node, gpu, kind: diag\|burnin\|release, pass, level?, detail? }`, written by your diag jobs; `{ t, kind: sdc, job, rank, type }` from the training loop; `{ t, kind: fault, node, gpu, code }` for faults from logs or a vendor's fault manager | moving GPUs through repair; SDC; faults outside metrics |
+| `--results` JSONL | `{ t, node, gpu, kind: diag\|burnin\|release, pass, level?, detail? }`, written by your diag jobs; `{ t, kind: sdc, job, rank, type }` from the training loop; `{ t, kind: fault, node, gpu, code }` for faults from logs or a vendor's fault manager; `{ t, kind: job-end, job, rank \| node+gpu, status, cause: device\|app\|infra, lostGpuHours? }` from the scheduler | moving GPUs through repair; SDC; faults outside metrics; the cost of device failures |
 | `--cluster` JSON | `{ nodes: [{ node, gpus: [{ gpu, alloc }] }], pending: [{ job, gpus? , fraction? }] }` | fragmentation |
 
 Metric names for each vendor's exporter are in its profile in `src/vendors.mjs`. Check them against the exporter versions you run, and override any of them under `ingest.mappings` (or the whole profile under `vendors`; see [VENDORS.md](docs/VENDORS.md)). AMD's default metrics expose no separate matrix-core counter, so GFX activity stands in for tensor activity. On MI300-series and later, ROCm's XGMI health field isn't evaluated, so link faults are read from the XGMI_WAFL RAS counters instead. On NVIDIA, power brake and throttling are decoded from the clock-event-reason bitmask.
@@ -191,6 +196,7 @@ src/fragmentation.mjs  stranded capacity, partition packing
 src/actions.mjs        suggestions, policy modes, queue, audit, guarded execution
 src/executors.mjs      argv templates, validation, dry-run, webhook
 src/report.mjs         Markdown / HTML report, job receipts
+src/flakiness.mjs      flakiness view: repeat failures, repair hold rates, cohorts, cost; history files
 src/server.mjs         approval page and API
 src/synth.mjs          demo fleet
 tools/gpu-health.mjs   CLI

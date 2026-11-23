@@ -23,7 +23,7 @@ const SKILLS = {
   'inference-sizer': { tool: 'inference-sizer', code: ['src', 'tools', 'package.json'], refs: { 'README.md': 'OVERVIEW.md', 'docs/METHOD.md': 'METHOD.md', 'docs/SPEC-SHEETS.md': 'SPEC-SHEETS.md' }, assets: { 'specs/example.json': 'example.json' } },
   'fleetscope': { tool: 'fleetscope', code: ['src', 'tools', 'package.json'], refs: { 'docs/ASK.md': 'ASK.md', 'docs/TRACES.md': 'TRACES.md', 'docs/CI.md': 'CI.md', 'docs/CALIBRATION.md': 'CALIBRATION.md' }, assets: { 'scenarios/hybrid-chat': 'scenarios/hybrid-chat' }, generate: { 'references/NODE-TYPES.md': fleetNodeTypes } },
   'hybrid-tracing': { tool: 'hybrid-tracing', code: ['src', 'tools', 'clock', 'collector', 'deploy', 'package.json'], refs: { 'README.md': 'OVERVIEW.md', 'docs/CLOCKS.md': 'CLOCKS.md' }, assets: {} },
-  'gpu-health': { tool: 'gpu-health', code: ['src', 'tools', 'examples', 'deploy', 'package.json'], refs: { 'README.md': 'OVERVIEW.md', 'docs/CONFIG.md': 'CONFIG.md', 'docs/RISK-PREDICTION.md': 'RISK-PREDICTION.md', 'docs/VENDORS.md': 'VENDORS.md' }, assets: {} },
+  'gpu-health': { tool: 'gpu-health', code: ['src', 'tools', 'examples', 'deploy', 'package.json'], refs: { 'README.md': 'OVERVIEW.md', 'docs/CONFIG.md': 'CONFIG.md', 'docs/RISK-PREDICTION.md': 'RISK-PREDICTION.md', 'docs/VENDORS.md': 'VENDORS.md', 'docs/FLAKINESS.md': 'FLAKINESS.md' }, assets: {} },
 };
 
 // Markdown copied into a skill: drop images (not shipped) and point doc links at the copied files.

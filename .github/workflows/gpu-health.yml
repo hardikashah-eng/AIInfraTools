@@ -24,6 +24,8 @@ jobs:
           node tools/gpu-health.mjs demo --out /tmp/gh-demo
           test -s /tmp/gh-demo/report.html
           node tools/gpu-health.mjs actions list --state /tmp/gh-demo/state | grep -q 'scale-in:embed-svc'
+          test -s /tmp/gh-demo/flakiness.html
+          node tools/gpu-health.mjs flakiness --state /tmp/gh-demo/state | grep -q 'Node n2'
       - name: Mixed-vendor demo runs and reports coverage
         working-directory: gpu-health
         run: |

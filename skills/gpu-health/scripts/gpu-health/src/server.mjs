@@ -7,6 +7,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import crypto from 'node:crypto';
 import { Store } from './actions.mjs';
+import { flakinessFromState, flakinessHtml, flakinessDigest } from './flakiness.mjs';
 
 const eq = (a, b) => { const x = Buffer.from(String(a)), y = Buffer.from(String(b)); return x.length === y.length && crypto.timingSafeEqual(x, y); };
 export function parseTokens(env = process.env) {
@@ -41,6 +42,10 @@ export function createServer({ stateDir, cfg, tokens = parseTokens(), allowLive 
         const summary = fs.existsSync(f) ? JSON.parse(fs.readFileSync(f, 'utf8')).summary : null;
         return send(res, 200, { you: u.name, needName: !u.named, live: allowLive && cfg.policy.dryRun === false, summary, actions: store.list().slice().reverse().slice(0, 300) });
       }
+      if (url.pathname === '/api/flakiness' && req.method === 'GET') {
+        const days = +url.searchParams.get('days') || undefined, f = flakinessFromState(stateDir, cfg, { days });
+        return url.searchParams.get('format') === 'html' ? send(res, 200, flakinessHtml(f), 'text/html; charset=utf-8') : send(res, 200, flakinessDigest(f));
+      }
       const m = url.pathname.match(/^\/api\/actions\/([^/]+)\/(approve|reject|execute)$/);
       if (m && req.method === 'POST') {
         const id = decodeURIComponent(m[1]), b = await body(req);
@@ -70,7 +75,7 @@ button{cursor:pointer}button.go{background:var(--acc);color:var(--bg);border-col
 code{font-size:12px}.mut{color:var(--mut);font-size:13px}.pill{font-size:12px;border:1px solid currentColor;border-radius:99px;padding:0 8px;margin-left:6px}.high{color:var(--bad)}.medium{color:var(--warn)}
 pre{white-space:pre-wrap;font-size:12px;background:var(--bg);padding:8px;border-radius:6px;margin:8px 0 0}</style></head><body><main>
 <h1>gpu-health · actions</h1>
-<div class="bar"><input id="tok" type="password" placeholder="token" size="24"><input id="by" placeholder="your name" size="14" hidden><select id="st"><option value="open">open</option><option value="">all</option><option value="executed">executed</option><option value="rejected">rejected</option></select><button id="load">Load</button><span id="info" class="mut"></span></div>
+<div class="bar"><input id="tok" type="password" placeholder="token" size="24"><input id="by" placeholder="your name" size="14" hidden><select id="st"><option value="open">open</option><option value="">all</option><option value="executed">executed</option><option value="rejected">rejected</option></select><button id="load">Load</button><button id="flaky" title="GPUs that keep failing, whether repairs hold, where failures cluster">Flakiness</button><span id="info" class="mut"></span></div>
 <div id="list"></div></main>
 <script>
 let token='';try{token=sessionStorage.getItem('gh_tok')||''}catch(e){}
@@ -90,6 +95,8 @@ async function load(){token=$('tok').value.trim();try{sessionStorage.setItem('gh
    '</div></div><div class="mut">'+esc(a.reason)+'</div>'+(a.result?'<pre>'+esc(a.result.output)+'</pre>':'')+'<div id="r-'+esc(a.id)+'"></div></div>').join('')||'<p class="mut">Nothing here.</p>';
  }catch(e){$('info').textContent=e.message}}
 $('load').onclick=load;$('st').onchange=load;
+$('flaky').onclick=async()=>{token=$('tok').value.trim();const w=window.open('','_blank');try{const r=await fetch('/api/flakiness?format=html',{headers:{authorization:'Bearer '+token}});if(!r.ok)throw new Error((await r.json()).error||r.status);
+ const u=URL.createObjectURL(new Blob([await r.text()],{type:'text/html'}));if(w)w.location=u;else location=u}catch(e){if(w)w.close();$('info').textContent=e.message}};
 $('list').onclick=async e=>{const b=e.target.closest('button');if(!b)return;const id=b.dataset.id,act=b.dataset.a;
  const payload={by:$('by').value.trim()};if(act==='reject'){payload.reason=prompt('Reason for rejecting?')||''}
  if(act==='execute'&&live&&!confirm('Run this action for real?'))return;if(act==='execute')payload.live=live;

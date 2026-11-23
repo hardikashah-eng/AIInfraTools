@@ -95,6 +95,15 @@ Slurm example. Draining in Slurm is per node, so quarantining one GPU drains the
 
 `notify.webhook` takes a Lark/Feishu or Slack incoming-webhook URL; the message format is picked from the host. When it is empty, messages are printed only.
 
+## Flakiness
+
+```json
+{ "flakiness": { "windowDays": 60, "bounceDays": 7, "holdDays": [7, 30], "rmaHardFailures": 3, "warnHours": 72,
+                 "cohortRatio": 2, "cohortMinDevices": 3, "minRepairs": 3, "lostHoursPerFailure": 1 } }
+```
+
+What each one means is in [FLAKINESS.md](FLAKINESS.md#what-it-measures).
+
 ## Metric names
 
 `ingest.mappings.<vendor>` overrides the exporter names in the vendor profiles (`src/vendors.mjs`). `fields` entries merge with the defaults; each value is `[sampleField, scale, agg?]`. Pass `--vendor` to force the vendor when detection from metric names isn't enough. To change a whole profile, or add a vendor, see [VENDORS.md](VENDORS.md).

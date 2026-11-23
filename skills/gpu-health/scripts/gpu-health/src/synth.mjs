@@ -156,3 +156,46 @@ export function demoMixed({ now = DEMO_NOW, days = 2, step = 600, seed = 21 } = 
   ];
   return { samples, jobs, results };
 }
+
+// Sixty days of history for the demo fleet, so the flakiness view has something to find. Each GPU's story ends back
+// in service, and today's analysis adds the current state changes on top.
+//   n1/2  SDC: suspect, deep diag passed, back in service; corrupts again today. Two training crashes on it.
+//   n2/5  thermal: leaves service five times, once within days of coming back (the straggler today).
+//   n2/*  six more short thermal suspects: node n2 fails at about twice the fleet rate (cooling).
+//   n4/4  ECC: quarantined, reset, back; ECC rate rising 6 days later (suspect), quarantined, node reboot, back; suspect again today.
+//   n4/5  XID 79 twice, node reboot each time; falls off the bus again today: third hard failure.
+//   n2/1, n1/6  ECC once, reset held.   n2/7  ECC, reset failed within days, reseat held.
+//   n3/6  telemetry thinning once before today.
+export function demoHistory({ now = DEMO_NOW } = {}) {
+  const D = 86400, at = d => Math.round(now - d * D);
+  const sku = n => (n === 'n1' || n === 'n2' ? ['B200', 'onprem'] : ['H200', 'neocloud']);
+  const events = [], audit = [], results = [];
+  const ev = (key, d, from, to, why, faultClass = '') => { const [node, gpu] = key.split('/'), [s, site] = sku(node); events.push({ t: at(d), key, node, gpu, sku: s, site, vendor: 'nvidia', from, to, why, faultClass }); };
+  const fix = (key, d, kind) => audit.push({ t: at(d), id: `${kind}:${key}`, kind, target: key, event: 'executed', commands: [] });
+  // quarantine → repair → burn-in → ready → serving
+  const repairCycle = (key, d, why, cls, kind, from = 'serving') => { ev(key, d, from, 'quarantined', why, cls); fix(key, d - 0.1, kind); ev(key, d - 0.5, 'quarantined', 'burnin', 'diag level 3 passed; burn-in next', cls); ev(key, d - 1, 'burnin', 'ready', 'burn-in passed; waiting for release approval', cls); ev(key, d - 1.2, 'ready', 'serving', 'released by ops', cls); };
+  const blip = (key, d, back, why, cls, how = 'signal cleared') => { ev(key, d, 'serving', 'suspect', why, cls); ev(key, back, 'suspect', 'serving', how, cls); };
+
+  blip('n1/2', 6, 5, '1 silent-data-corruption event(s) in 7 days (nan)', 'sdc', 'deep diag passed; watching');
+  results.push({ t: at(5.1), kind: 'diag', node: 'n1', gpu: '2', pass: true, level: 4 });
+  results.push({ t: at(6), kind: 'job-end', job: 'train-llm', rank: 2, status: 'failed', cause: 'device', detail: 'NaN loss on rank 2', lostGpuHours: 24 });
+  results.push({ t: at(0.1), kind: 'job-end', job: 'train-llm', rank: 2, status: 'failed', cause: 'device', detail: 'non-finite gradient on rank 2' });
+  results.push({ t: at(30), kind: 'job-end', job: 'train-llm', rank: 7, status: 'failed', cause: 'app', detail: 'OOM after config change' });
+
+  blip('n2/5', 40, 39.5, 'clock-limited 41% of busy time', 'thermal'); blip('n2/5', 34, 33.5, 'clock-limited 44% of busy time', 'thermal');
+  blip('n2/5', 20, 19.5, '17°C hotter than peers (same node and job)', 'thermal', 'deep diag passed; watching'); blip('n2/5', 12, 11.5, 'clock-limited 39% of busy time', 'thermal');
+  results.push({ t: at(19.6), kind: 'diag', node: 'n2', gpu: '5', pass: true, level: 3 });
+  for (const [g, d] of [['0', 28], ['2', 31], ['3', 15], ['4', 24], ['6', 10], ['6', 36]]) blip('n2/' + g, d, d - 0.3, 'clock-limited 23% of busy time', 'thermal');
+
+  repairCycle('n4/4', 21, 'fault xid48', 'ecc', 'gpu-reset');
+  ev('n4/4', 14, 'serving', 'suspect', 'corrected ECC errors rising: 38/h', 'ecc'); repairCycle('n4/4', 13.5, 'fault xid48', 'ecc', 'node-reboot', 'suspect');
+  results.push({ t: at(13.5), kind: 'job-end', job: 'rerank-svc', node: 'n4', gpu: '4', status: 'failed', cause: 'device', detail: 'replica crashed on uncorrectable ECC error' });
+  repairCycle('n4/5', 48, 'fault xid79', 'bus', 'node-reboot'); repairCycle('n4/5', 27, 'fault xid79', 'bus', 'node-reboot');
+  results.push({ t: at(27), kind: 'job-end', job: 'batch-sim', node: 'n4', gpu: '5', status: 'failed', cause: 'device', detail: 'GPU fell off the bus' });
+
+  repairCycle('n2/1', 50, 'fault xid48', 'ecc', 'gpu-reset'); repairCycle('n1/6', 42, 'fault xid48', 'ecc', 'gpu-reset');
+  repairCycle('n2/7', 45, 'fault xid48', 'ecc', 'gpu-reset'); repairCycle('n2/7', 40.5, 'fault xid48', 'ecc', 'reseat');
+  blip('n3/6', 22, 21.8, '45% of samples missing in the last hour while node-mates report normally', 'telemetry');
+
+  return { events: events.sort((a, b) => a.t - b.t), audit: audit.sort((a, b) => a.t - b.t), results };
+}
