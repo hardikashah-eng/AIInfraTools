@@ -11,6 +11,7 @@ import * as Live from '../src/adapters/live.mjs';
 import { toEpoch } from '../src/adapters/time.mjs';
 import { writeGpuHealth, toFleetScopeTrace } from '../src/export.mjs';
 import * as Calib from '../src/calibrate.mjs';
+import * as RCA from '../src/rca.mjs';
 
 const HELP = `fleetops — shared data layer for AIInfraTools
 
@@ -46,6 +47,12 @@ Calibration (fits are stored as calibration records; profiles are JSON files the
   fleetops calibrate drift --graph G --profile P [--from T] [--to T] [--fail-on-drift]
         simulate the latest window with the stored multipliers; outside the 10%/20% bar → a drift record
   fleetops calibrate apply --graph G --profile P --out G2      write the multipliers into a FleetScope graph
+
+Root-cause analysis (diagnoses are stored as incident records):
+  fleetops rca detect [--from T] [--to T] [--min-failures 50] [--ratio 4] [--targets targets.json] [--diagnose] [--format md]
+        find job-failure spikes and serving latency regressions; --diagnose ranks causes for each
+  fleetops rca diagnose --symptom job-failures|latency|device --from T --to T [--pool P] [--nodes n1,n2] [--format md]
+  fleetops rca eval --labels FILE      top-1 / top-3 accuracy on labeled incidents (JSON lines: { incident, cause })
 
 Times (T) are ISO dates or epoch seconds. Common: --store DIR (default ./fleet-data), --json.`;
 
@@ -118,6 +125,7 @@ async function main() {
   if (!area || o.help || area === 'help') return console.log(HELP);
   const store = new DataStore(o.store && o.store !== true ? o.store : 'fleet-data');
   if (area === 'calibrate') return calibrate(store, cmd, o);
+  if (area === 'rca') return rca(store, cmd, o);
   if (area !== 'data') throw new Error(`unknown command "${area}"\n\n${HELP}`);
   if (cmd === 'import') {
     const [src, ...files] = rest;
@@ -207,6 +215,44 @@ async function calibrate(store, cmd, o) {
     return;
   }
   throw new Error(`unknown: calibrate ${cmd}\n\n${HELP}`);
+}
+
+async function rca(store, cmd, o) {
+  const show = list => {
+    if (J) { OUT.incidents = list; return; }
+    if (o.format === 'md') { console.log(list.map(d => RCA.markdown(d)).join('\n')); return; }
+    for (const d of list) {
+      say(`${d.id}  [${d.confidence}]`);
+      d.hypotheses.slice(0, 3).forEach((h, i) => say(`  ${i + 1}. ${h.title}  (${h.rule}, ${h.score.toFixed(2)})`));
+      say(`     ${d.narrative}`);
+    }
+  };
+  if (cmd === 'detect') {
+    const from = time(o.from), to = time(o.to);
+    const incs = [...RCA.detectJobFailureSpikes(store, { from, to, minFailures: o['min-failures'] ? +o['min-failures'] : 50, ratio: o.ratio ? +o.ratio : 4 }),
+      ...RCA.detectServingRegressions(store, { from, to, targets: o.targets && o.targets !== true ? JSON.parse(read(o.targets)) : {} })];
+    if (!o.diagnose) { if (J) OUT.incidents = incs; else for (const i of incs) say(`${i.id}${i.failures ? `  ${i.failures} failures (baseline ${i.baselinePerHour}/h)` : `  peak ${i.peak.toFixed(3)} s > ${i.limit.toFixed(3)} s`}`); return; }
+    const ds = incs.map(i => RCA.diagnose(store, i));
+    store.append('incident', ds);
+    return show(ds);
+  }
+  if (cmd === 'diagnose') {
+    if (!o.symptom || !o.from || !o.to) throw new Error('--symptom job-failures|latency|device --from T --to T');
+    const inc = { symptom: o.symptom, from: time(o.from), to: time(o.to), pool: o.pool !== true ? o.pool : undefined, nodes: o.nodes && o.nodes !== true ? String(o.nodes).split(',') : undefined, metric: o.metric };
+    const d = RCA.diagnose(store, inc);
+    store.append('incident', [d]);
+    return show([d]);
+  }
+  if (cmd === 'eval') {
+    if (!o.labels || o.labels === true) throw new Error('--labels FILE');
+    const labeled = read(o.labels).split(/\r?\n/).filter(l => l.trim()).map(l => JSON.parse(l)).map(l => Object.assign(l, { incident: Object.assign({}, l.incident, { from: time(l.incident.from), to: time(l.incident.to) }) }));
+    const r = RCA.evaluate(store, labeled);
+    if (J) { OUT.evaluation = r; return; }
+    say(`${r.incidents} labeled incidents: top-1 ${(r.top1 * 100).toFixed(0)}%, top-3 ${(r.top3 * 100).toFixed(0)}%`);
+    for (const x of r.rows) say(`  ${x.id}: labeled ${x.cause}, ranked ${x.rank ?? 'not found'} (${x.got.join(', ')})`);
+    return;
+  }
+  throw new Error(`unknown: rca ${cmd}\n\n${HELP}`);
 }
 
 const self = fileURLToPath(import.meta.url);
