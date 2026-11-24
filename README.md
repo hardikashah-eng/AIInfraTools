@@ -8,6 +8,7 @@ Tools that help capacity building in AIInfra. Each tool lives in its own folder 
 | [inference-sizer](inference-sizer/) | How many GPUs, in what layout, serve a model at TTFT/TPOT targets; exports to FleetScope |
 | [gpu-health](gpu-health/) | Health checks, utilization and savings for GPU fleets, with suggested fixes that run once approved |
 | [hybrid-tracing](hybrid-tracing/) | One trace view across on-prem and neocloud: shared clock reference (PTP/chrony), collector tiers, and clock-skew correction for traces |
+| [gpu-ledger](gpu-ledger/) | GPU billing and waste for any cluster: GPU-hours and cost by org, team, person and use case, split into useful, idle and lost; where to save, with an owner; serving cost per token; FOCUS export. Runs on its own against Kubernetes, DCGM, vLLM, Slurm, OpenCost or CSV |
 | [fleetops](fleetops/) | The shared data layer under the tools: one store of device telemetry, inventory, jobs, serving metrics and changes, with adapters for exporters, Kubernetes, Slurm, change feeds and public traces. On top of it: root-cause analysis, incidents, and a live agent and dashboard that mitigate training and inference issues in real time within approval guardrails |
 
 Where this is going, from four utilities to one Observe → Diagnose → Simulate → Approve → Optimize → Verify loop: [ROADMAP.md](ROADMAP.md).
@@ -22,6 +23,7 @@ Each tool is also packaged as an [Agent Skill](https://agentskills.io/specificat
 | [fleetscope](skills/fleetscope/SKILL.md) | Stress suite, plain-English what-ifs and scenario diffs on a hybrid fleet |
 | [hybrid-tracing](skills/hybrid-tracing/SKILL.md) | Clock-skew correction for traces, clock checks, and collector, chrony and PTP configs |
 | [gpu-health](skills/gpu-health/SKILL.md) | Health, efficiency and savings analysis, with an approval queue the model may not approve on its own |
+| [gpu-ledger](skills/gpu-ledger/SKILL.md) | Chargeback and showback, useful vs idle vs lost GPU-hours per team and person, ranked savings, cost per million tokens, FOCUS export |
 | [fleetops](skills/fleetops/SKILL.md) | Root-cause analysis of job failures, latency and training slowdowns; a live agent that mitigates within approval guardrails, with a live dashboard; incidents, postmortems, accuracy backtests and game days; installers |
 
 **Claude Code.** The repo is a plugin marketplace:

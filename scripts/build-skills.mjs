@@ -27,6 +27,7 @@ const SKILLS = {
     // fleetops imports these tools' code through ../../<tool>/src, so they sit next to it under scripts/
     with: { 'gpu-health': ['src', 'tools', 'package.json'], 'fleetscope': ['src', 'package.json'], 'inference-sizer': ['src', 'package.json'] },
     refs: { 'README.md': 'OVERVIEW.md', 'docs/INSTALL.md': 'INSTALL.md', 'docs/RCA.md': 'RCA.md', 'docs/INCIDENTS.md': 'INCIDENTS.md', 'docs/BENCHMARK.md': 'BENCHMARK.md', 'docs/DATA-LAYER.md': 'DATA-LAYER.md', 'docs/SERVICE.md': 'SERVICE.md', 'docs/TRACING.md': 'TRACING.md', 'docs/CALIBRATION.md': 'CALIBRATION.md', 'docs/OPTIMIZE.md': 'OPTIMIZE.md', 'docs/SCALE.md': 'SCALE.md', 'docs/SIGNALS.md': 'SIGNALS.md', 'docs/AGENT.md': 'AGENT.md', 'docs/GOODPUT.md': 'GOODPUT.md', 'docs/SDC.md': 'SDC.md', 'docs/TUNE.md': 'TUNE.md', 'docs/SERVING.md': 'SERVING.md' }, assets: {} },
+  'gpu-ledger': { tool: 'gpu-ledger', code: ['src', 'tools', 'examples', 'package.json'], with: { 'inference-sizer': ['src', 'package.json'] }, refs: { 'README.md': 'OVERVIEW.md', 'docs/METHOD.md': 'METHOD.md' }, assets: { 'examples/ledger.example.json': 'ledger.example.json', 'examples/people.example.csv': 'people.example.csv' } },
   'gpu-health': { tool: 'gpu-health', code: ['src', 'tools', 'examples', 'deploy', 'package.json'], refs: { 'README.md': 'OVERVIEW.md', 'docs/CONFIG.md': 'CONFIG.md', 'docs/RISK-PREDICTION.md': 'RISK-PREDICTION.md', 'docs/VENDORS.md': 'VENDORS.md', 'docs/FLAKINESS.md': 'FLAKINESS.md' }, assets: {} },
 };
 

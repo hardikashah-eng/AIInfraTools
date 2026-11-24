@@ -44,3 +44,42 @@ export function toFleetScopeTrace(store, { from, to, pool } = {}) {
   const rows = store.query('request', { from, to, where: pool ? r => r.pool === pool : undefined });
   return 'timestamp,input_tokens,output_tokens\n' + rows.map(r => `${new Date(r.t * 1000).toISOString()},${r.isl},${r.osl}`).join('\n') + '\n';
 }
+
+// gpu-ledger: one usage record per placement (job attempt or pod), with its status, the GPU type from inventory, and
+// utilization from the device samples on its GPUs (busy = samples above 5% SM activity, SM while busy, peak memory).
+// Returns { usage, capacity } (capacity: GPUs per node SKU from the latest inventory).
+export function toGpuLedger(store, { from, to, cluster = null } = {}) {
+  const sku = new Map(), cap = new Map();
+  for (const i of store.query('inventory', { to })) sku.set(i.node, i.sku);
+  for (const i of store.query('inventory', { to })) cap.set(i.node, { sku: i.sku, devices: i.devices || 0 });
+  const status = new Map();
+  for (const j of store.query('job', { to })) status.set(j.job, j.status);
+  const dev = new Map();
+  for (const s of store.query('device', { from, to })) { const k = `${s.node}|${s.gpu}`; if (!dev.has(k)) dev.set(k, []); dev.get(k).push(s); }
+  const ST = { ok: 'succeeded', failed: 'failed', timeout: 'failed', retried: 'failed', killed: 'cancelled', cancelled: 'cancelled' };
+  const usage = [];
+  for (const p of store.query('placement', { to })) {
+    const start = p.start ?? p.t, end = p.end ?? null;
+    if (end != null && from != null && end <= from) continue;
+    const devices = p.devices || [], gpus = devices.length || p.gpuCount || 0; if (!gpus) continue;
+    let n = 0, busy = 0, smSum = 0, memPeak = null, run = 0, idleLong = 0, step = 60;
+    for (const d of devices) {
+      const xs = (dev.get(`${d.node}|${d.gpu}`) || []).filter(s => s.t >= start && (end == null || s.t < end));
+      if (xs.length > 1) step = xs[1].t - xs[0].t;
+      run = 0;
+      for (const s of xs) {
+        const u = s.sm ?? s.tensor; if (u == null) continue; n++;
+        if (u > 0.05) { busy++; smSum += u; if (run * step >= 1800) idleLong += run * step; run = 0; } else run++;
+        if (s.memUsedGB != null && s.memTotalGB) memPeak = Math.max(memPeak || 0, s.memUsedGB / s.memTotalGB);
+      }
+      if (run * step >= 1800) idleLong += run * step;
+    }
+    const node = (devices[0] || {}).node || p.node, base = String(p.job).replace(/#\d+$/, '');
+    const st = status.get(p.job) ?? status.get(base);
+    usage.push({ id: String(p.job), start, end, gpus, gpuType: sku.get(node) || null, cluster, node, kind: p.class === 'inference' || p.class === 'serving' ? 'deployment' : 'job', name: base, group: base,
+      user: p.owner || undefined, namespace: p.namespace || undefined, useCase: p.class === 'training' ? 'training' : undefined, status: end == null ? 'running' : ST[st] || 'succeeded',
+      util: n ? { busy: busy / n, sm: busy ? smSum / busy : 0, idleLong, samples: n, ...(memPeak != null ? { memPeak } : {}) } : (memPeak != null ? { memPeak } : undefined) });
+  }
+  const bySku = new Map(); for (const c of cap.values()) if (c.sku) bySku.set(c.sku, (bySku.get(c.sku) || 0) + c.devices);
+  return { usage, capacity: [...bySku].map(([gpuType, gpus]) => ({ cluster, gpuType, gpus })) };
+}

@@ -19,7 +19,7 @@ import * as Live from '../src/adapters/live.mjs';
 import { toEpoch } from '../src/adapters/time.mjs';
 import * as Logs from '../src/adapters/logs.mjs';
 import * as Topo from '../src/adapters/topology.mjs';
-import { writeGpuHealth, toFleetScopeTrace } from '../src/export.mjs';
+import { writeGpuHealth, toFleetScopeTrace, toGpuLedger } from '../src/export.mjs';
 import * as Calib from '../src/calibrate.mjs';
 import * as RCA from '../src/rca.mjs';
 import * as Opt from '../src/optimize.mjs';
@@ -60,6 +60,7 @@ const HELP = `fleetops — shared data layer for AIInfraTools
   fleetops token list --tokens FILE
   fleetops data export gpu-health --out DIR [--from T] [--to T]   samples.jsonl, jobs.json, results.jsonl for gpu-health
   fleetops data export fleetscope-trace --out FILE [--pool P]     CSV for FleetScope's Trace replay node
+  fleetops data export gpu-ledger --out usage.jsonl [--capacity cap.json] [--cluster C]   usage records for gpu-ledger (billing, waste)
   fleetops demo --training [--days 7] [--tuned-at D]              training jobs with planted badput (for goodput and tune);
                                                                  --tuned-at applies two recommendations on day D
   fleetops demo [--scenario NAME] [--seed N] [--list] [--now]      a store with one planted cause (a benchmark scenario) to
@@ -522,7 +523,8 @@ async function main() {
     const what = rest[0];
     if (what === 'gpu-health') { if (!o.out) throw new Error('--out DIR'); const r = writeGpuHealth(store, o.out, { from: time(o.from), to: time(o.to) }); if (J) OUT.exported = r; else say(`wrote ${r.samples} samples, ${r.jobs} jobs, ${r.results} results to ${r.dir}`); return; }
     if (what === 'fleetscope-trace') { if (!o.out) throw new Error('--out FILE'); const csv = toFleetScopeTrace(store, { from: time(o.from), to: time(o.to), pool: o.pool }); fs.writeFileSync(o.out, csv); const n = csv.split('\n').length - 2; if (J) OUT.exported = { file: o.out, requests: n }; else say(`wrote ${n} requests to ${o.out}`); return; }
-    throw new Error('export gpu-health | fleetscope-trace');
+    if (what === 'gpu-ledger') { if (!o.out) throw new Error('--out usage.jsonl'); const r = toGpuLedger(store, { from: time(o.from), to: time(o.to), cluster: o.cluster && o.cluster !== true ? o.cluster : null }); fs.writeFileSync(o.out, r.usage.map(x => JSON.stringify(x)).join('\n') + (r.usage.length ? '\n' : '')); if (o.capacity && o.capacity !== true) fs.writeFileSync(o.capacity, JSON.stringify(r.capacity, null, 1)); if (J) OUT.exported = { file: o.out, usage: r.usage.length, capacity: r.capacity }; else say(`wrote ${r.usage.length} usage records to ${o.out}${o.capacity && o.capacity !== true ? ` and capacity to ${o.capacity}` : ''} (gpu-ledger report --usage ${o.out})`); return; }
+    throw new Error('export gpu-health | fleetscope-trace | gpu-ledger');
   }
   throw new Error(`unknown: data ${cmd}\n\n${HELP}`);
 }
