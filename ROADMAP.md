@@ -303,6 +303,19 @@ prediction.
   prediction was within 3 points.
 - **Still needed:** a change applied on a real fleet.
 
+### 19. Serving: fit, capacity and one-command deployment
+
+- **Fit:** given GPUs, which catalog models fit and how much load each carries within the latency targets.
+- **Capacity:** given a model and GPUs, the max request rate, concurrency and longest prompt.
+- **Deploy:** the plan becomes vLLM on Kubernetes (a Deployment, or a LeaderWorkerSet across nodes), checked against
+  the cluster, applied, smoke-tested and registered with fleetops for tuning.
+
+**Done when:** a model deployed this way meets its targets at the planned rate under a load test on a real cluster.
+
+**Status:** built ([fleetops/docs/SERVING.md](fleetops/docs/SERVING.md)), tested against a stub cluster and a fake
+OpenAI server. **Still needed:** a deployment on a real cluster, a load test against the plan, and disaggregated
+serving (llm-d or Dynamo) when the sizer chooses it.
+
 ### 17. Fabric and storage stalls
 
 - **Fabric:** slow NCCL links traced to switch ports and congestion counters (UFM, SONiC, switch telemetry), not
