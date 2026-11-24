@@ -79,17 +79,23 @@ export function compare(store, { field, version, treated, since, now, policy = {
   const C = new Set([...inv].filter(([n, r]) => !T.has(n) && skus.has(r.sku) && String(r.v[field]) !== String(version)).map(([n]) => n));
   if (!C.size) return { ok: null, metrics: [], note: 'no control nodes of the same SKU on the old version' };
   // exposure: GPU-hours of placements per side
-  const exp = { T: 0, C: 0 }, side = n => (T.has(n) ? 'T' : C.has(n) ? 'C' : null);
+  const exp = { T: 0, C: 0 }, expN = new Map(), side = n => (T.has(n) ? 'T' : C.has(n) ? 'C' : null);
   for (const p of store.query('placement', { to: now })) {
     const s = Math.max(since, p.start ?? p.t), e = Math.min(now, p.end ?? now); if (!(e > s)) continue;
     const devs = p.devices && p.devices.length ? p.devices : p.node ? Array.from({ length: p.gpuCount || 1 }, () => ({ node: p.node })) : [];
-    for (const d of devs) { const k = side(d.node); if (k) exp[k] += (e - s) / H; }
+    for (const d of devs) { const k = side(d.node); if (k) { exp[k] += (e - s) / H; expN.set(d.node, (expN.get(d.node) || 0) + (e - s) / H); } }
   }
   const metrics = [], rate = (name, events) => {
-    const n = { T: 0, C: 0 }; for (const nd of events) { const k = side(nd); if (k) n[k]++; }
+    const n = { T: 0, C: 0 }, perNode = new Map(); for (const nd of events) { const k = side(nd); if (k) { n[k]++; perNode.set(nd, (perNode.get(nd) || 0) + 1); } }
     if (exp.T <= 0 || exp.C <= 0) return;
-    const lam = n.C / exp.C * exp.T, p = poissonSf(n.T, lam), ratio = lam > 0 ? n.T / lam : n.T > 0 ? Infinity : 1;
-    metrics.push({ name, treated: n.T, expected: lam, ratio, p, regression: n.T >= 2 && ratio >= P.failRatio && p < P.alpha, detail: `${n.T} on the new version vs ${lam.toFixed(1)} expected from the old (${n.C} in ${exp.C.toFixed(0)} GPU-h)` });
+    const lam = n.C / exp.C * exp.T, ratio = lam > 0 ? n.T / lam : n.T > 0 ? Infinity : 1;
+    // Failures cluster on a few bad nodes and multi-node jobs, so counts vary more between nodes than Poisson allows.
+    // The dispersion φ (Pearson χ² over the control nodes) widens the test; φ = 1 is the plain Poisson test.
+    const r = n.C / exp.C, ctl = [...C].filter(x => (expN.get(x) || 0) > 0);
+    const chi = ctl.reduce((sum, x) => { const e = r * expN.get(x); return e > 0 ? sum + ((perNode.get(x) || 0) - e) ** 2 / e : sum; }, 0);
+    const phi = ctl.length > 5 && r > 0 ? Math.max(1, chi / (ctl.length - 1)) : 1;
+    const p = phi > 1 ? 1 - normCdf((n.T - lam - 0.5) / Math.sqrt(phi * Math.max(lam, 1e-9))) : poissonSf(n.T, lam);
+    metrics.push({ name, treated: n.T, expected: lam, ratio, p, dispersion: phi, regression: n.T >= 2 && ratio >= P.failRatio && p < P.alpha, detail: `${n.T} on the new version vs ${lam.toFixed(1)} expected from the old (${n.C} in ${exp.C.toFixed(0)} GPU-h${phi > 1.5 ? `; between-node dispersion ×${phi.toFixed(1)}` : ''})` });
   };
   // job failures (not cancellations) on the nodes, and hard faults from logs
   rate('job failures', store.query('job', { from: since, to: now, where: j => ['failed', 'timeout'].includes(j.status) }).flatMap(j => [...new Set((j.devices || []).map(d => d.node).concat(j.nodes || []))]));
