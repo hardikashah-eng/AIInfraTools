@@ -21,3 +21,8 @@ jobs:
       - name: Tests
         working-directory: fleetops
         run: npm test
+      # Root-cause accuracy on the synthetic benchmark (a seed not used to tune the rules). Fails below the bar, so a
+      # rule change that breaks a cause shows up in the PR. Accuracy on a real fleet needs injected or postmortem labels.
+      - name: Root-cause benchmark
+        working-directory: fleetops
+        run: node tools/fleetops.mjs rca bench --per-cause 10 --seed 7 --min-top1 0.95 --min-top3 0.98 --store "$RUNNER_TEMP/fleet-data"

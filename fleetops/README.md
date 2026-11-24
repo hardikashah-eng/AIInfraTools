@@ -51,6 +51,10 @@ Root-cause analysis uses them to point at a GPU seen failing only in dmesg, a ba
 
 `fleetops rca` finds incidents (job-failure spikes, serving latency regressions) and ranks their likely causes with rules over the store: workload, hardware, change, infrastructure, KV-cache pressure, load and monitoring gaps. Every hypothesis cites its evidence and says how to confirm it; `rca eval` measures top-1/top-3 accuracy on labeled incidents. On the Philly week it finds six failure spikes and traces each to one tenant's retry storm across 100+ machines, with the GPUs ruled out. See [docs/RCA.md](docs/RCA.md).
 
+## Measured root-cause accuracy
+
+`fleetops rca bench` scores root-cause analysis on labeled incidents: synthetic scenarios with distractors, faults injected on a test cluster (`fleetops inject`, dry-run unless `--live`, targets limited to an allowlist), and postmortems. It reports top-1/top-3 per cause and whether the right component was named, fits rule weights on real labels (`--fit`), and gates CI. Detection now uses seasonal baselines and CUSUM change-point detection, with grouping. The benchmark's first run found and fixed eight weaknesses in the rules (73% → 99% top-1 on scenarios not used for tuning). See [docs/BENCHMARK.md](docs/BENCHMARK.md), including three ways to test against production traces.
+
 ## Optimization with safe execution
 
 `fleetops optimize` collects candidate changes from gpu-health (right-sizing, scale-in, reclaiming idle GPUs), rca (retry storms) and FleetScope (the cheapest pool sizes that still meet the SLO). It picks a set that meets a savings goal without double-counting or touching protected classes, and stages it in gpu-health's approval queue. Each stage needs its own approval, runs dry unless both locks are open, and is followed by an SLO guard. A regression rolls back to the last verified state automatically. Applying a change never is automatic. See [docs/OPTIMIZE.md](docs/OPTIMIZE.md).
@@ -84,6 +88,10 @@ src/adapters/time.mjs    timestamps with zones and US Pacific daylight saving
 src/export.mjs           store → gpu-health inputs, FleetScope trace CSV
 src/calibrate.mjs        FleetScope pool and Inference Sizer fits, held-out checks, drift, profiles
 src/rca.mjs              incident detection, causal rules, ranked hypotheses with evidence, evaluation
+src/detect.mjs           seasonal baselines, Poisson and z-score CUSUM, incident grouping
+src/bench.mjs            labeled scenarios, accuracy per cause, injected/postmortem scoring, fitted weights
+src/inject.mjs           fault injection for a test cluster: allowlist, dry-run, undo, labels
+src/memstore.mjs         the store interface in memory (benchmark, tests)
 src/optimize.mjs         candidates, selection, staged rollout through gpu-health's queue, guards, rollback, verify
 tools/fleetops.mjs       CLI
 tools/fetch-public-data.sh
