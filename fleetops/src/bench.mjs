@@ -31,8 +31,8 @@ function fleet(r) {
   const owners = Array.from({ length: r.int(3, 6) }, (_, i) => `team-${String.fromCharCode(97 + i)}`);
   const s = new MemStore(), versions = Object.fromEntries(nodes.map(x => [x, { driver: '550.54.15', kernel: '5.15.0-91-generic', vbios: '96.00.74.00.0D' }]));
   const f = { r, s, nodes, leafOf, rackOf, owners, versions, k: 0, noise: r.u() * 0.15 };
-  s.append('topology', nodes.flatMap(x => [{ t: T0 - 30 * 86400, kind: 'ib', from: x, to: `switch:${leafOf[x]}` }, { t: T0 - 30 * 86400, kind: 'rack', from: x, to: `rack:${rackOf[x]}` }, { t: T0 - 30 * 86400, kind: 'pdu', from: x, to: `pdu:P${rackOf[x].slice(1)}` }]));
-  s.append('topology', [...new Set(Object.values(leafOf))].map(l => ({ t: T0 - 30 * 86400, kind: 'ib', from: `switch:${l}`, to: 'switch:spine-1', uplink: true })));
+  s.append('topology', nodes.flatMap((x, i) => [{ t: T0 - 30 * 86400, kind: 'ib', from: x, to: `switch:${leafOf[x]}`, port: (i % 4) + 1 }, { t: T0 - 30 * 86400, kind: 'rack', from: x, to: `rack:${rackOf[x]}` }, { t: T0 - 30 * 86400, kind: 'pdu', from: x, to: `pdu:P${rackOf[x].slice(1)}` }]));
+  s.append('topology', [...new Set(Object.values(leafOf))].map(l => ({ t: T0 - 30 * 86400, kind: 'ib', from: `switch:${l}`, to: 'switch:spine-1', port: 33, uplink: true })));
   return f;
 }
 const leaves = f => [...new Set(Object.values(f.leafOf))], racks = f => [...new Set(Object.values(f.rackOf))];
@@ -215,6 +215,71 @@ const SCENARIOS = {
     f.s.append('step', steps); f.s.append('collective', coll);
     if (r.chance(0.5)) f.s.append('log', [kernel(bad, T0 + r.int(0, 300), 'ib_link_down')]);
     return { incident: { symptom: 'training-slow', job: 'train-llm', from: T0, to: T0 + H }, cause: 'slow-link', component: bad };
+  },
+  'slow-link: a bad cable on a leaf port': f => {
+    const { r } = f, nodes = r.sample(f.nodes, r.int(3, Math.min(6, f.nodes.length))), bad = r.pick(nodes), deg = 0.3 + r.u() * 0.3, steps = [], coll = [];
+    const ranks = nodes.flatMap(x => ['0', '1', '2', '3'].map(g => ({ node: x, gpu: g })));
+    for (let i = 0; i < 120; i++) {
+      const t = T0 - 2 * H + i * 90, after = t > T0;
+      for (const [k, rk] of ranks.entries()) {
+        const comm = after ? 0.1 / deg : 0.1;
+        steps.push({ t, job: 'train-llm', rank: k, node: rk.node, gpu: rk.gpu, step: i, durS: 0.9 + comm, commS: comm, computeS: 0.9 * (1 + (r.u() - 0.5) * 0.03) });
+        coll.push({ t, job: 'train-llm', node: rk.node, rank: k, op: 'AllReduce', bytes: 268435456, busbw: 380 * (after && rk.node === bad ? deg : 1) * (1 + (r.u() - 0.5) * 0.06), execS: 0.7 });
+      }
+    }
+    f.s.append('step', steps); f.s.append('collective', coll);
+    // the leaf ports of the job's nodes: the bad node's port starts counting symbol errors and link recoveries
+    const portNo = n => f.nodes.indexOf(n) % 4 + 1, ports = [];
+    for (let t = T0 - 6 * H; t <= T0 + H; t += 300) for (const n of nodes) {
+      const k = Math.max(0, t - T0) / 300, b = n === bad;
+      ports.push({ t, switch: f.leafOf[n], port: portNo(n), symbolErrors: b ? Math.round(k * (200 + r.int(0, 100))) : 3, linkRecovery: b ? Math.floor(k / 3) : 0, xmitWait: Math.round((t - T0 + 7 * H) * 50) });
+    }
+    f.s.append('port', ports);
+    return { incident: { symptom: 'training-slow', job: 'train-llm', from: T0, to: T0 + H }, cause: 'slow-link', component: `port:${f.leafOf[bad]}/${portNo(bad)}` };
+  },
+  'fabric-congestion: a leaf\'s uplinks saturated': f => {
+    const { r } = f, ls = r.sample(leaves(f), 2), nodes = ls.flatMap(l => r.sample(behind(f, 'leaf', l), 2)), hot = ls[0], slow = 1.8 + r.u(), steps = [], coll = [];
+    const ranks = nodes.flatMap(x => ['0', '1', '2', '3'].map(g => ({ node: x, gpu: g })));
+    for (let i = 0; i < 120; i++) {
+      const t = T0 - 2 * H + i * 90, after = t > T0, comm = 0.15 * (after ? slow : 1) * (1 + (r.u() - 0.5) * 0.05);
+      for (const [k, rk] of ranks.entries()) {
+        steps.push({ t, job: 'train-llm', rank: k, node: rk.node, gpu: rk.gpu, step: i, durS: 0.9 + comm, commS: comm, computeS: 0.9 * (1 + (r.u() - 0.5) * 0.03) });
+        coll.push({ t, job: 'train-llm', node: rk.node, rank: k, op: 'AllReduce', bytes: 268435456, busbw: 380 / (after ? slow : 1) * (1 + (r.u() - 0.5) * 0.06), execS: 0.7 });
+      }
+    }
+    f.s.append('step', steps); f.s.append('collective', coll);
+    const ports = []; let w = {};
+    for (let t = T0 - 6 * H; t <= T0 + H; t += 300) for (const l of leaves(f)) { w[l] = (w[l] || 0) + (t > T0 && l === hot ? 5e6 : 4e4) * (1 + r.u() * 0.2); ports.push({ t, switch: l, port: 33, xmitWait: Math.round(w[l]), txBytes: t * 1e3 }); }
+    f.s.append('port', ports);
+    return { incident: { symptom: 'training-slow', job: 'train-llm', from: T0, to: T0 + H }, cause: 'fabric-congestion', component: `switch:${hot}` };
+  },
+  'storage-stall: a slow Lustre OST': f => {
+    const { r } = f, nodes = r.sample(f.nodes, r.int(2, 4)), osts = ['OST0000', 'OST0001', 'OST0002', 'OST0003', 'OST0004', 'OST0005'], bad = r.pick(osts), slow = 5 + r.u() * 6, steps = [], st = [];
+    for (let i = 0; i < 120; i++) {
+      const t = T0 - 2 * H + i * 90, after = t > T0, data = after ? 0.08 * slow * (1 + r.u() * 0.2) : 0.05 * (1 + r.u() * 0.2);
+      for (const [k, n] of nodes.entries()) steps.push({ t, job: 'train-llm', rank: k, node: n, gpu: '0', step: i, durS: 1.0 + data, dataS: data, computeS: 0.9 * (1 + (r.u() - 0.5) * 0.03), commS: 0.1 });
+    }
+    for (let t = T0 - 6 * H; t <= T0 + H; t += 300) for (const o of osts) {
+      const lat = (o === bad && t > T0 ? 2 * slow : 2) * (1 + (r.u() - 0.5) * 0.2);
+      st.push({ t, target: `lustre:${o}`, op: 'read', job: 'train-llm', ops: 500 + r.int(0, 100), bytes: 5e8, latMs: lat, windowS: 300 });
+      if (o === bad) st.push({ t, target: `lustre:${o}`, op: 'read', job: 'eval-sweep', ops: 200, bytes: 1e8, latMs: lat, windowS: 300 });
+    }
+    f.s.append('step', steps); f.s.append('storage', st);
+    return { incident: { symptom: 'training-slow', job: 'train-llm', from: T0, to: T0 + H }, cause: 'storage-stall', component: `storage:lustre:${bad}` };
+  },
+  'storage-stall: checkpoint writes to a slow NFS export': f => {
+    const { r } = f, nodes = r.sample(f.nodes, r.int(2, 4)), targets = ['nfs:filer1:/ckpt', 'nfs:filer2:/datasets'], slow = 4 + r.u() * 4, steps = [], st = [];
+    for (let i = 0; i < 120; i++) {
+      const t = T0 - 2 * H + i * 90, after = t > T0, ck = i % 5 === 0 ? (after ? 6 * slow : 6) * (1 + r.u() * 0.1) : 0;
+      for (const [k, n] of nodes.entries()) steps.push({ t, job: 'train-llm', rank: k, node: n, gpu: '0', step: i, durS: 1.0 + ck, ckptS: ck || undefined, dataS: 0.04, computeS: 0.9, commS: 0.06 });
+    }
+    for (let t = T0 - 6 * H; t <= T0 + H; t += 300) for (const n of nodes) for (const tg of targets) {
+      const w = tg.endsWith('/ckpt');
+      st.push({ t, node: n, target: tg, op: w ? 'write' : 'read', ops: 300, latMs: (w && t > T0 ? 3 * slow : 3) * (1 + (r.u() - 0.5) * 0.2), windowS: 300 });
+    }
+    f.s.append('step', steps); f.s.append('storage', st);
+    if (r.chance(0.3)) f.s.append('log', [kernel(nodes[0], T0 + 600, 'nfs_timeout', undefined, 'nfs: server filer1 not responding, still trying')]);
+    return { incident: { symptom: 'training-slow', job: 'train-llm', from: T0, to: T0 + H }, cause: 'storage-stall', component: 'storage:nfs:filer1:/ckpt' };
   },
   'replica-tail: one serving replica slow': f => {
     const { r } = f, reps = Array.from({ length: r.int(4, 8) }, (_, i) => `chat-70b-${i}`), bad = r.pick(reps), slow = 2 + r.u() * 2, rq = [];

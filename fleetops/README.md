@@ -85,13 +85,28 @@ Spans (OTLP, or forwarded clock-corrected by hybrid-tracing) become per-request 
 
 On Philly's real job traces, the 10 flaky nodes found in the first half of a week kept failing at 3.5× their expected rate in the second half. See [docs/TUNE.md](docs/TUNE.md).
 
+## Power-aware capacity
+
+`fleetops power report` gives IT kW per rack, PDU, row and site against budgets, and how many more nodes fit. `power predict --cap 70%` gives which jobs a cap slows and by how much: memory-bound serving barely notices, compute-bound training does. `power fit` measures that response on your GPUs. `power plan` picks the caps that bring each group under budget at the least slowdown and queues them for approval. NVIDIA and AMD are both handled, and the live agent proposes caps when a group goes over budget. FleetScope models caps per pool and site budgets too (`fleetscope power`). See [docs/POWER.md](docs/POWER.md).
+
+## Node admission and safe rollouts
+
+- **Admission:** `tools/admit-node.sh` runs on a new or repaired node: versions, topology, DCGM diagnostic, NCCL all-reduce, burn-in and the SDC canary. `fleetops admit check NODE` compares the results with the same SKU's admitted nodes and says admit, reject (with the evidence) or incomplete (with what to run). Admitting removes the node's admission taint once a person approves; rejecting keeps it out on its own.
+- **Rollouts:** `fleetops rollout plan` moves a driver, firmware, CUDA, NCCL or kernel version to a canary spread over racks, then waves, each approved. After each bake it compares the new version's nodes with the old ones on failures, hard faults, NCCL bandwidth, per-rank step compute in the same jobs and TTFT. A regression rolls the wave back and halts the rollout.
+
+See [docs/ADMISSION.md](docs/ADMISSION.md).
+
 ## Serving: what fits, what it carries, deploy it
 
 - **What fits:** `fleetops serving fit --gpu H100 --nodes 2 [--rate 5]` lists every catalog model with the load it carries on that hardware within the TTFT and TPOT targets (production and flat out), output tokens/s, $ per million tokens and the layout. With `--rate`, the models that carry it come first, largest first.
 - **What one model carries:** `fleetops serving capacity --model llama33-70b --gpu H100 --nodes 2` gives the max request rate, concurrency, the longest prompt that still meets TTFT, and the layout.
-- **Deploy:** `install/install-serving.sh --model … --gpu … --nodes 2 --hf-secret hf-token` (or `fleetops serving deploy … --apply`) renders vLLM as a Deployment, or a LeaderWorkerSet when an instance spans nodes, plus a Service and optional KEDA autoscaling; checks the cluster; applies; waits; sends a test completion; and registers the pool so `fleetops tune` and the agent know it. A dry run unless told to apply.
+- **Deploy:** `install/install-serving.sh --model … --gpu … --nodes 2 --hf-secret hf-token` (or `fleetops serving deploy … --apply`) renders vLLM as a Deployment, or a LeaderWorkerSet when an instance spans nodes, plus a Service and optional KEDA autoscaling; checks the cluster; applies; waits; sends a test completion; and registers the pool so `fleetops tune` and the agent know it. A dry run unless told to apply. `--mode disagg` (or `auto`) deploys disaggregated prefill and decode pools on llm-d instead.
 
 The numbers are the Inference Sizer's, from spec sheets unless `fleetops calibrate` has fitted them to your benchmarks. See [docs/SERVING.md](docs/SERVING.md).
+
+## Fabric and storage stalls
+
+A slow-link diagnosis names the switch port behind the slow node (`leaf-03/17`) and whether its counters show a bad cable or congestion. Counters come from perfquery, ibqueryerrors, the NIC's `ethtool -S`, or UFM, SONiC or SNMP through Prometheus. `fabric-congestion` names a leaf whose uplinks congested when a whole job's communication slowed. `storage-stall` traces data-loader and checkpoint waits to the Lustre OST, NFS export or bucket whose latency rose (Lustre job_stats, NFS mountstats). See [docs/FABRIC-STORAGE.md](docs/FABRIC-STORAGE.md).
 
 ## Training goodput
 

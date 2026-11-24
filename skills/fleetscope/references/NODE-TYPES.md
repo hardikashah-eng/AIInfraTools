@@ -107,6 +107,7 @@ Group: Compute. Inputs: yes. Outputs: yes.
 | `offloadGBs` | `50` |
 | `loraAdapters` | `0` |
 | `loraSlots` | `8` |
+| `powerCapPct` | `100` |
 
 ## `link`: Cross-site link
 

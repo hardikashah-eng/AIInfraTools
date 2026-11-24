@@ -11,7 +11,7 @@ import path from 'node:path';
 import { DataStore, openStore } from './store.mjs';
 
 export const HIGH_VOLUME = ['device', 'request', 'span'];
-const MEAN = ['sm', 'tensor', 'dram', 'memUsedGB', 'clockMHz', 'tempC', 'powerW', 'memTempC'], MAX = ['tempC', 'powerW', 'eccSbeTotal', 'eccDbeTotal', 'linkErrTotal', 'remapPending'];
+const MEAN = ['sm', 'tensor', 'dram', 'memUsedGB', 'clockMHz', 'tempC', 'powerW', 'memTempC'], MAX = ['tempC', 'powerW', 'powerLimitW', 'eccSbeTotal', 'eccDbeTotal', 'linkErrTotal', 'remapPending'];
 const dayStart = d => Date.parse(d + 'T00:00:00Z') / 1000;
 
 // Device samples → one record per device per `step` seconds (t = start of the bin, so a bin stays in its samples' day).

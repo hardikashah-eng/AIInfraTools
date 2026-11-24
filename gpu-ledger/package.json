@@ -1,0 +1,10 @@
+{
+  "name": "gpu-ledger",
+  "version": "0.1.0",
+  "private": true,
+  "description": "GPU billing and waste for any cluster: who used which GPUs, what it cost, how much was useful, and where to save. Exports FOCUS.",
+  "type": "module",
+  "bin": { "gpu-ledger": "tools/ledger.mjs" },
+  "scripts": { "test": "node --test tests/*.test.mjs", "demo": "node tools/ledger.mjs demo" },
+  "engines": { "node": ">=20" }
+}

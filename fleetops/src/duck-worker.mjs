@@ -33,7 +33,7 @@ async function handle(m) {
   if (m.op === 'rollup') {
     if (!has(m.kind)) return 0;
     const num = f => `TRY_CAST(json_extract_string(rec, '$.${f}') AS DOUBLE)`;
-    const MEAN = ['sm', 'tensor', 'dram', 'memUsedGB', 'clockMHz', 'tempC', 'powerW', 'memTempC'], MAX = ['tempC', 'powerW', 'eccSbeTotal', 'eccDbeTotal', 'linkErrTotal', 'remapPending'];
+    const MEAN = ['sm', 'tensor', 'dram', 'memUsedGB', 'clockMHz', 'tempC', 'powerW', 'memTempC'], MAX = ['tempC', 'powerW', 'powerLimitW', 'eccSbeTotal', 'eccDbeTotal', 'linkErrTotal', 'remapPending'];
     const fieldsSql = [...MEAN.map(f => `'${f}', round(avg(${num(f)}), 4)`), ...MAX.map(f => `'${f}Max', max(${num(f)})`)].join(', ');
     fs.mkdirSync(path.join(m.dst, m.kind), { recursive: true });
     const [{ n }] = await rows(`SELECT count(*)::DOUBLE n FROM (SELECT DISTINCT floor(t / ${+m.step}), node, gpu FROM ${src(m.kind)} WHERE day = ${q(m.day)})`);

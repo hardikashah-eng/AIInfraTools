@@ -797,7 +797,8 @@ const FIELDS = {
       { p: 'offloadGB', k: 'number', label: 'CPU KV offload (GB/inst)', min: 0, max: 4096, step: 16 },
       { p: 'offloadGBs', k: 'number', label: 'Offload link GB/s', min: 1, max: 400, step: 1, show: c => +c.offloadGB > 0 },
       { p: 'loraAdapters', k: 'number', label: 'LoRA adapters in traffic', min: 0, max: 1000, step: 1 },
-      { p: 'loraSlots', k: 'number', label: 'Adapters per batch', min: 1, max: 128, step: 1, show: c => +c.loraAdapters > 0 }
+      { p: 'loraSlots', k: 'number', label: 'Adapters per batch', min: 1, max: 128, step: 1, show: c => +c.loraAdapters > 0 },
+      { p: 'powerCapPct', k: 'number', label: 'GPU power cap (% of board power)', min: 30, max: 100, step: 5 }
     ] },
     { p: 'clusterWorkload', k: 'select', label: 'Capacity follows cluster workload', opts: () => [['', 'None (as drawn)']].concat(clusterInferenceNames().map(n => [n, n])), hint: 'Instances the cluster cannot keep ready (preempted, starting up, pending) are taken away from this pool, so cluster decisions show up as SLO breaches here.' },
     { p: 'clusterAtH', k: 'number', label: 'Starting at cluster hour', min: 0, max: 72, step: 0.25, show: c => !!c.clusterWorkload },

@@ -260,6 +260,15 @@ run on GPUs yet.
 
 **Done when:** a bad node or version is stopped before it reaches a production job.
 
+**Status:** built ([fleetops/docs/ADMISSION.md](fleetops/docs/ADMISSION.md)).
+- **Admission:** six checks, against the same SKU's admitted peers. The node-side script is tested against
+  stand-in tools.
+- **Rollouts:** canary across racks, approved waves, and an automatic comparison with automatic rollback.
+- **On a synthetic fleet with a known answer:** a bad driver on two canary nodes was caught on hard faults (×7),
+  NCCL bandwidth (−22%) and per-rank compute (+12% in 43 of 44 shared jobs), rolled back and halted. A harmless one
+  was verified.
+- **Still needed:** a real rollout, and admission on real nodes.
+
 ### 15. Power-aware capacity
 
 - **FleetScope:** power budgets per rack and site, power caps per pool, and throughput per megawatt; which jobs slow
@@ -269,6 +278,15 @@ run on GPUs yet.
 
 **Done when:** a capacity plan is limited by power as well as GPUs, and a cap's effect on goodput is predicted before
 it is applied.
+
+**Status:** built ([fleetops/docs/POWER.md](fleetops/docs/POWER.md)).
+- **Measured:** power against budgets per rack, PDU and site, with headroom in nodes.
+- **Predicted per job:** the slowdown under a cap, from its measured draw and how compute-bound it is.
+- **Planned:** caps at the least slowdown, approved and guarded. The live agent proposes caps.
+- **FleetScope:** caps per pool, site budgets and tokens per MWh.
+- **Synthetic, with a known answer:** the fitted cap response came out at 0.41 against a planted 0.40. The plan
+  capped memory-bound serving to 60% (2.5% slower) before training (80%, 4.7%).
+- **Still needed:** caps applied on a real fleet and measured with `power verify`, and node-level power meters.
 
 ### 16. Cost per useful work
 
@@ -281,6 +299,18 @@ it is applied.
   - on-prem against neocloud for the same work.
 
 **Done when:** each team's bill shows what was useful and what was lost, and why.
+
+**Status:** built as a standalone tool, [gpu-ledger](gpu-ledger/), so it runs on any cluster, not only on fleetops
+data (`fleetops data export gpu-ledger` connects the two):
+- useful, idle and lost GPU-hours and cost per org, team, person, project, use case, GPU type and model;
+- ranked savings with owners, including serving cost per token and model/GPU matching;
+- FOCUS 1.4 export next to cloud bills.
+
+On Philly's week (real utilization), 70% of 314,261 allocated GPU-hours were useful, 25% idle and 4% lost.
+**Still needed:**
+- a bill reconciled against a real invoice or cloud FOCUS export;
+- on-prem vs neocloud for the same work;
+- the cost of each incident, joining fleetops incidents to the ledger.
 
 ### 18. Tuning from real traces
 
@@ -313,8 +343,11 @@ prediction.
 **Done when:** a model deployed this way meets its targets at the planned rate under a load test on a real cluster.
 
 **Status:** built ([fleetops/docs/SERVING.md](fleetops/docs/SERVING.md)), tested against a stub cluster and a fake
-OpenAI server. Fit and capacity are also a "What fits on my GPUs" view in the Inference Sizer page. **Still needed:** a deployment on a real cluster, a load test against the plan, and disaggregated
-serving (llm-d or Dynamo) when the sizer chooses it.
+OpenAI server.
+- **"What fits on my GPUs"** view in the Inference Sizer page: fit and capacity, with the deploy command.
+- **Disaggregated prefill/decode on llm-d:** a DisaggregatedSet, NIXL KV transfer and the llm-d router chart, with
+  `--mode disagg|auto`.
+- **Still needed:** a deployment on a real cluster, a load test against the plan, and P/D roles that span nodes.
 
 ### 17. Fabric and storage stalls
 
@@ -323,6 +356,14 @@ serving (llm-d or Dynamo) when the sizer chooses it.
 - **Storage:** data-loader and checkpoint-storage stalls traced to the filesystem or object store behind them.
 
 **Done when:** a slow-link or data-stall diagnosis names the switch port or storage target.
+
+**Status:** built ([fleetops/docs/FABRIC-STORAGE.md](fleetops/docs/FABRIC-STORAGE.md)).
+- **Data:** switch and NIC port counters (perfquery, ibqueryerrors, ethtool, Prometheus for UFM, SONiC and SNMP),
+  and per-target storage latency (Lustre job_stats, NFS mountstats).
+- **Diagnosis:** slow-link names the port, a bad link or congestion; new rules `fabric-congestion` and
+  `storage-stall`.
+- **Benchmark:** four new scenario kinds, 10/10 each with the component named; 220 incidents in all at 99.5% top-1.
+- **Still needed:** counters from a real fabric and a real filesystem during a real stall.
 
 ## Order and why
 

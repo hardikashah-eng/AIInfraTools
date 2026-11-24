@@ -26,7 +26,7 @@ fleetops serve --agent --store demo                       # http://127.0.0.1:940
 |---|---|
 | Devices | gpu-health's analysis of the last 6 hours of device records: GPU states, faults, risk, and the flakiness history. |
 | Incidents | Detection over the last hour: job failures, serving latency (TTFT, TPOT; against `--targets` too), training slowdowns and hangs. |
-| Diagnose | Root-cause analysis of each incident (the 15 rules in [RCA.md](RCA.md)). Each hypothesis carries `targets`: the node, GPU, replica, change or switch to act on. |
+| Diagnose | Root-cause analysis of each incident (the 17 rules in [RCA.md](RCA.md)). Each hypothesis carries `targets`: the node, GPU, replica, change or switch to act on. |
 | Decide | The top cause's playbook gives actions. The confidence of the diagnosis and the guardrails below decide how far the agent may go. |
 | Act | One merge into gpu-health's action queue, then the approved actions run. Commands run only with two locks open: `--live` on the agent and `"policy": {"dryRun": false}` in the gpu-health config. |
 | Verify | `verifyAfterS` (10 min) after acting, it judges the data since the action against the incident's own baseline. Cleared: the incident is marked mitigated. Still there, or no data to tell: a person is paged. |

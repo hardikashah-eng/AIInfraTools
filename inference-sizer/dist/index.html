@@ -1685,7 +1685,7 @@ function detailHTML() {
   const c = F.capacity(st.pick, { gpu: st.gpu, nodes: +st.nodes }, { isl: +st.isl, osl: +st.osl }, { ttftS: +st.ttft, tpotS: +st.tpotMs / 1000 }, {});
   const p = c.production, L = p.layout;
   if (!p.rate) return `<h2>${esc(c.name)}</h2><p class="sub">Doesn't fit: ${esc(p.why)}${c.edge.rate ? ` (flat out, with no headroom or spare, it would carry ${f1(c.edge.rate)} req/s)` : ''}.</p>`;
-  const cmd = `fleetops serving deploy --model ${c.model} --gpu ${st.gpu} --nodes ${st.nodes} --isl ${st.isl} --osl ${st.osl} --ttft ${st.ttft} --tpot ${(+st.tpotMs / 1000)}`;
+  const cmd = `fleetops serving deploy --model ${c.model} --gpu ${st.gpu} --nodes ${st.nodes} --isl ${st.isl} --osl ${st.osl} --ttft ${st.ttft} --tpot ${(+st.tpotMs / 1000)}${L.mode === 'disagg' ? ' --mode disagg' : ''}`;
   const kv = (k, v) => `<div><div class="k">${k}</div><div class="v">${v}</div></div>`;
   return `<h2>${esc(c.name)} on ${c.gpus} × ${esc(st.gpu)}</h2>
     <div class="kvgrid">
