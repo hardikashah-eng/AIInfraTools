@@ -1,0 +1,3 @@
+{"incident":{"id":"PM-101","symptom":"job-failures","from":"2026-11-02T03:10:00Z","to":"2026-11-02T05:00:00Z","nodes":["gpu-a17"]},"cause":"hardware","component":"gpu-a17"}
+{"incident":{"id":"PM-102","symptom":"latency","from":"2026-11-09T18:00:00Z","to":"2026-11-09T19:30:00Z","pool":"chat-h200"},"cause":"kv-pressure"}
+{"incident":{"id":"PM-103","symptom":"latency","from":"2026-11-16T21:05:00Z","to":"2026-11-16T22:00:00Z","pool":"chat-h200"},"cause":"change"}

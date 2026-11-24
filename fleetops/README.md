@@ -71,6 +71,16 @@ Spans (OTLP, or forwarded clock-corrected by hybrid-tracing) become per-request 
 
 `fleetops serve` also answers a read API (`/api/query`, `/api/series` for Grafana, `/api/incidents`, `/api/diagnose`). Tokens have roles (ingest, read, admin) and tenant scopes (namespaces, pools, clusters, infra); only their hashes are stored. Every read is audited. Prompts, completions and secrets are redacted at ingest. `--on-prem` refuses outbound calls to unlisted hosts. Optimizer guards can query Prometheus at check time. Exporter formats are pinned by contract tests. A Dockerfile, a Kubernetes manifest and a Grafana dashboard are in `Dockerfile` and `deploy/`. See [docs/SERVICE.md](docs/SERVICE.md).
 
+## Try it without a fleet
+
+`fleetops demo --store demo [--scenario slow-link]` writes a fleet with one planted cause (any of the 17 benchmark scenarios; `--list` names them) and prints the detect, diagnose and incident commands to run, and the answer to check against.
+
+fleetops is also an [Agent Skill](../skills/fleetops/SKILL.md), so a model can run it for you.
+
+## Install
+
+One command each: `install/install.sh` (one machine, as a user service), `install/install-docker.sh` (Docker Compose with Grafana provisioned) or `install/install-k8s.sh --image …` (Kubernetes). Each makes hashed tokens and prints the Prometheus, OpenTelemetry and Grafana settings to paste. `fleetops backtest` and `fleetops gameday` then turn your postmortems and test-cluster faults into labels. See [docs/INSTALL.md](docs/INSTALL.md).
+
 ## Optimization with safe execution
 
 `fleetops optimize` collects candidate changes from gpu-health (right-sizing, scale-in, reclaiming idle GPUs), rca (retry storms) and FleetScope (the cheapest pool sizes that still meet the SLO). It picks a set that meets a savings goal without double-counting or touching protected classes, and stages it in gpu-health's approval queue. Each stage needs its own approval, runs dry unless both locks are open, and is followed by an SLO guard. A regression rolls back to the last verified state automatically. Applying a change never is automatic. See [docs/OPTIMIZE.md](docs/OPTIMIZE.md).
@@ -113,6 +123,7 @@ src/ingest.mjs           remote_write and OTLP receivers, bounded dedupe pipelin
 src/proto.mjs            Snappy and the remote_write protobuf, no dependencies
 src/retention.mjs        rollups, retention with incident windows kept
 src/migrate.mjs          schema versions and migrations
+src/pull.mjs             pull windows from Prometheus (query_range) and Loki for backtests and game days
 src/api.mjs              read API (query, series, incidents, diagnose), tenant-scoped
 src/security.mjs         tokens, roles, tenant scopes, redaction, egress allowlist, audit
 src/incidents.mjs        lifecycle, paging, timeline page, postmortem draft, labels from confirmed causes

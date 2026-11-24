@@ -1,0 +1,5 @@
+[
+  { "fault": "cordon", "node": "gpu-t01", "forS": 300 },
+  { "fault": "gpu-slow", "node": "gpu-t01", "gpu": "0", "mhz": 900, "forS": 900 },
+  { "fault": "nfs-block", "nodes": "gpu-t01,gpu-t02", "server": "nfs-test", "forS": 600 }
+]

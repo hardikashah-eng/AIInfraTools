@@ -6,7 +6,7 @@ Per-request spans and per-rank steps say *which* replica, stage, rank or GPU did
 ## Serving: requests from spans
 
 **Getting spans in:**
-- Stream them to `fleetops serve` (`POST /v1/traces`, OTLP JSON).
+- Stream them to `fleetops serve` (`POST /v1/traces`, OTLP over HTTP, protobuf or JSON).
 - Or import a file: `data import otlp-traces FILE [--derive]`.
 - **hybrid-tracing's skew corrector** forwards clock-corrected spans: set its downstream to
   `http://fleetops:9400/v1/traces`. A full queue in fleetops (429) becomes 503 at the corrector, so the collector
@@ -61,8 +61,10 @@ and 9. The four new kinds score 20/20 on each seed.
 
 ## Limits
 
-- **OTLP over HTTP must be JSON:** protobuf isn't decoded.
-- **NCCL's own profiler-plugin output isn't read yet:** per-collective timing comes from Kineto's NCCL kernels.
+- **OTLP/gRPC isn't served:** OTLP over HTTP, protobuf or JSON, is.
+- **NCCL Inspector** (NCCL's profiler plugin) is read in both its JSON form (`data import nccl-inspector`) and its
+  Prometheus form (remote_write or `fleetops pull`). It feeds the **slow-link** rule: one node's NCCL bus bandwidth
+  well below the other nodes' for the same operations, while its compute is normal.
 - **The straggler rule needs several ranks' steps:** one rank's trace can't show which rank is slow.
 - **The training scenarios are synthetic.** `inject gpu-slow` and `inject nccl-stall` on a test cluster make real
   labels for them.

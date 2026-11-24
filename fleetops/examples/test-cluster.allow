@@ -1,0 +1,4 @@
+# Hosts a game day may touch: test nodes only, one per line
+gpu-t01
+gpu-t02
+nfs-test

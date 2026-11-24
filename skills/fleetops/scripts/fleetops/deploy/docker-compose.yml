@@ -1,0 +1,36 @@
+# fleetops + Grafana on one machine:  ./fleetops/install/install-docker.sh   (or docker compose up -d after it once)
+# The installer writes deploy/compose/tokens.jsonl, deploy/compose/.env and the provisioned dashboard.
+name: fleetops
+services:
+  fleetops:
+    build: { context: ../.., dockerfile: fleetops/Dockerfile }
+    image: ${FLEETOPS_IMAGE:-fleetops:local}
+    command: [serve, --host, 0.0.0.0, --port, "9400", --store, /data, --backend, parquet, --tokens, /etc/fleetops/tokens.jsonl]
+    ports: ["${FLEETOPS_PORT:-9400}:9400"]
+    volumes:
+      - fleetops-data:/data
+      - ./compose/tokens.jsonl:/etc/fleetops/tokens.jsonl:ro
+    read_only: true
+    tmpfs: [/tmp]
+    environment: { FLEETOPS_EGRESS_ALLOW: "${FLEETOPS_EGRESS_ALLOW:-}" }
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:9400/healthz').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 10s
+      retries: 5
+    restart: unless-stopped
+  grafana:
+    image: grafana/grafana:11.3.0
+    ports: ["${GRAFANA_PORT:-3000}:3000"]
+    environment:
+      GF_INSTALL_PLUGINS: yesoreyeram-infinity-datasource
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD:?run install-docker.sh first}
+      FLEETOPS_READ_TOKEN: ${FLEETOPS_READ_TOKEN:?run install-docker.sh first}
+    volumes:
+      - ./compose/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./compose/grafana/dashboards:/var/lib/grafana/dashboards:ro
+      - grafana-data:/var/lib/grafana
+    depends_on: { fleetops: { condition: service_healthy } }
+    restart: unless-stopped
+volumes:
+  fleetops-data:
+  grafana-data:

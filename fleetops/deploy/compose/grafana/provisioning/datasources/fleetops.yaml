@@ -1,0 +1,11 @@
+apiVersion: 1
+datasources:
+  - name: fleetops
+    uid: fleetops
+    type: yesoreyeram-infinity-datasource
+    url: http://fleetops:9400
+    jsonData:
+      allowedHosts: [http://fleetops:9400]
+      httpHeaderName1: Authorization
+    secureJsonData:
+      httpHeaderValue1: Bearer $FLEETOPS_READ_TOKEN

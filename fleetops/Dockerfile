@@ -11,6 +11,7 @@ COPY fleetops/src ./fleetops/src
 COPY fleetops/tools ./fleetops/tools
 WORKDIR /app/fleetops
 RUN npm install --no-save --no-package-lock --no-audit --no-fund @duckdb/node-api@2.0.1-r.1 && npm cache clean --force
+RUN mkdir -p /data && chown node:node /data   # a named volume mounted here starts owned by the service user
 USER node
 EXPOSE 9400
 ENTRYPOINT ["node", "tools/fleetops.mjs"]

@@ -38,9 +38,9 @@ the hourly rollup when the store has one. Root-cause analysis no longer loads ev
 | Endpoint | Accepts | Becomes |
 |---|---|---|
 | `POST /api/v1/write` | Prometheus remote_write (Snappy + protobuf, decoded without dependencies) | `device`, through gpu-health's exporter mapping: identical to scraping `/metrics` |
-| `POST /v1/metrics` | OTLP metrics, JSON (the same exporters through an OpenTelemetry collector) | `device` |
-| `POST /v1/logs` | OTLP logs, JSON | `log`, classified by the same patterns as `kernel-log` and `app-log` |
-| `POST /v1/traces` | OTLP traces, JSON | `span` (for milestone 8) |
+| `POST /v1/metrics` | OTLP metrics, protobuf or JSON (the same exporters through an OpenTelemetry collector) | `device` |
+| `POST /v1/logs` | OTLP logs, protobuf or JSON | `log`, classified by the same patterns as `kernel-log` and `app-log` |
+| `POST /v1/traces` | OTLP traces, protobuf or JSON | `span` (for milestone 8) |
 | `GET /metrics`, `/healthz` | | fleetops' own counters: received, written, dropped by reason, late, queue depth, flush time |
 
 - **Backpressure:** the queue is bounded (`--max-queue`). When it's full, a request gets 429 with `Retry-After: 1`, and
@@ -49,8 +49,10 @@ the hourly rollup when the store has one. Root-cause analysis no longer loads ev
   twice. Deduplication happens before the capacity check, so a retry of an accepted batch is never refused. A refused
   batch is not marked as seen, so its retry gets in.
 - **Late and out-of-order data** are accepted and counted (`fleetops_ingest_late_total`).
-- **OTLP protobuf isn't decoded:** configure the collector's `otlphttp` exporter with `encoding: json`; protobuf
-  requests get 415. Metrics that no vendor profile maps, and log lines no pattern matches, are counted as unmapped.
+- **OTLP over HTTP in protobuf (the collector's default) or JSON,** gzip- or deflate-compressed or not. The protobuf
+  decoder is checked against payloads encoded by protobufjs from the official opentelemetry-proto files. OTLP/gRPC
+  (port 4317) isn't served: use the collector's `otlphttp` exporter.
+- **Unmapped data is counted:** metrics that no vendor profile maps, and log lines no pattern matches.
 
 **Prometheus:**
 ```yaml

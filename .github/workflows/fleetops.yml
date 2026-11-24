@@ -22,7 +22,7 @@ jobs:
       # The Parquet backend's optional dependency, so its tests run (fleetops itself needs no dependencies).
       - name: Install DuckDB for the Parquet backend
         working-directory: fleetops
-        run: npm install --no-save --no-package-lock --no-audit --no-fund @duckdb/node-api@2.0.1-r.1
+        run: npm install --no-save --no-package-lock --no-audit --no-fund @duckdb/node-api@2.0.1-r.1 yaml@2   # yaml: manifest tests
       - name: Tests
         working-directory: fleetops
         run: npm test
@@ -36,3 +36,30 @@ jobs:
       - name: Scale benchmark
         working-directory: fleetops
         run: node tools/bench-scale.mjs --gpus 1000 --interval 60 --hours 26 --backend both --min-ingest 3000 --max-rca 10
+
+  # The real image (node:22-slim + npm install in the build), run the way the Kubernetes manifest runs it: non-root,
+  # read-only root filesystem, tokens mounted. Smoke: healthy, 401 without a token, 200 with one, Parquet on disk.
+  image:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: 22 }
+      - name: Build
+        run: docker build -f fleetops/Dockerfile -t fleetops:ci .
+      - name: Run and smoke-test
+        run: |
+          set -e
+          mkdir -p /tmp/fo/etc
+          node fleetops/tools/fleetops.mjs token create --tokens /tmp/fo/etc/tokens.jsonl --name ci --roles admin | sed -n 2p > /tmp/fo/token
+          chmod 644 /tmp/fo/etc/tokens.jsonl
+          docker volume create fo-data
+          docker run -d --name fo -p 9400:9400 --read-only --tmpfs /tmp -v fo-data:/data -v /tmp/fo/etc:/etc/fleetops:ro fleetops:ci
+          for i in $(seq 1 30); do curl -fsS localhost:9400/healthz && break; sleep 1; done
+          test "$(curl -s -o /dev/null -w '%{http_code}' localhost:9400/api/summary)" = 401
+          test "$(curl -s -o /dev/null -w '%{http_code}' -H "Authorization: Bearer $(cat /tmp/fo/token)" localhost:9400/api/summary)" = 200
+          curl -fsS -X POST -H "Authorization: Bearer $(cat /tmp/fo/token)" -H 'content-type: application/x-protobuf' --data-binary @fleetops/tests/fixtures/otlp/logs.pb localhost:9400/v1/logs
+          sleep 2
+          test "$(curl -s -H "Authorization: Bearer $(cat /tmp/fo/token)" 'localhost:9400/api/query?kind=log' | node -e 'let s="";process.stdin.on("data",d=>s+=d).on("end",()=>console.log(JSON.parse(s).length))')" -ge 1
+          docker logs fo
+

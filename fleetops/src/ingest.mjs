@@ -7,12 +7,14 @@
 //   POST /v1/traces      OTLP traces (JSON) → span
 //   GET  /metrics        fleetops' own metrics (Prometheus text);  GET /healthz
 //
-// OTLP protobuf is not decoded: configure the collector's otlphttp exporter with `encoding: json`.
+// OTLP/HTTP in protobuf (the collector default) or JSON, gzip or not. OTLP/gRPC (port 4317) is not served: use the
+// collector's otlphttp exporter.
 import http from 'node:http';
 import { VENDORS } from '../../gpu-health/src/vendors.mjs';
 import { exporterScrape } from './adapters/live.mjs';
 import { kernelLog, ncclLog } from './adapters/logs.mjs';
-import { snappyDecompress, decodeWriteRequest } from './proto.mjs';
+import zlib from 'node:zlib';
+import { snappyDecompress, decodeWriteRequest, decodeOtlp } from './proto.mjs';
 import { authenticate, can, redact } from './security.mjs';
 import { handleApi } from './api.mjs';
 
@@ -93,12 +95,31 @@ export function otlpTracesToSpans(body) {
       const t = nano(sp.startTimeUnixNano), end = nano(sp.endTimeUnixNano);
       if (t == null || !sp.traceId || !sp.spanId) continue;
       const a = attrs(sp.attributes);
-      out.push({ t, traceId: sp.traceId, spanId: sp.spanId, parentSpanId: sp.parentSpanId || undefined, name: sp.name, durS: end != null ? end - t : null,
+      const durS = sp.endTimeUnixNano != null ? Number(BigInt(String(sp.endTimeUnixNano)) - BigInt(String(sp.startTimeUnixNano))) / 1e9 : null; // exact, from integer nanoseconds
+      out.push({ t, traceId: sp.traceId, spanId: sp.spanId, parentSpanId: sp.parentSpanId || undefined, name: sp.name, durS,
         service: res['service.name'], node: hostOf(res) || hostOf(a), kind: sp.kind, status: sp.status && sp.status.code, attrs: a, source: 'otlp' });
       for (const k of Object.keys(out.at(-1))) if (out.at(-1)[k] === undefined) delete out.at(-1)[k];
     }
   }
   return out;
+}
+
+// NCCL Inspector's Prometheus mode (nccl_collective_exec_time_microseconds, nccl_bus_bandwidth_gbs, …) → collective
+// records, one per node, GPU, communicator, collective, message size and time.
+export function seriesToCollectives(series) {
+  const by = new Map();
+  for (const s of series) {
+    const n = s.labels.__name__, f = { nccl_collective_exec_time_microseconds: 'execUs', nccl_bus_bandwidth_gbs: 'busbw', nccl_p2p_exec_time_microseconds: 'execUs', nccl_p2p_bus_bandwidth_gbs: 'busbw' }[n];
+    if (!f) continue;
+    const L = s.labels, op = L.collective || L.p2p_operation;
+    for (const x of s.samples) {
+      const k = [L.node, L.gpu, L.comm_name, op, L.message_size, Math.round(x.t)].join('|');
+      let r = by.get(k);
+      if (!r) by.set(k, (r = { t: Math.round(x.t), node: L.node, gpu: L.gpu, comm: L.comm_name, op, msgSize: L.message_size, nranks: L.nranks != null ? +L.nranks : undefined, job: L.slurm_job_id, algoProto: L.algo_proto, source: 'nccl-inspector-prom' }));
+      if (f === 'execUs') r.execS = x.v / 1e6; else r.busbw = x.v;
+    }
+  }
+  return [...by.values()].map(r => { for (const k of Object.keys(r)) if (r[k] === undefined) delete r[k]; return r; });
 }
 
 // The queue between receivers and the store. Bounded (backpressure), dedupes repeated deliveries by record content
@@ -180,20 +201,27 @@ export function server(pipe, { site, maxBody = 32 << 20, tokens = null, audit = 
       }
       if (req.method !== 'POST') return send(res, 404, 'not found\n');
       if (!can(who, 'ingest')) return send(res, 403, 'needs the ingest role\n');
-      const body = await read(req);
+      let body = await read(req);
+      const enc = String(req.headers['content-encoding'] || '').toLowerCase(); // collectors gzip by default
+      if (enc === 'gzip') body = zlib.gunzipSync(body); else if (enc === 'deflate') body = zlib.inflateSync(body); else if (enc && enc !== 'identity' && enc !== 'snappy') return send(res, 415, `content-encoding ${enc} not supported\n`);
       let kind, recs;
       if (req.url === '/api/v1/write') {
-        const r = seriesToDevices(decodeWriteRequest(snappyDecompress(body)), { site }); pipe.m.unmapped += r.unmapped; kind = 'device'; recs = r.devices;
+        const series = decodeWriteRequest(snappyDecompress(body)), coll = seriesToCollectives(series);
+        if (coll.length && !pipe.offer('collective', coll)) return send(res, 429, 'queue full, retry\n');
+        const r = seriesToDevices(series.filter(x => !/^nccl_/.test(x.labels.__name__ || '')), { site }); pipe.m.unmapped += r.unmapped; kind = 'device'; recs = r.devices;
       } else if (/^\/v1\/(metrics|logs|traces)$/.test(req.url)) {
-        if (!/json/.test(req.headers['content-type'] || '')) return send(res, 415, 'send OTLP as JSON (otlphttp encoding: json)\n');
-        const j = JSON.parse(body.toString('utf8'));
+        const ct = req.headers['content-type'] || '', kindOf = req.url.slice(4);
+        if (!/json|protobuf/.test(ct)) return send(res, 415, 'OTLP must be application/json or application/x-protobuf\n');
+        const proto = /protobuf/.test(ct), j = proto ? decodeOtlp(kindOf, body) : JSON.parse(body.toString('utf8'));
         if (req.url === '/v1/metrics') { const r = seriesToDevices(otlpMetricsToSeries(j), { site }); pipe.m.unmapped += r.unmapped; kind = 'device'; recs = r.devices; }
         else if (req.url === '/v1/logs') { const r = otlpLogsToRecords(j); pipe.m.unmapped += r.unmatched; kind = 'log'; recs = r.logs; }
         else { kind = 'span'; recs = otlpTracesToSpans(j); }
       } else return send(res, 404, 'not found\n');
       pipe.m.redacted += redact(kind, recs); // request content never reaches the store
       if (!pipe.offer(kind, recs)) return send(res, 429, 'queue full, retry\n');
-      return send(res, req.url === '/api/v1/write' ? 204 : 200, req.url === '/api/v1/write' ? '' : '{}', req.url === '/api/v1/write' ? 'text/plain' : 'application/json');
+      // OTLP/HTTP: answer in the request's encoding (an empty Export*ServiceResponse is zero bytes in protobuf)
+      if (req.url === '/api/v1/write') return send(res, 204, '', 'text/plain');
+      return /protobuf/.test(req.headers['content-type'] || '') ? send(res, 200, Buffer.alloc(0), 'application/x-protobuf') : send(res, 200, '{}', 'application/json');
     } catch (e) { return send(res, e.code === 413 ? 413 : 400, `${e.message}\n`); }
   });
 }

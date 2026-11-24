@@ -185,6 +185,21 @@ const SCENARIOS = {
     if (r.chance(0.4)) f.s.append('log', [kernel(ranks[badK].node, stuckAt - 30, 'xid79', ranks[badK].gpu)]);
     return { incident: { symptom: 'training-hang', job: 'train-llm', from: stuckAt, to: stuckAt + 700 }, cause: 'collective-hang', component: ranks[badK].node };
   },
+  'slow-link: one node\'s network degraded': f => {
+    const { r } = f, nodes = r.sample(f.nodes, r.int(3, Math.min(6, f.nodes.length))), bad = r.pick(nodes), deg = 0.25 + r.u() * 0.35, steps = [], coll = [];
+    const ranks = nodes.flatMap(x => ['0', '1', '2', '3'].map(g => ({ node: x, gpu: g })));
+    for (let i = 0; i < 120; i++) {
+      const t = T0 - 2 * H + i * 90, after = t > T0;
+      for (const [k, rk] of ranks.entries()) {
+        const comm = after ? 0.1 / deg : 0.1; // every rank waits for the slowest link
+        steps.push({ t, job: 'train-llm', rank: k, node: rk.node, gpu: rk.gpu, step: i, durS: 0.9 + comm, commS: comm, computeS: 0.9 * (1 + (r.u() - 0.5) * 0.03) });
+        for (const [op, bytes, bw] of [['AllReduce', 268435456, 380], ['AllGather', 67108864, 300]]) coll.push({ t, job: 'train-llm', node: rk.node, rank: k, op, bytes, busbw: bw * (after && rk.node === bad ? deg : 1) * (1 + (r.u() - 0.5) * 0.06), execS: bytes / 1e9 / bw, source: 'nccl-inspector' });
+      }
+    }
+    f.s.append('step', steps); f.s.append('collective', coll);
+    if (r.chance(0.5)) f.s.append('log', [kernel(bad, T0 + r.int(0, 300), 'ib_link_down')]);
+    return { incident: { symptom: 'training-slow', job: 'train-llm', from: T0, to: T0 + H }, cause: 'slow-link', component: bad };
+  },
   'replica-tail: one serving replica slow': f => {
     const { r } = f, reps = Array.from({ length: r.int(4, 8) }, (_, i) => `chat-70b-${i}`), bad = r.pick(reps), slow = 2 + r.u() * 2, rq = [];
     for (let t = T0 - 24 * H; t <= T0 + 1800; t += r.int(20, 40)) {

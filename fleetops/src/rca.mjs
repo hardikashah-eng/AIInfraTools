@@ -11,7 +11,7 @@
 // shared-component (affected nodes behind one leaf/spine switch, rack, PDU or row), version-cohort (affected nodes run a
 // driver/firmware/kernel/image/NCCL version the rest of the fleet doesn't), straggler (one training rank computes
 // slower; the others wait in NCCL), collective-hang (watchdog timeouts; the rank that never joined), replica-tail (one
-// serving replica holds the slow requests), slow-stage (the request stage that grew: queue, prefill, decode).
+// serving replica holds the slow requests), slow-link (one node's NCCL bandwidth well below the others'), slow-stage (the request stage that grew: queue, prefill, decode).
 
 import { groups } from './adapters/topology.mjs';
 import { DEVICE_CLASSES } from './adapters/logs.mjs';
@@ -94,6 +94,7 @@ function context(store, inc, { lookbackH = 24 } = {}) {
   // training steps of the job (6 h of history for its own baseline) and requests of the pool (the day before too)
   c.steps = store.query('step', { from: from - 6 * H, to, where: s => !inc.job || s.job === inc.job });
   c.requests = inc.pool ? store.query('request', { from: before, to, where: r => r.pool === inc.pool }) : [];
+  c.collectives = inc.symptom && inc.symptom.startsWith('training') ? store.query('collective', { from: from - 2 * H, to, where: x => !inc.job || !x.job || x.job === inc.job }) : [];
   // logs: the whole lookback (for baselines) and the incident window (2 h lead-in)
   c.logs = store.query('log', { from: before, to });
   c.logsWin = c.logs.filter(l => l.t >= from - 2 * H);
@@ -448,6 +449,36 @@ const RULES = {
       against: [],
       verify: [culprit != null ? `Get a stack from rank ${culprit} on ${node} (py-spy dump, or cuda-gdb for a GPU hang) and check that GPU's health.` : 'Get stacks from every rank (py-spy dump) and compare the last collective each reached.', 'Rerun with NCCL_DEBUG=INFO and TORCH_NCCL_TRACE_BUFFER_SIZE set to capture the flight recorder.'],
       likelyCause: hw.length ? 'device' : 'app', component: node || undefined,
+    };
+  },
+
+  // One node's links are slow: NCCL bus bandwidth on its ranks well below the other nodes' for the same operations,
+  // while their compute is normal (that would be a straggler).
+  'slow-link'(c) {
+    const win = c.collectives.filter(x => x.t > c.from && x.t <= c.to && Number.isFinite(x.busbw) && x.node);
+    const nodes = [...new Set(win.map(x => x.node))];
+    if (nodes.length < 2 || win.length < 20) return null;
+    const key = x => `${x.op}|${x.bytes ?? x.msgSize ?? ''}`, typical = new Map(); // like with like: same op and size
+    for (const k of new Set(win.map(key))) typical.set(k, median(win.filter(x => key(x) === k).map(x => x.busbw)));
+    const per = nodes.map(n => { const xs = win.filter(x => x.node === n); return { n, ratio: median(xs.map(x => x.busbw / typical.get(key(x)))), bw: median(xs.map(x => x.busbw)), count: xs.length }; });
+    const worst = per.slice().sort((a, b) => a.ratio - b.ratio)[0], others = median(per.filter(p => p !== worst).map(p => p.ratio));
+    if (!(worst.ratio <= 0.7 * others)) return null;
+    const steps = c.steps.filter(s => s.t > c.from && s.t <= c.to);
+    const comp = n => median(steps.filter(s => s.node === n).map(s => s.computeS ?? (s.commS != null ? s.durS - s.commS : NaN)));
+    const cw = comp(worst.n), co = median(nodes.filter(n => n !== worst.n).map(comp));
+    if (Number.isFinite(cw) && Number.isFinite(co) && cw > 1.2 * co) return null; // slow compute: a straggler, not the link
+    const net = c.logsWin.filter(l => l.node === worst.n && (l.class === 'network' || l.class === 'pcie') && l.severity !== 'info');
+    const leaf = ((c.topo.byNode[worst.n] || {}).leaf || [])[0], othersBw = median(per.filter(p => p !== worst).map(p => p.bw));
+    return {
+      cause: 'slow-link', title: `Slow links on ${worst.n}: NCCL bus bandwidth ${worst.bw.toFixed(0)} GB/s vs ${othersBw.toFixed(0)} GB/s on the other ${nodes.length - 1} node(s)`,
+      score: clamp01(0.45 + 0.35 * Math.min(1, (1 - worst.ratio / others) / 0.6) + (net.length ? 0.15 : 0)),
+      evidence: [{ what: `${worst.count} collectives from ${worst.n} ran at ${Math.round(worst.ratio * 100)}% of the bandwidth the same operations got elsewhere (${Math.round(others * 100)}% for the median node)`, refs: [ref('collective', { t: c.from }, { node: worst.n })] },
+        ...(Number.isFinite(cw) ? [{ what: `compute per step on its ranks ${cw.toFixed(3)} s vs ${co.toFixed(3)} s elsewhere: not a straggler` }] : []),
+        ...net.slice(0, 3).map(l => ({ what: `${where(l)} logged ${l.code} at ${iso(l.t)}`, refs: [ref('log', l, { node: l.node, code: l.code })] })),
+        ...(leaf ? [{ what: `${worst.n} sits behind ${leaf.replace('switch:', 'leaf switch ')}` }] : [])],
+      against: [],
+      verify: [`Check ${worst.n}'s NICs and cables: ibstat / ethtool error counters, link speed and width, PCIe AER.`, `Run nccl-tests (all_reduce_perf) between ${worst.n} and a known-good node.`],
+      likelyCause: 'infra', component: worst.n,
     };
   },
 
