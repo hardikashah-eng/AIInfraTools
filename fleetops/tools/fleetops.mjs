@@ -42,13 +42,15 @@ const HELP = `fleetops — shared data layer for AIInfraTools
                                                                  keeping incident windows at full resolution (keep/)
   fleetops data migrate [--apply]                                bring the store to the current schema version
   fleetops serve [--port 9400] [--host 127.0.0.1] [--tokens FILE] [--on-prem [HOSTS]] [--site S] [--max-queue 200000]
-        ingest (remote_write, OTLP JSON) and serve the read API (/api/…); tokens scope reads to a tenant; every API read
+        ingest (remote_write, OTLP over HTTP: protobuf or JSON) and serve the read API (/api/…); tokens scope reads to a tenant; every API read
         is audited in <store>/audit/api.jsonl; request content is redacted at ingest; --on-prem refuses outbound calls
         to hosts not listed (also FLEETOPS_EGRESS_ALLOW)
   fleetops token create --tokens FILE --name N [--roles read,ingest,admin] [--namespaces a,b] [--pools p] [--clusters c] [--infra]
   fleetops token list --tokens FILE
   fleetops data export gpu-health --out DIR [--from T] [--to T]   samples.jsonl, jobs.json, results.jsonl for gpu-health
   fleetops data export fleetscope-trace --out FILE [--pool P]     CSV for FleetScope's Trace replay node
+  fleetops demo [--scenario NAME] [--seed N] [--list]              a store with one planted cause (a benchmark scenario) to
+                                                                 try detect, diagnose and incidents without a fleet
 
 Sources (SOURCE):
   exporter         DCGM / AMD / SambaNova exporter text      [--vendor V] [--t EPOCH] [--site S]
@@ -227,6 +229,34 @@ function importSource(store, src, files, o) {
   return by;
 }
 
+// A demo store: one benchmark scenario (a fleet with one planted cause and distractors) written to --store, so the
+// detect → diagnose → incident flow can be tried without a fleet. The answer is printed so the result can be checked.
+function demo(store, o) {
+  const names = Bench.SCENARIO_NAMES;
+  if (o.list) { if (J) { OUT.scenarios = names; return; } names.forEach(n => say(n)); return; }
+  const want = o.scenario && o.scenario !== true ? String(o.scenario) : 'hardware: GPU fault seen in dmesg';
+  const name = names.find(n => n === want) || names.find(n => n.startsWith(want));
+  if (!name) throw new Error(`no demo scenario starts with "${want}"; see fleetops demo --list`);
+  const [lab] = Bench.generate({ perCause: 1, seed: o.seed ? +o.seed : 1, only: [name] });
+  const written = {};
+  for (const [kind, recs] of Object.entries(lab.store.data)) if (recs.length) written[kind] = store.append(kind, recs, { dedupe: true }).written;
+  if (store.flush) store.flush();
+  const inc = lab.incident, iso = t => new Date(t * 1000).toISOString();
+  const scope = [inc.pool && `--pool ${inc.pool}`, inc.job && `--job ${inc.job}`, inc.nodes && `--nodes ${[].concat(inc.nodes).join(',')}`].filter(Boolean).join(' ');
+  // demo fleets are small (12-24 nodes), so job-failure detection needs a lower floor than the default 20
+  const mf = inc.symptom === 'job-failures' ? ' --min-failures 5' : '';
+  const next = [`fleetops rca detect --from ${iso(inc.from - 6 * 3600)} --to ${iso(inc.to + 3600)}${mf} --diagnose --store ${store.dir}`,
+    `fleetops rca diagnose --symptom ${inc.symptom} --from ${iso(inc.from)} --to ${iso(inc.to)}${scope ? ' ' + scope : ''} --store ${store.dir}`,
+    `fleetops incidents open --from ${iso(inc.from - 6 * 3600)} --to ${iso(inc.to + 3600)}${mf} --store ${store.dir}`];
+  const res = { scenario: name, store: store.dir, written, incident: Object.assign({}, inc, { fromIso: iso(inc.from), toIso: iso(inc.to) }), planted: { cause: lab.cause, component: lab.component || null }, next };
+  if (J) { OUT.demo = res; return; }
+  say(`demo store ${store.dir}: ${name}`);
+  say(`  ${Object.entries(written).map(([k, n]) => `${k} ${n}`).join(', ')}`);
+  say(`  incident: ${inc.symptom}, ${iso(inc.from)} → ${iso(inc.to)}${scope ? ' (' + scope + ')' : ''}`);
+  say(`  planted cause: ${lab.cause}${lab.component ? ` (${lab.component})` : ''}`);
+  say('try:'); next.forEach(c => say('  ' + c));
+}
+
 async function main() {
   const o = args(process.argv.slice(2));
   J = !!o.json;
@@ -247,6 +277,7 @@ async function main() {
   if (area === 'backtest') return backtest(store, o);
   if (area === 'gameday') return gameday(store, cmd, o);
   if (area === 'pull') return pull(store, cmd, o);
+  if (area === 'demo') return demo(store, o);
   if (area !== 'data') throw new Error(`unknown command "${area}"\n\n${HELP}`);
   if (cmd === 'import') {
     const [src, ...files] = rest;

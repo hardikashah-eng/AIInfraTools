@@ -23,6 +23,10 @@ const SKILLS = {
   'inference-sizer': { tool: 'inference-sizer', code: ['src', 'tools', 'package.json'], refs: { 'README.md': 'OVERVIEW.md', 'docs/METHOD.md': 'METHOD.md', 'docs/SPEC-SHEETS.md': 'SPEC-SHEETS.md' }, assets: { 'specs/example.json': 'example.json' } },
   'fleetscope': { tool: 'fleetscope', code: ['src', 'tools', 'package.json'], refs: { 'docs/ASK.md': 'ASK.md', 'docs/TRACES.md': 'TRACES.md', 'docs/CI.md': 'CI.md', 'docs/CALIBRATION.md': 'CALIBRATION.md' }, assets: { 'scenarios/hybrid-chat': 'scenarios/hybrid-chat' }, generate: { 'references/NODE-TYPES.md': fleetNodeTypes } },
   'hybrid-tracing': { tool: 'hybrid-tracing', code: ['src', 'tools', 'clock', 'collector', 'deploy', 'package.json'], refs: { 'README.md': 'OVERVIEW.md', 'docs/CLOCKS.md': 'CLOCKS.md' }, assets: {} },
+  'fleetops': { tool: 'fleetops', code: ['src', 'tools', 'deploy', 'install', 'examples', 'Dockerfile', 'package.json'],
+    // fleetops imports these tools' code through ../../<tool>/src, so they sit next to it under scripts/
+    with: { 'gpu-health': ['src', 'tools', 'package.json'], 'fleetscope': ['src', 'package.json'], 'inference-sizer': ['src', 'package.json'] },
+    refs: { 'README.md': 'OVERVIEW.md', 'docs/INSTALL.md': 'INSTALL.md', 'docs/RCA.md': 'RCA.md', 'docs/INCIDENTS.md': 'INCIDENTS.md', 'docs/BENCHMARK.md': 'BENCHMARK.md', 'docs/DATA-LAYER.md': 'DATA-LAYER.md', 'docs/SERVICE.md': 'SERVICE.md', 'docs/TRACING.md': 'TRACING.md', 'docs/CALIBRATION.md': 'CALIBRATION.md', 'docs/OPTIMIZE.md': 'OPTIMIZE.md', 'docs/SCALE.md': 'SCALE.md', 'docs/SIGNALS.md': 'SIGNALS.md' }, assets: {} },
   'gpu-health': { tool: 'gpu-health', code: ['src', 'tools', 'examples', 'deploy', 'package.json'], refs: { 'README.md': 'OVERVIEW.md', 'docs/CONFIG.md': 'CONFIG.md', 'docs/RISK-PREDICTION.md': 'RISK-PREDICTION.md', 'docs/VENDORS.md': 'VENDORS.md', 'docs/FLAKINESS.md': 'FLAKINESS.md' }, assets: {} },
 };
 
@@ -58,7 +62,8 @@ function buildSkill(name, out) {
   const s = SKILLS[name], toolDir = path.join(ROOT, s.tool);
   for (const g of GENERATED) fs.rmSync(path.join(out, g), { recursive: true, force: true });
   for (const item of s.code) copyTree(path.join(toolDir, item), path.join(out, 'scripts', s.tool, item), skipJunk);
-  fs.writeFileSync(path.join(out, 'scripts', 'VENDORED.md'), `# Generated: do not edit\n\nCopied from \`${s.tool}/\` in the AIInfraTools repo by \`scripts/build-skills.mjs\`. Edit the tool there, then run \`node scripts/build-skills.mjs\`.\n`);
+  for (const [dep, items] of Object.entries(s.with || {})) for (const item of items) copyTree(path.join(ROOT, dep, item), path.join(out, 'scripts', dep, item), skipJunk);
+  fs.writeFileSync(path.join(out, 'scripts', 'VENDORED.md'), `# Generated: do not edit\n\nCopied from \`${[s.tool, ...Object.keys(s.with || {})].join('/`, `')}/\` in the AIInfraTools repo by \`scripts/build-skills.mjs\`. Edit the tool there, then run \`node scripts/build-skills.mjs\`.\n`);
   for (const [from, to] of Object.entries(s.refs)) { const dst = path.join(out, 'references', to); fs.mkdirSync(path.dirname(dst), { recursive: true }); fs.writeFileSync(dst, adaptMarkdown(fs.readFileSync(path.join(toolDir, from), 'utf8'), s.refs)); }
   for (const [from, to] of Object.entries(s.assets)) copyTree(path.join(toolDir, from), path.join(out, 'assets', to), skipJunk);
   for (const [to, fn] of Object.entries(s.generate || {})) { const dst = path.join(out, to); fs.mkdirSync(path.dirname(dst), { recursive: true }); fs.writeFileSync(dst, fn()); }

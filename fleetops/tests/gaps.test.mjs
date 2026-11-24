@@ -123,3 +123,19 @@ test('game day: every step checked against the allowlist before any runs; dry ru
   await assert.rejects(run(process.execPath, [cli, 'gameday', plan, '--allow', allow, '--live', '--store', path.join(dir, 's')]), /not in the allowlist: prod-db-1/);
   assert.equal(new DataStore(path.join(dir, 's')).query('injection').length, 0, 'the allowed first step did not run either');
 });
+
+test('demo: every scenario written to a store is diagnosed as its planted cause by the commands it prints', async () => {
+  const dir = tmp();
+  const { stdout: l } = await run(process.execPath, [cli, 'demo', '--list', '--json', '--store', path.join(dir, 'x')]);
+  const names = JSON.parse(l).scenarios;
+  assert.equal(names.length, 17);
+  for (const [i, name] of names.entries()) {
+    const { stdout } = await run(process.execPath, [cli, 'demo', '--scenario', name, '--store', path.join(dir, `s${i}`), '--json']);
+    const demo = JSON.parse(stdout).demo;
+    assert.ok(Object.values(demo.written).reduce((a, b) => a + b, 0) > 0);
+    const argv = demo.next[1].replace(/^fleetops /, '').split(' ');
+    const { stdout: d } = await run(process.execPath, [cli, ...argv, '--json']);
+    assert.equal(JSON.parse(d).incidents[0].hypotheses[0].rule, demo.planted.cause, name);
+  }
+  await assert.rejects(run(process.execPath, [cli, 'demo', '--scenario', 'nope', '--store', path.join(dir, 'n')]), /no demo scenario/);
+});

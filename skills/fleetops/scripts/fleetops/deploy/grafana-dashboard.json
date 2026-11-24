@@ -1,0 +1,266 @@
+{
+ "__inputs": [
+  {
+   "name": "DS_FLEETOPS",
+   "label": "fleetops (Infinity)",
+   "type": "datasource",
+   "pluginId": "yesoreyeram-infinity-datasource",
+   "description": "Infinity data source with base URL http://fleetops.fleetops.svc:9400 and an Authorization: Bearer <read token> header"
+  }
+ ],
+ "title": "fleetops",
+ "uid": "fleetops-overview",
+ "schemaVersion": 39,
+ "time": {
+  "from": "now-24h",
+  "to": "now"
+ },
+ "refresh": "1m",
+ "templating": {
+  "list": [
+   {
+    "name": "pool",
+    "type": "textbox",
+    "label": "pool",
+    "query": "chat-70b",
+    "current": {
+     "text": "chat-70b",
+     "value": "chat-70b"
+    }
+   }
+  ]
+ },
+ "panels": [
+  {
+   "id": 1,
+   "type": "timeseries",
+   "title": "TTFT p99 \u2014 $pool",
+   "gridPos": {
+    "x": 0,
+    "y": 0,
+    "w": 12,
+    "h": 8
+   },
+   "fieldConfig": {
+    "defaults": {
+     "unit": "s"
+    }
+   },
+   "targets": [
+    {
+     "datasource": {
+      "type": "yesoreyeram-infinity-datasource",
+      "uid": "${DS_FLEETOPS}"
+     },
+     "refId": "A",
+     "type": "json",
+     "source": "url",
+     "parser": "backend",
+     "format": "timeseries",
+     "url": "/api/series?kind=serving&field=ttftP99&pool=$pool&agg=max&step=300&from=${__from:date:seconds}&to=${__to:date:seconds}",
+     "url_options": {
+      "method": "GET"
+     },
+     "columns": [
+      {
+       "selector": "time",
+       "text": "time",
+       "type": "timestamp"
+      },
+      {
+       "selector": "value",
+       "text": "ttft p99",
+       "type": "number"
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "id": 2,
+   "type": "timeseries",
+   "title": "Failed jobs per 10 min",
+   "gridPos": {
+    "x": 12,
+    "y": 0,
+    "w": 12,
+    "h": 8
+   },
+   "targets": [
+    {
+     "datasource": {
+      "type": "yesoreyeram-infinity-datasource",
+      "uid": "${DS_FLEETOPS}"
+     },
+     "refId": "A",
+     "type": "json",
+     "source": "url",
+     "parser": "backend",
+     "format": "timeseries",
+     "url": "/api/series?kind=job&field=t&agg=count&step=600&where=status%3Dfailed&from=${__from:date:seconds}&to=${__to:date:seconds}",
+     "url_options": {
+      "method": "GET"
+     },
+     "columns": [
+      {
+       "selector": "time",
+       "text": "time",
+       "type": "timestamp"
+      },
+      {
+       "selector": "value",
+       "text": "failed jobs",
+       "type": "number"
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "id": 3,
+   "type": "timeseries",
+   "title": "Hottest GPU (max \u00b0C)",
+   "gridPos": {
+    "x": 0,
+    "y": 8,
+    "w": 12,
+    "h": 8
+   },
+   "fieldConfig": {
+    "defaults": {
+     "unit": "celsius"
+    }
+   },
+   "targets": [
+    {
+     "datasource": {
+      "type": "yesoreyeram-infinity-datasource",
+      "uid": "${DS_FLEETOPS}"
+     },
+     "refId": "A",
+     "type": "json",
+     "source": "url",
+     "parser": "backend",
+     "format": "timeseries",
+     "url": "/api/series?kind=device&field=tempC&agg=max&step=300&from=${__from:date:seconds}&to=${__to:date:seconds}",
+     "url_options": {
+      "method": "GET"
+     },
+     "columns": [
+      {
+       "selector": "time",
+       "text": "time",
+       "type": "timestamp"
+      },
+      {
+       "selector": "value",
+       "text": "max temp",
+       "type": "number"
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "id": 4,
+   "type": "timeseries",
+   "title": "Mean SM activity",
+   "gridPos": {
+    "x": 12,
+    "y": 8,
+    "w": 12,
+    "h": 8
+   },
+   "fieldConfig": {
+    "defaults": {
+     "unit": "percentunit",
+     "max": 1
+    }
+   },
+   "targets": [
+    {
+     "datasource": {
+      "type": "yesoreyeram-infinity-datasource",
+      "uid": "${DS_FLEETOPS}"
+     },
+     "refId": "A",
+     "type": "json",
+     "source": "url",
+     "parser": "backend",
+     "format": "timeseries",
+     "url": "/api/series?kind=device&field=sm&agg=avg&step=300&from=${__from:date:seconds}&to=${__to:date:seconds}",
+     "url_options": {
+      "method": "GET"
+     },
+     "columns": [
+      {
+       "selector": "time",
+       "text": "time",
+       "type": "timestamp"
+      },
+      {
+       "selector": "value",
+       "text": "sm",
+       "type": "number"
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "id": 5,
+   "type": "table",
+   "title": "Open incidents",
+   "gridPos": {
+    "x": 0,
+    "y": 16,
+    "w": 24,
+    "h": 8
+   },
+   "targets": [
+    {
+     "datasource": {
+      "type": "yesoreyeram-infinity-datasource",
+      "uid": "${DS_FLEETOPS}"
+     },
+     "refId": "A",
+     "type": "json",
+     "source": "url",
+     "parser": "backend",
+     "format": "table",
+     "url": "/api/incidents?status=open",
+     "url_options": {
+      "method": "GET"
+     },
+     "columns": [
+      {
+       "selector": "severity",
+       "text": "severity",
+       "type": "string"
+      },
+      {
+       "selector": "id",
+       "text": "incident",
+       "type": "string"
+      },
+      {
+       "selector": "status",
+       "text": "status",
+       "type": "string"
+      },
+      {
+       "selector": "owner",
+       "text": "owner",
+       "type": "string"
+      },
+      {
+       "selector": "top",
+       "text": "most likely cause",
+       "type": "string"
+      }
+     ]
+    }
+   ]
+  }
+ ]
+}

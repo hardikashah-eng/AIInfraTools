@@ -11,6 +11,7 @@ on:
       - 'fleetscope/**'
       - 'hybrid-tracing/**'
       - 'gpu-health/**'
+      - 'fleetops/**'
       - '.github/workflows/skills.yml'
   push:
     branches: [main]

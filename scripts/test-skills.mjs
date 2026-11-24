@@ -85,3 +85,24 @@ test('gpu-health: demo, analyze digest, approval needs a name, execute is a dry 
   assert.ok(mixed.coverage.find(c => c.vendor === 'tpu').blind.includes('ecc'));
   assert.ok(!mixed.openActions.some(a => a.id.startsWith('gpu-reset:t1/')));
 });
+
+test('fleetops: demo → diagnose names the planted cause, game day is a dry run and checks the allowlist, k8s dry run', () => {
+  const d = isolate('fleetops'), cli = 'scripts/fleetops/tools/fleetops.mjs', ex = 'scripts/fleetops/examples';
+  assert.equal(json(d, [cli, 'demo', '--list', '--json']).scenarios.length, 17);
+  for (const sc of ['hardware: GPU fault seen in dmesg', 'slow-link', 'kv-pressure']) {
+    const demo = json(d, [cli, 'demo', '--scenario', sc, '--store', `s-${sc.split(':')[0]}`, '--json']).demo;
+    const diag = json(d, [...demo.next[1].replace(/^fleetops /, `${cli} `).split(' '), '--json']);
+    assert.equal(diag.incidents[0].hypotheses[0].rule, demo.planted.cause, sc);
+  }
+  const s = json(d, [cli, 'incidents', 'open', '--from', '2026-01-15T06:00:00Z', '--to', '2026-01-15T14:00:00Z', '--min-failures', '5', '--store', 's-hardware', '--json']);
+  assert.equal(s.opened.length, 1);
+  assert.match(run(d, 'node', [cli, 'incidents', 'page', s.opened[0].id, '--to', 'webhook', '--url', 'https://hooks.example/x', '--action', 'trigger', '--store', 's-hardware']), /dry run/i);
+  const imp = json(d, [cli, 'data', 'import', 'exporter', `${ex}/dcgm.example.prom`, '--store', 'imp', '--json']);
+  assert.ok(imp.imported.device.written >= 1);
+  assert.deepEqual(json(d, [cli, 'gameday', `${ex}/gameday-plan.example.json`, '--allow', `${ex}/test-cluster.allow`, '--store', 'g', '--json']).gameday, { dryRun: true, steps: 3 });
+  fs.writeFileSync(path.join(d, 'narrow.allow'), 'gpu-t01\n');
+  run(d, 'node', [cli, 'gameday', `${ex}/gameday-plan.example.json`, '--allow', 'narrow.allow', '--store', 'g'], { code: 1 });
+  const k8s = run(d, 'bash', ['scripts/fleetops/install/install-k8s.sh', '--image', 'registry.example/fleetops:1', '--dry-run']);
+  assert.match(k8s, /kind: Deployment/); assert.match(k8s, /image: registry\.example\/fleetops:1/);
+  for (const f of ['install/install.sh', 'install/install-docker.sh', 'install/uninstall.sh']) run(d, 'bash', ['-n', `scripts/fleetops/${f}`]);
+});

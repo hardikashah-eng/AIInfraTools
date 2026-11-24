@@ -71,6 +71,12 @@ Spans (OTLP, or forwarded clock-corrected by hybrid-tracing) become per-request 
 
 `fleetops serve` also answers a read API (`/api/query`, `/api/series` for Grafana, `/api/incidents`, `/api/diagnose`). Tokens have roles (ingest, read, admin) and tenant scopes (namespaces, pools, clusters, infra); only their hashes are stored. Every read is audited. Prompts, completions and secrets are redacted at ingest. `--on-prem` refuses outbound calls to unlisted hosts. Optimizer guards can query Prometheus at check time. Exporter formats are pinned by contract tests. A Dockerfile, a Kubernetes manifest and a Grafana dashboard are in `Dockerfile` and `deploy/`. See [docs/SERVICE.md](docs/SERVICE.md).
 
+## Try it without a fleet
+
+`fleetops demo --store demo [--scenario slow-link]` writes a fleet with one planted cause (any of the 17 benchmark scenarios; `--list` names them) and prints the detect, diagnose and incident commands to run, and the answer to check against.
+
+fleetops is also an [Agent Skill](../skills/fleetops/SKILL.md), so a model can run it for you.
+
 ## Install
 
 One command each: `install/install.sh` (one machine, as a user service), `install/install-docker.sh` (Docker Compose with Grafana provisioned) or `install/install-k8s.sh --image …` (Kubernetes). Each makes hashed tokens and prints the Prometheus, OpenTelemetry and Grafana settings to paste. `fleetops backtest` and `fleetops gameday` then turn your postmortems and test-cluster faults into labels. See [docs/INSTALL.md](docs/INSTALL.md).
