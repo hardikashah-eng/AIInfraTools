@@ -66,7 +66,7 @@ Exporters project the store into each tool's existing inputs, so the tools run u
 
 ### 4. Optimization with safe execution
 
-- **Candidates** come from three places: gpu-health's right-sizing, FleetScope's optimizer, and consolidating idle allocations.
+- **Candidates** come from three places: gpu-health's right-sizing and idle-allocation reclaim, FleetScope's optimizer, and retry storms diagnosed by root-cause analysis.
 - **Each candidate is scored on the calibrated model** for cost, SLO, risk and constraints. Combinations are re-simulated, because savings don't simply add up.
 - **The winner goes to the approval queue** as a staged rollout, with an SLO check after each stage and automatic rollback.
 - **Rollback is automatic; applying a change never is.**
