@@ -16,6 +16,7 @@
 //      marked mitigated; still there → a person is paged. In a dry run the same check says whether it cleared alone.
 // Every decision is a line in <state>/agent.jsonl and a note on the incident.
 
+import * as Power from './power.mjs';
 import fs from 'node:fs';
 import path from 'node:path';
 import { analyze } from '../../gpu-health/src/analyze.mjs';
@@ -40,6 +41,7 @@ export const AGENT_DEFAULTS = {
   verifyAfterS: 600,       // check whether the symptom cleared this long after acting
   maxAutoActionsPerHour: 6,// autonomous live runs across all ticks (person-approved actions don't count)
   maxCordonShare: 0.1,     // the agent never cordons more than this share of the nodes on its own
+  power: null,             // { budgets: { 'rack:r1': 40 } (IT kW), windowS: 900, maxSlowdown: 0.05, protect: ['training'] }: propose caps when over
   // actions that only stop new work or tell people: allowed on medium confidence
   contain: ['cordon-node', 'avoid-large-jobs', 'notify-owner', 'run-diag', 'deep-diag-next-boundary', 'link-check', 'hold-rollout', 'exporter-check', 'config-reset', 'quarantine'],
   page: null,              // { to: 'pagerduty'|'opsgenie'|'webhook', key, url, minSeverity: 'sev2' }
@@ -293,6 +295,16 @@ export async function tick(store, { stateDir, ghConfig, agent = {}, live = false
       }
     }
     report.incidents.push({ id: d.id, symptom: inc.symptom, pool: inc.pool, job: inc.job, decision, rule: rec.rule, confidence: d.confidence, title: rec.title, actions: acts.map(a => ({ id: a.id, kind: a.kind, mode: a.mode, lowered: a.lowered })) });
+  }
+
+  // 2b. power budgets: a rack, PDU or site over its budget gets power caps proposed on the jobs a cap slows least
+  if (acfg.power && acfg.power.budgets && !isPaused) {
+    try {
+      const pw = Power.plan(store, { from: now - (acfg.power.windowS || 900), to: now, budgets: acfg.power.budgets, opts: acfg.power, protect: acfg.power.protect || [], cfg });
+      report.power = pw.groups;
+      for (const c of pw.caps) for (const node of [...new Set(c.devices.map(d => d.node))]) suggestions.push({ id: `power-cap-node:${node}:${c.capW}`, kind: 'power-cap-node', node, target: `power:${node}`, mode: modeFor(cfg, 'power-cap-node', c.class), params: { watts: c.capW },
+        reason: `${c.group} over its power budget: cap ${c.job} on ${node} to ${c.capW} W (predicted ${(c.predictedSlowdown * 100).toFixed(1)}% slower, −${(c.savedKw / c.devices.length * c.devices.filter(d => d.node === node).length).toFixed(1)} kW)`, severity: 'medium' });
+    } catch (e) { report.powerError = e.message; }
   }
 
   // 3. one merge (device and incident actions together, so neither supersedes the other), de-duplicated by id

@@ -31,6 +31,7 @@ import * as Sdc from '../src/sdc.mjs';
 import * as Bundle from '../src/bundle.mjs';
 import * as Tune from '../src/tune.mjs';
 import * as Serving from '../src/serving.mjs';
+import * as Power from '../src/power.mjs';
 import { goodputMarkdown, goodputHtml } from '../src/goodput-report.mjs';
 import * as LiveView from '../src/live.mjs';
 import * as Inject from '../src/inject.mjs';
@@ -156,6 +157,17 @@ Tuning (what to change, the expected effect, and afterwards whether it worked):
   fleetops tune list                                           applied recommendations and their verdicts
   fleetops tune holdout --from T --split T --to T              recommend on [from, split), check on [split, to) that
                                                                the problem each names is still there (before changing anything)
+
+Power (budgets per rack, PDU and site; which jobs a cap slows; caps planned and applied through approval):
+  fleetops power report --budgets b.json [--from T --to T]     IT kW (p99, peak) per rack/PDU/row/site vs budget, headroom in nodes
+  fleetops power jobs                                           each job's draw, how compute-bound it is, time at the limit, steps per kWh
+  fleetops power predict --cap 70% | --cap 500W [--job J]       predicted slowdown and kW saved per job under a cap
+  fleetops power fit                                            measure how clocks follow the power limit on your GPUs (α)
+  fleetops power plan --budgets b.json [--save-kw N] [--max-slowdown 0.05] [--protect training] --out plan.json
+        the caps that bring each group under budget at the least slowdown, queued for approval; then
+        fleetops optimize advance --plan plan.json (applies, bakes, rolls back on a guard breach)
+  fleetops power verify --plan plan.json                        measured kW saved and step slowdown against the prediction
+  fleetops power demo                                           two racks, one over budget
 
 Serving (Inference Sizer both ways, and a one-command vLLM deployment on Kubernetes):
   fleetops serving models | gpus                               the catalog (ids, sizes, Hugging Face repos; GPU types)
@@ -434,6 +446,7 @@ async function main() {
   if (area === 'sdc') return sdcCmd(store, o);
   if (area === 'tune') return tuneCmd(store, cmd, o);
   if (area === 'serving') return servingCmd(store, cmd, o);
+  if (area === 'power') return powerCmd(store, cmd, o);
   if (area !== 'data') throw new Error(`unknown command "${area}"\n\n${HELP}`);
   if (cmd === 'import' && rest[0] === 'bundle') {
     const r = await importBundle(store, rest[1], o);
@@ -802,6 +815,62 @@ function baselineWeekly(store, from, to, price) {
   if (!n) { const g = new Set(); for (const r of store.scan('device', { from, to })) g.add(`${r.node}:${r.gpu}`); n = g.size; }
   return n * 168 * price;
 }
+async function powerCmd(store, cmd, o) {
+  const opt = k => (o[k] != null && o[k] !== true ? o[k] : undefined), json = k => (opt(k) ? JSON.parse(read(opt(k))) : undefined), now = o.now ? +o.now : Math.floor(Date.now() / 1000);
+  const to = time(opt('to')) ?? now, from = time(opt('from')) ?? to - (opt('hours') ? +opt('hours') * 3600 : 24 * 3600);
+  const opts = Object.assign({}, json('options'), opt('fit-alpha') ? { alphaCompute: +opt('fit-alpha') } : {}, opt('max-slowdown') ? { maxSlowdown: +opt('max-slowdown') } : {}, opt('gpu-share') ? { gpuShare: +opt('gpu-share') } : {});
+  const kw = v => (v == null || !Number.isFinite(v) ? '–' : v >= 100 ? Math.round(v).toLocaleString('en-US') : v.toFixed(1));
+  if (cmd === 'demo') {
+    const d = Power.synth(); for (const [k, rs] of Object.entries(d.records)) store.append(k, rs);
+    const bf = path.join(store.dir, 'power-budgets.json'); fs.writeFileSync(bf, JSON.stringify(d.budgets, null, 1));
+    if (J) { OUT.demo = { from: d.from, to: d.to, budgets: bf }; return; }
+    return say(`demo in ${store.dir}: two racks of four 8×H100 nodes, rack r1 over its 24 kW budget; budgets in ${bf}\ntry: fleetops power report --budgets ${bf} --from ${d.from} --to ${d.to} --store ${store.dir}\n     fleetops power plan --budgets ${bf} --from ${d.from} --to ${d.to} --out plan.json --store ${store.dir}`);
+  }
+  if (cmd === 'report') {
+    const r = Power.report(store, { from, to, budgets: json('budgets') || {}, opts });
+    if (J) { OUT.power = r; return; }
+    if (!r.groups.length) return say(r.note);
+    say(`${r.nodes} node(s), ${r.bins} × ${r.binS / 60}-min bins; ${r.note}\n`);
+    say(`${'group'.padEnd(18)} ${'nodes'.padStart(5)} ${'avg kW'.padStart(8)} ${'p99 kW'.padStart(8)} ${'budget'.padStart(8)} ${'headroom'.padStart(9)}  more nodes`);
+    for (const g of r.groups) say(`${g.group.padEnd(18)} ${String(g.nodes).padStart(5)} ${kw(g.avgKw).padStart(8)} ${kw(g.p99Kw).padStart(8)} ${kw(g.budgetKw).padStart(8)} ${(g.headroomKw == null ? '–' : (g.headroomKw < 0 ? 'OVER ' : '') + kw(g.headroomKw)).padStart(9)}  ${g.moreNodes == null ? '' : `${g.moreNodes} × ${g.sku} at ${kw(g.nodeKwP95)} kW (p95)`}${g.overBudgetShare ? `  over ${Math.round(g.overBudgetShare * 100)}% of the time` : ''}`);
+    return;
+  }
+  if (cmd === 'jobs' || cmd === 'predict') {
+    let js = Power.jobs(store, { from, to, opts }); if (opt('job')) js = js.filter(j => j.job === opt('job'));
+    const cap = opt('cap'), capW = j => (!cap ? null : /%$/.test(cap) ? parseFloat(cap) / 100 * j.limitW : parseFloat(cap));
+    if (cmd === 'predict' && !cap) throw new Error('--cap 70% or --cap 500W');
+    const rows = js.map(j => Object.assign({}, j, { draws: undefined, devices: undefined }, cap ? { prediction: Power.predict(j, capW(j), opts) } : {}));
+    if (cmd === 'predict') rows.sort((a, b) => a.prediction.slowdown - b.prediction.slowdown);
+    if (J) { OUT.jobs = rows; return; }
+    for (const j of rows) say(`${j.job.padEnd(22)} ${String(j.gpus).padStart(4)} GPU  draw ${kw(j.drawP50)}/${kw(j.drawP95)} W (p50/p95) of ${kw(j.limitW)}  compute-bound ${Math.round(j.computeBound * 100)}%  at limit ${Math.round(j.atLimitShare * 100)}%${j.stepsPerKWh ? `  ${kw(j.stepsPerKWh)} steps/kWh` : ''}${j.prediction ? `\n${''.padEnd(24)}cap ${Math.round(j.prediction.capW)} W → ${(j.prediction.slowdown * 100).toFixed(1)}% slower, −${kw(j.prediction.savedKw)} kW IT` : ''}`);
+    return;
+  }
+  if (cmd === 'fit') { const f = Power.fit(store, { from: time(opt('from')), to }); if (J) { OUT.fit = f; return; } return say(f.alphaCompute == null ? f.note : `${f.note}\nuse it: --fit-alpha ${f.alphaCompute.toFixed(2)} (or options.alphaCompute)`); }
+  if (cmd === 'plan') {
+    if (!opt('out')) throw new Error('--out plan.json');
+    const cfg = ghConfig(json('config')), state = opt('state') || path.join(store.dir, 'rollouts', 'state');
+    const p = Power.plan(store, { from, to, budgets: json('budgets') || {}, saveKw: opt('save-kw') ? +opt('save-kw') : null, opts, protect: (opt('protect') || '').split(',').filter(Boolean), cfg, id: opt('id') });
+    const guards = json('guards') || {}; for (const s of p.stages) s.guard = guards[s.candidate] || guards.default || null;
+    p.state = state; const ids = Opt.enqueue(p, state, now); Opt.savePlan(opt('out'), p);
+    if (J) { OUT.plan = p; OUT.queued = ids; return; }
+    if (!p.groups.length) return say('every group with a budget is under it: nothing to cap');
+    for (const g of p.groups) say(`${g.group}: p99 ${kw(g.p99Kw)} kW against ${kw(g.budgetKw)} → ${g.met ? 'under budget' : 'STILL OVER'} with caps saving ${kw(g.savedKw)} of ${kw(g.needKw)} kW needed`);
+    for (const c of p.caps) say(`  ${c.job.padEnd(22)} ${c.class || ''} ${c.capW} W (${Math.round(c.capPct * 100)}% of ${Math.round(c.limitW)}) on ${c.gpus} GPU(s): ${(c.predictedSlowdown * 100).toFixed(1)}% slower, −${kw(c.savedKw)} kW (draws ${kw(c.drawP95)} W p95, ${Math.round(c.computeBound * 100)}% compute-bound)`);
+    say(`${p.stages.length} stage(s) queued for approval in ${state}; then: fleetops optimize advance --plan ${opt('out')}`);
+    say(`model: slowdown = (draw/cap)^α, α ${p.assumptions.alphaCompute} compute-bound … ${p.assumptions.alphaMemory} memory-bound${opt('fit-alpha') ? ' (fitted)' : ' (defaults: run fleetops power fit to measure)'}`);
+    return;
+  }
+  if (cmd === 'verify') {
+    const p = JSON.parse(read(opt('plan') || '')), v = Power.verify(store, p, { now, opts });
+    if (J) { OUT.verification = v; return; }
+    if (!v.groups) return say(v.note);
+    for (const g of v.groups) say(`${g.group}: p99 ${kw(g.p99Before)} → ${kw(g.p99After)} kW (saved ${kw(g.measuredSavedKw)}, predicted ${kw(g.predictedSavedKw)})`);
+    for (const j of v.jobs) say(`  ${j.job}: ${j.measuredSlowdown == null ? 'no step records' : `${(j.measuredSlowdown * 100).toFixed(1)}% slower`} (predicted ${(j.predictedSlowdown * 100).toFixed(1)}%)`);
+    return;
+  }
+  throw new Error('fleetops power report | jobs | predict | fit | plan | verify | demo');
+}
+
 async function optimize(store, cmd, o) {
   const opt = k => (o[k] && o[k] !== true ? o[k] : undefined), json = k => (opt(k) ? JSON.parse(read(opt(k))) : undefined);
   const now = o.now ? +o.now : Math.floor(Date.now() / 1000), price = o.price ? +o.price : 4;

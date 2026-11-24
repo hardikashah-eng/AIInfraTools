@@ -123,6 +123,10 @@ test('fleetops: demo → diagnose names the planted cause, game day is a dry run
   const v = json(d, [cli, 'tune', 'verify', '--store', 'tuned', '--json']).verified;
   assert.deepEqual(v.map(x => x.verdict), ['improved', 'improved']);
   run(d, 'bash', ['-n', 'scripts/fleetops/tools/collect.sh']);
+  // power: the demo rack is over budget and the plan covers it
+  run(d, 'node', [cli, 'power', 'demo', '--store', 'pw']);
+  const pwPlan = json(d, [cli, 'power', 'plan', '--budgets', 'pw/power-budgets.json', '--from', '1795132800', '--to', '1795154400', '--out', 'pw/plan.json', '--store', 'pw', '--json']).plan;
+  assert.ok(pwPlan.groups[0].met);
   // serving: fit, capacity, a deploy dry run, and the installer's dry run renders manifests
   const fit = json(d, [cli, 'serving', 'fit', '--gpu', 'H100', '--nodes', '2', '--rate', '5', '--store', 'sv', '--json']).fit;
   assert.ok(fit.rows[0].meetsRate);

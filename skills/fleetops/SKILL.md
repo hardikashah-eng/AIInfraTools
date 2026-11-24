@@ -1,6 +1,6 @@
 ---
 name: fleetops
-description: Finds the root cause of GPU fleet incidents, runs them as incidents, mitigates live, measures training goodput, turns the user's traces into tuning changes, and sizes and deploys vLLM serving. It ingests DCGM, AMD and SambaNova exporters, vLLM metrics, Prometheus, Loki, OTLP, kernel and NCCL logs, NCCL Inspector, PyTorch profiler traces, Slurm and Kubernetes, or a one-command trace bundle. It detects job failures, latency regressions and training slowdowns, hangs and divergence, and ranks causes across 15 rules (hardware, bad change, shared switch or rack, version cohort, straggler, slow link, collective hang, silent data corruption, KV pressure, load, slow replica, storage, workload, monitoring gaps). A live agent mitigates within approval guardrails. It advises checkpoint intervals, pool sizes and more, then measures whether each change worked. Use for why jobs fail, latency regressed, training broke, wasted GPU-hours, NaNs, tuning, live auto-mitigation, what models fit on GPUs, or deploying one.
+description: Finds the root cause of GPU fleet incidents, runs them as incidents, mitigates live, measures training goodput, turns the user's traces into tuning changes, and sizes and deploys vLLM serving. It ingests DCGM, AMD and SambaNova exporters, vLLM metrics, Prometheus, Loki, OTLP, kernel and NCCL logs, NCCL Inspector, PyTorch profiler traces, Slurm and Kubernetes, or a one-command trace bundle. It detects job failures, latency regressions and training slowdowns, hangs and divergence, and ranks causes across 15 rules (hardware, bad change, shared switch or rack, version cohort, straggler, slow link, collective hang, silent data corruption, KV pressure, load, slow replica, storage, workload, monitoring gaps). A live agent mitigates within approval guardrails. It advises checkpoint intervals, pool sizes and more, then measures whether each change worked. Use for why jobs fail, latency regressed, training broke, wasted GPU-hours, NaNs, tuning, live mitigation, power caps, what models fit on GPUs, or deploying one.
 ---
 
 # fleetops
@@ -156,6 +156,18 @@ Use this when asked which models fit on some GPUs, how much a model can serve, o
   disaggregation.
 - **Say:** the numbers are spec-sheet estimates unless calibrated (`fleetops calibrate`); a load test against the
   endpoint confirms them. Details: [references/SERVING.md](references/SERVING.md).
+
+## Power
+
+Use this when asked about power budgets, what fits under a rack's or site's power, or whether power caps would hurt.
+- `fleetops power report --budgets b.json --json` gives per group: p99 and peak IT kW, the budget, headroom, and
+  `moreNodes`.
+- `fleetops power predict --cap 70% --json` gives per job the predicted slowdown and kW saved. Lead with the jobs a
+  cap would slow most.
+- `fleetops power plan --budgets b.json --out plan.json` queues caps for approval, applied with
+  `fleetops optimize advance`. Never approve them for the user.
+- Say "uncalibrated" unless `fleetops power fit` found GPUs under different limits. Details:
+  [references/POWER.md](references/POWER.md).
 
 ## Goodput and silent data corruption
 

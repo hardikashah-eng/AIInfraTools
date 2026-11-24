@@ -73,6 +73,17 @@ node scripts/fleetscope/tools/fleetscope.mjs compare --base scenarios/prod --hea
 
 This returns `verdict` (`pass`, `fail` or `nochange`), `checks` (SLO, cost, allocation and goodput, each base vs head with its threshold), `changes` and `owners`. It exits 1 when a check fails. Thresholds come from the head's `thresholds.json`. For using this as a CI gate, see [references/CI.md](references/CI.md).
 
+## Power and power caps
+
+```bash
+node scripts/fleetscope/tools/fleetscope.mjs power --template disagg --cap "Decode H100=60" --budget "On-prem DC=6" --json
+```
+
+`--cap POOL=PCT` (by pool name or id, `*` for all) and `--budget SITE=KW`. The output gives IT kW per pool and site
+against the budgets, tokens per MWh, and with caps the SLO, TTFT and TPOT before and after. Say it is a model: a cap
+slows compute-bound prefill much more than memory-bound decode, and the exponents are defaults unless fitted on a
+fleet (`fleetops power fit`).
+
 ## Presenting results
 
 - Lead with the answer to the user's question: whether it holds up, what breaks first and when, and what it costs.

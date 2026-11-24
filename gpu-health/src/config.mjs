@@ -69,6 +69,8 @@ export const DEFAULTS = {
       // moves running work, adds cost or undoes a change waits for a person (see fleetops examples/agent-policy.realtime.json)
       'cordon-node': 'auto', 'uncordon-node': 'approve', 'link-check': 'auto', 'hold-rollout': 'auto',
       'drain-replica': 'approve', 'scale-out': 'approve', 'rollback-change': 'approve', 'restart-without-node': 'approve',
+      // fleetops power: a cap slows work, so it needs a person (the plan says by how much)
+      'power-cap': 'approve', 'power-cap-node': 'approve',
     },
     // Per workload class overrides. Training jobs are never stopped automatically.
     classes: {
@@ -106,6 +108,9 @@ export const DEFAULTS = {
     'rollback-change': [['helm', 'rollback', '{release}', '{revision}', '-n', '{namespace}', '--wait']],
     // the training launcher (elastic agent) watches this label: restart from the last checkpoint without the node
     'restart-without-node': [['kubectl', 'label', 'node', '{node}', 'gpu-health.aiinfra/restart-without={job}', '--overwrite']],
+    // a GPU power limit in watts; the undo sets it back to the default limit
+    'power-cap': [['ssh', '{node}', 'sudo', 'nvidia-smi', '-i', '{gpu}', '-pl', '{watts}']],
+    'power-cap-node': [['ssh', '{node}', 'sudo', 'nvidia-smi', '-pl', '{watts}']],
     'link-check': { webhook: 'check the node\'s NICs and cables (ibstat / ethtool counters, link speed and width, PCIe AER) and the switch port' },
     'hold-rollout': { webhook: 'pause the rollout of this version until a node rolled back to the fleet version passes the failed job' },
     'notify-owner': 'webhook', 'rma': 'webhook', 'reseat': 'webhook', 'facilities-check': 'webhook', 'exporter-check': 'webhook',
