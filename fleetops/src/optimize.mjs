@@ -19,6 +19,7 @@ import { loadConfig as ghLoad, priceFor } from '../../gpu-health/src/config.mjs'
 import { Store } from '../../gpu-health/src/actions.mjs';
 import { run as runAction, fill, SAFE } from '../../gpu-health/src/executors.mjs';
 import { toGpuHealth } from './export.mjs';
+import { checkEgress } from './security.mjs';
 
 const require = createRequire(import.meta.url);
 const E = require('../../fleetscope/src/engine.js'), FO = require('../../fleetscope/src/optimize.js');
@@ -186,6 +187,16 @@ async function exec(stageCmd, cfg, { live, runner, poster, label }) {
   return runAction({ kind, reason: label, params: {} }, c, { dryRun: !(live && cfg.policy.dryRun === false), runner, poster });
 }
 
+// A Prometheus guard, read at check time: { prometheus: URL, query: PromQL, limit } (the value must stay ≤ limit).
+export async function promGuard(guard, { fetcher } = {}) {
+  const url = `${guard.prometheus.replace(/\/$/, '')}/api/v1/query?query=${encodeURIComponent(guard.query)}`;
+  checkEgress(url);
+  const j = await (fetcher || (u => fetch(u).then(r => r.json())))(url);
+  const v = Number(((((j || {}).data || {}).result || [])[0] || {}).value?.[1]);
+  if (!Number.isFinite(v)) return { ok: null, note: `no value from Prometheus for ${guard.query}` };
+  return { ok: !(v > guard.limit), value: v, limit: guard.limit, note: `${guard.query} = ${v.toFixed(3)} vs limit ${guard.limit} (Prometheus, now)` };
+}
+
 // The guard: serving records for the pool after `since`, compared with the limit or with the same window before.
 export function guardCheck(store, guard, since, now) {
   if (!guard) return { ok: true, note: 'no guard' };
@@ -200,14 +211,14 @@ export function guardCheck(store, guard, since, now) {
 // One step of the rollout. Checks the guard of the last applied stage once its bake time is over: a regression rolls
 // back the stages applied since the last verified one, newest first, without waiting for approval (the fleet returns to
 // the last state that passed its guard). Otherwise runs the next stage if it is approved.
-export async function advance(plan, { store, stateDir, cfg = ghLoad(), live = false, now = Math.floor(Date.now() / 1000), runner, poster } = {}) {
+export async function advance(plan, { store, stateDir, cfg = ghLoad(), live = false, now = Math.floor(Date.now() / 1000), runner, poster, fetcher } = {}) {
   const st = new Store(stateDir), log = [];
   if (['rolled-back', 'done'].includes(plan.status)) return { plan, log: [`plan is ${plan.status}`] };
   const applied = plan.stages.filter(s => s.status === 'applied');
   const last = applied[applied.length - 1];
   if (last) {
     if (now - last.appliedAt < last.bakeS) return { plan, log: [`stage ${last.n} baking until ${new Date((last.appliedAt + last.bakeS) * 1000).toISOString()}`] };
-    const g = guardCheck(store, last.guard, last.appliedAt, now);
+    const g = last.guard && last.guard.prometheus ? await promGuard(last.guard, { fetcher }) : guardCheck(store, last.guard, last.appliedAt, now);
     last.guardResult = g;
     if (g.ok === false) {
       for (const s of applied.slice().reverse()) {

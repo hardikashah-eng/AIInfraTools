@@ -13,6 +13,8 @@ import { VENDORS } from '../../gpu-health/src/vendors.mjs';
 import { exporterScrape } from './adapters/live.mjs';
 import { kernelLog, ncclLog } from './adapters/logs.mjs';
 import { snappyDecompress, decodeWriteRequest } from './proto.mjs';
+import { authenticate, can, redact } from './security.mjs';
+import { handleApi } from './api.mjs';
 
 const VENDOR_RE = Object.entries(VENDORS).filter(([, p]) => p.detect).map(([k, p]) => [k, new RegExp(p.detect)]);
 const vendorOf = name => (VENDOR_RE.find(([, re]) => re.test(name)) || [])[0];
@@ -105,7 +107,7 @@ export class Pipeline {
   constructor(store, { maxQueue = 200000, flushMs = 1000, batch = 50000, dedupeWindowS = 900, now = () => Date.now() / 1000 } = {}) {
     Object.assign(this, { store, maxQueue, flushMs, batch, dedupeWindowS, now });
     this.q = new Map(); this.depth = 0; this.seen = new Map();
-    this.m = { received: {}, written: {}, duplicate: 0, rejected: 0, invalid: 0, unmapped: 0, late: 0, flushes: 0, flushSeconds: 0 };
+    this.m = { received: {}, written: {}, duplicate: 0, rejected: 0, invalid: 0, unmapped: 0, late: 0, redacted: 0, flushes: 0, flushSeconds: 0 };
   }
   // Accept records of one kind, or refuse the whole batch when the queue is full (the sender retries).
   offer(kind, recs) {
@@ -152,21 +154,32 @@ export class Pipeline {
     c('fleetops_ingest_written_total', 'Records written to the store, by kind.', Object.entries(this.m.written).map(([k, v]) => [`{kind="${k}"}`, v]));
     c('fleetops_ingest_dropped_total', 'Records not written, by reason.', [['{reason="duplicate"}', this.m.duplicate], ['{reason="queue_full"}', this.m.rejected], ['{reason="invalid"}', this.m.invalid], ['{reason="unmapped"}', this.m.unmapped]]);
     c('fleetops_ingest_late_total', 'Records older than the dedupe window (accepted, not deduped).', [['', this.m.late]]);
+    c('fleetops_ingest_redacted_total', 'Request-content attributes dropped and secrets masked at ingest.', [['', this.m.redacted]]);
     c('fleetops_ingest_queue_depth', 'Records waiting to be written.', [['', this.depth]]);
     c('fleetops_ingest_flush_seconds_total', 'Time spent writing batches.', [['', this.m.flushSeconds.toFixed(3)]]);
     return L.join('\n') + '\n';
   }
 }
 
-// HTTP server over a pipeline.
-export function server(pipe, { site, maxBody = 32 << 20 } = {}) {
+// HTTP server over a pipeline: ingest endpoints, the read API (api.mjs), auth by token when `tokens` is given, every
+// API call audited.
+export function server(pipe, { site, maxBody = 32 << 20, tokens = null, audit = null, store = pipe.store } = {}) {
   const read = req => new Promise((res, rej) => { const parts = []; let n = 0; req.on('data', d => { n += d.length; if (n > maxBody) { rej(Object.assign(new Error('body too large'), { code: 413 })); req.destroy(); } else parts.push(d); }); req.on('end', () => res(Buffer.concat(parts))); req.on('error', rej); });
   const send = (res, code, body = '', type = 'text/plain') => { res.writeHead(code, Object.assign({ 'content-type': type }, code === 429 ? { 'retry-after': '1' } : {})); res.end(body); };
   return http.createServer(async (req, res) => {
     try {
       if (req.method === 'GET' && req.url === '/healthz') return send(res, 200, 'ok\n');
-      if (req.method === 'GET' && req.url === '/metrics') return send(res, 200, pipe.metrics(), 'text/plain; version=0.0.4');
+      const who = authenticate(tokens, req.headers.authorization);
+      if (!who) return send(res, 401, 'a valid bearer token is required\n');
+      if (req.method === 'GET' && req.url === '/metrics') return can(who, 'read') ? send(res, 200, pipe.metrics(), 'text/plain; version=0.0.4') : send(res, 403, 'needs the read role\n');
+      if (req.method === 'GET' && req.url.startsWith('/api/')) {
+        if (!can(who, 'read')) { if (audit) audit({ who: who.name, method: 'GET', path: req.url, status: 403 }); return send(res, 403, 'needs the read role\n'); }
+        const r = handleApi(store, who, req.method, req.url);
+        if (audit) audit({ who: who.name, tenant: who.tenant === '*' ? '*' : who.tenant, method: 'GET', path: req.url, status: r.status, records: r.records });
+        return send(res, r.status, r.body, r.type);
+      }
       if (req.method !== 'POST') return send(res, 404, 'not found\n');
+      if (!can(who, 'ingest')) return send(res, 403, 'needs the ingest role\n');
       const body = await read(req);
       let kind, recs;
       if (req.url === '/api/v1/write') {
@@ -178,6 +191,7 @@ export function server(pipe, { site, maxBody = 32 << 20 } = {}) {
         else if (req.url === '/v1/logs') { const r = otlpLogsToRecords(j); pipe.m.unmapped += r.unmatched; kind = 'log'; recs = r.logs; }
         else { kind = 'span'; recs = otlpTracesToSpans(j); }
       } else return send(res, 404, 'not found\n');
+      pipe.m.redacted += redact(kind, recs); // request content never reaches the store
       if (!pipe.offer(kind, recs)) return send(res, 429, 'queue full, retry\n');
       return send(res, req.url === '/api/v1/write' ? 204 : 200, req.url === '/api/v1/write' ? '' : '{}', req.url === '/api/v1/write' ? 'text/plain' : 'application/json');
     } catch (e) { return send(res, e.code === 413 ? 413 : 400, `${e.message}\n`); }

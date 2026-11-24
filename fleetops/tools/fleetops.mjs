@@ -9,6 +9,8 @@ import { migrate } from '../src/migrate.mjs';
 import * as Ingest from '../src/ingest.mjs';
 import * as Traces from '../src/traces.mjs';
 import * as Inc from '../src/incidents.mjs';
+import * as Sec from '../src/security.mjs';
+import { postWebhook } from '../../gpu-health/src/executors.mjs';
 import { readLines } from '../src/lines.mjs';
 import * as Philly from '../src/adapters/philly.mjs';
 import * as Pub from '../src/adapters/public.mjs';
@@ -38,8 +40,12 @@ const HELP = `fleetops — shared data layer for AIInfraTools
   fleetops data compact [--raw-days 7] [--apply]                 drop old raw device/request/span days after rolling up,
                                                                  keeping incident windows at full resolution (keep/)
   fleetops data migrate [--apply]                                bring the store to the current schema version
-  fleetops serve [--port 9400] [--host 127.0.0.1] [--site S] [--max-queue 200000] [--flush-ms 1000]
-        ingest Prometheus remote_write and OTLP/HTTP JSON (metrics, logs, traces) into the store
+  fleetops serve [--port 9400] [--host 127.0.0.1] [--tokens FILE] [--on-prem [HOSTS]] [--site S] [--max-queue 200000]
+        ingest (remote_write, OTLP JSON) and serve the read API (/api/…); tokens scope reads to a tenant; every API read
+        is audited in <store>/audit/api.jsonl; request content is redacted at ingest; --on-prem refuses outbound calls
+        to hosts not listed (also FLEETOPS_EGRESS_ALLOW)
+  fleetops token create --tokens FILE --name N [--roles read,ingest,admin] [--namespaces a,b] [--pools p] [--clusters c] [--infra]
+  fleetops token list --tokens FILE
   fleetops data export gpu-health --out DIR [--from T] [--to T]   samples.jsonl, jobs.json, results.jsonl for gpu-health
   fleetops data export fleetscope-trace --out FILE [--pool P]     CSV for FleetScope's Trace replay node
 
@@ -215,6 +221,8 @@ async function main() {
   J = !!o.json;
   const [area, cmd, ...rest] = o._;
   if (!area || o.help || area === 'help') return console.log(HELP);
+  if (o['on-prem'] && process.env.FLEETOPS_EGRESS_ALLOW == null) process.env.FLEETOPS_EGRESS_ALLOW = typeof o['on-prem'] === 'string' ? o['on-prem'] : '';
+  if (area === 'token') return tokenCmd(cmd, o);
   const store = await openStore(o.store && o.store !== true ? o.store : 'fleet-data', { backend: o.backend && o.backend !== true ? o.backend : undefined });
   // the hourly rollup answers long lookbacks (root-cause "day before") when it exists
   if (fs.existsSync(path.join(store.dir, 'rollup-3600', 'device'))) store.coarse = await Retention.rollupStore(store, 3600);
@@ -571,7 +579,8 @@ async function optimize(store, cmd, o) {
   const planFile = opt('plan'); if (!planFile) throw new Error('--plan plan.json');
   const plan = JSON.parse(read(planFile));
   if (cmd === 'advance') {
-    const r = await Opt.advance(plan, { store, stateDir: opt('state') || plan.state || state, cfg, live: !!o.live, now });
+    const poster = (url, text) => { Sec.checkEgress(url); return postWebhook(url, text); }; // gpu-health's webhook (Lark-aware), behind the egress allowlist
+    const r = await Opt.advance(plan, { store, stateDir: opt('state') || plan.state || state, cfg, live: !!o.live, now, poster });
     Opt.savePlan(planFile, plan);
     if (J) { OUT.plan = plan; OUT.log = r.log; return; }
     for (const l of r.log) say(l);
@@ -590,13 +599,33 @@ async function optimize(store, cmd, o) {
   throw new Error(`unknown: optimize ${cmd}\n\n${HELP}`);
 }
 
+function tokenCmd(cmd, o) {
+  const file = o.tokens && o.tokens !== true ? o.tokens : null;
+  if (!file) throw new Error('--tokens FILE');
+  if (cmd === 'create') {
+    if (!o.name || o.name === true) throw new Error('--name NAME');
+    const roles = String(o.roles && o.roles !== true ? o.roles : 'read').split(',');
+    const list = k => (o[k] && o[k] !== true ? String(o[k]).split(',') : undefined);
+    const scoped = ['namespaces', 'owners', 'pools', 'clusters'].some(k => list(k)) || o.infra;
+    const tenant = scoped ? Object.fromEntries([...['namespaces', 'owners', 'pools', 'clusters'].map(k => [k, list(k)]).filter(([, v]) => v), ...(o.infra ? [['infra', true]] : [])]) : '*';
+    const { token, entry } = Sec.addToken(file, { name: o.name, roles, tenant });
+    console.log(`token for ${entry.name} (${roles.join(', ')}; ${tenant === '*' ? 'all tenants' : JSON.stringify(tenant)}):\n${token}\nOnly its SHA-256 is stored in ${file}; this is the only time it is shown.`);
+    return;
+  }
+  if (cmd === 'list') { for (const t of Sec.loadTokens(file)) console.log(`${t.name.padEnd(20)} ${t.roles.join(',').padEnd(18)} ${t.tenant === '*' ? '*' : JSON.stringify(t.tenant)}`); return; }
+  throw new Error('token create|list --tokens FILE');
+}
+
 // Streaming ingestion: remote_write and OTLP/HTTP (JSON) into the store.
 async function serve(store, o) {
-  const pipe = new Ingest.Pipeline(store, { maxQueue: o['max-queue'] ? +o['max-queue'] : 200000, flushMs: o['flush-ms'] ? +o['flush-ms'] : 1000 }).start();
-  const srv = Ingest.server(pipe, { site: o.site && o.site !== true ? o.site : undefined });
   const port = o.port ? +o.port : 9400, host = o.host && o.host !== true ? o.host : '127.0.0.1';
+  const tokens = o.tokens && o.tokens !== true ? Sec.loadTokens(o.tokens) : null;
+  // listening beyond this machine without tokens would expose every tenant's data: refuse unless asked for explicitly
+  if (!tokens && !['127.0.0.1', 'localhost', '::1'].includes(host) && !o['no-auth']) throw new Error(`--host ${host} needs --tokens FILE (or --no-auth to run open on a trusted network)`);
+  const pipe = new Ingest.Pipeline(store, { maxQueue: o['max-queue'] ? +o['max-queue'] : 200000, flushMs: o['flush-ms'] ? +o['flush-ms'] : 1000 }).start();
+  const srv = Ingest.server(pipe, { site: o.site && o.site !== true ? o.site : undefined, tokens, audit: Sec.auditor(store.dir) });
   await new Promise(r => srv.listen(port, host, r));
-  console.log(`fleetops ingest on http://${host}:${port}  store ${store.dir}\n  POST /api/v1/write (Prometheus remote_write)  /v1/metrics /v1/logs /v1/traces (OTLP JSON)  GET /metrics /healthz`);
+  console.log(`fleetops on http://${host}:${port}  store ${store.dir}  ${tokens ? `${tokens.length} token(s)` : 'open (no tokens)'}${process.env.FLEETOPS_EGRESS_ALLOW != null ? `  egress: ${process.env.FLEETOPS_EGRESS_ALLOW || 'none'}` : ''}\n  POST /api/v1/write /v1/metrics /v1/logs /v1/traces   GET /api/summary /api/query /api/series /api/incidents /api/diagnose /metrics /healthz`);
   const stop = () => { srv.close(); pipe.stop(); if (store.close) store.close(); process.exit(0); };
   process.on('SIGINT', stop); process.on('SIGTERM', stop);
   await new Promise(() => {});

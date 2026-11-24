@@ -67,6 +67,10 @@ Spans (OTLP, or forwarded clock-corrected by hybrid-tracing) become per-request 
 
 `fleetops incidents` opens incidents from detection, moves them through open → acknowledged → mitigated → resolved (with owner, severity, notes and who did what), and pages PagerDuty, Opsgenie or a webhook (dry run unless `--live`). It draws a timeline page per incident and drafts the postmortem from the store. Resolving with `--cause` stores the confirmed cause as a label for `rca bench --from-incidents`. See [docs/INCIDENTS.md](docs/INCIDENTS.md).
 
+## Service and security
+
+`fleetops serve` also answers a read API (`/api/query`, `/api/series` for Grafana, `/api/incidents`, `/api/diagnose`). Tokens have roles (ingest, read, admin) and tenant scopes (namespaces, pools, clusters, infra); only their hashes are stored. Every read is audited. Prompts, completions and secrets are redacted at ingest. `--on-prem` refuses outbound calls to unlisted hosts. Optimizer guards can query Prometheus at check time. Exporter formats are pinned by contract tests. A Dockerfile, a Kubernetes manifest and a Grafana dashboard are in `Dockerfile` and `deploy/`. See [docs/SERVICE.md](docs/SERVICE.md).
+
 ## Optimization with safe execution
 
 `fleetops optimize` collects candidate changes from gpu-health (right-sizing, scale-in, reclaiming idle GPUs), rca (retry storms) and FleetScope (the cheapest pool sizes that still meet the SLO). It picks a set that meets a savings goal without double-counting or touching protected classes, and stages it in gpu-health's approval queue. Each stage needs its own approval, runs dry unless both locks are open, and is followed by an SLO guard. A regression rolls back to the last verified state automatically. Applying a change never is automatic. See [docs/OPTIMIZE.md](docs/OPTIMIZE.md).
@@ -109,6 +113,8 @@ src/ingest.mjs           remote_write and OTLP receivers, bounded dedupe pipelin
 src/proto.mjs            Snappy and the remote_write protobuf, no dependencies
 src/retention.mjs        rollups, retention with incident windows kept
 src/migrate.mjs          schema versions and migrations
+src/api.mjs              read API (query, series, incidents, diagnose), tenant-scoped
+src/security.mjs         tokens, roles, tenant scopes, redaction, egress allowlist, audit
 src/incidents.mjs        lifecycle, paging, timeline page, postmortem draft, labels from confirmed causes
 src/traces.mjs           spans → requests with stages; Kineto traces and step logs → per-rank steps
 tools/bench-scale.mjs    ingest and 24 h root-cause benchmark

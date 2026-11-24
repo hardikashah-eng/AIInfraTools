@@ -181,6 +181,8 @@ Milestones 5–10 close those gaps, in the order they should be built.
 
 **Done when:** fleetops runs as a deployment with tenant-scoped access, and the redaction tests show no request content in the store.
 
+**Status:** built ([fleetops/docs/SERVICE.md](fleetops/docs/SERVICE.md)): read API and Grafana dashboard, tokens with roles and tenant scopes, audit, redaction at ingest, on-prem egress allowlist, Prometheus guards, exporter contract tests, a Dockerfile and a Kubernetes manifest. Checked in tests; not yet run on a real cluster.
+
 ## Order and why
 
 1. **Data first.** Every later step needs the same inputs, and the change feed is the single most predictive signal for incidents.
