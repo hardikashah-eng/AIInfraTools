@@ -12,6 +12,7 @@ on:
       - 'hybrid-tracing/**'
       - 'gpu-health/**'
       - 'fleetops/**'
+      - 'gpu-ledger/**'
       - '.github/workflows/skills.yml'
   push:
     branches: [main]

@@ -1,0 +1,1 @@
+{"items": [{"metadata": {"name": "gpu-1", "labels": {"nvidia.com/gpu.product": "NVIDIA-H100-80GB-HBM3"}}}, {"metadata": {"name": "gpu-2", "labels": {"nvidia.com/gpu.product": "NVIDIA-A100-SXM4-80GB"}}}]}

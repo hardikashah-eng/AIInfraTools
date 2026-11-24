@@ -1,0 +1,7 @@
+JobID|JobName|User|Account|Partition|State|Start|End|NodeList|AllocTRES
+101|pretrain|gina|pretrain|gpu|NODE_FAIL|2026-11-10T00:00:00|2026-11-10T04:00:00|gpu[01-02]|cpu=64,gres/gpu:h100=16,node=2
+101.batch|batch|||gpu|NODE_FAIL|2026-11-10T00:00:00|2026-11-10T04:00:00|gpu01|cpu=32,gres/gpu:h100=8
+102|eval|erin|vision|gpu|COMPLETED|2026-11-10T01:00:00|2026-11-10T01:30:00|gpu03|cpu=8,gres/gpu=1
+103|prep|bob|nlp|cpu|COMPLETED|2026-11-10T00:00:00|2026-11-10T01:00:00|cpu01|cpu=8
+104|sweep|bob|nlp|gpu|CANCELLED by 1001|2026-11-10T02:00:00|2026-11-10T03:00:00|gpu04|cpu=8,gres/gpu:a100=2
+105|serve|frank|serving|gpu|RUNNING|2026-11-10T00:00:00|Unknown|gpu05|cpu=8,gres/gpu=8
