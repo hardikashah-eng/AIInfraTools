@@ -8,7 +8,7 @@ import { MemStore } from '../src/memstore.mjs';
 import * as D from '../src/detect.mjs';
 import * as B from '../src/bench.mjs';
 import * as I from '../src/inject.mjs';
-import { diagnose } from '../src/rca.mjs';
+import { diagnose, RULE_IDS } from '../src/rca.mjs';
 
 const T0 = Date.UTC(2026, 0, 15, 0, 0, 0) / 1000, H = 3600;
 const tmp = () => fs.mkdtempSync(path.join(os.tmpdir(), 'fleetops-bench-'));
@@ -87,7 +87,7 @@ test('bench: scenarios are reproducible and independent of filtering', () => {
 test('bench: fitted weights rerank from raw scores and never change the evidence', () => {
   const rows = B.run(B.generate({ perCause: 3, seed: 2 })).rows;
   const w = B.fitWeights(rows);
-  assert.deepEqual(Object.keys(w).sort(), ['change', 'hardware', 'infrastructure', 'kv-pressure', 'load', 'monitoring-gap', 'shared-component', 'version-cohort', 'workload']);
+  assert.deepEqual(Object.keys(w).sort(), RULE_IDS.slice().sort());
   assert.ok(B.applyWeights(rows, w).top1 >= B.summarize(rows).top1, 'never worse on what it was fitted on');
   // a weight that buries a rule changes the ranking, not the hypothesis
   const l = B.generate({ perCause: 1, seed: 2, only: ['kv-pressure'] })[0];
@@ -125,7 +125,7 @@ test('inject: a live run applies, waits, reverts, and writes the label; a failed
   const prep = I.prepare('nccl-stall', { node: 'gpu-t01', pid: '4242' }, { allow: ['gpu-t01'] });
   const rec = await I.run(prep, { live: true, forS: 600, store: s, log: () => {}, now: () => clock, runner: a => { ran.push(a.join(' ')); return { status: 0 }; }, sleep: async x => { clock += x; } });
   assert.deepEqual(ran, ['ssh gpu-t01 sudo kill -STOP 4242', 'ssh gpu-t01 sudo kill -CONT 4242']);
-  assert.equal(rec.applied, true); assert.equal(rec.reverted, true); assert.equal(rec.to - rec.from, 600); assert.equal(rec.expect, null);
+  assert.equal(rec.applied, true); assert.equal(rec.reverted, true); assert.equal(rec.to - rec.from, 600); assert.equal(rec.expect, 'collective-hang');
   assert.equal(s.query('injection').length, 1);
   const bad = await I.run(I.prepare('cordon', { node: 'gpu-t02' }, { allow: ['gpu-t02'] }), { live: true, store: s, log: () => {}, now: () => clock, runner: a => ({ status: a[1] === 'cordon' ? 1 : 0, stderr: 'forbidden' }), sleep: async () => { throw new Error('must not wait'); } });
   assert.equal(bad.applied, false); assert.equal(bad.reverted, true);

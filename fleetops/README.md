@@ -59,6 +59,10 @@ Root-cause analysis uses them to point at a GPU seen failing only in dmesg, a ba
 
 A Parquet backend queried with DuckDB (`--backend parquet`; optional dependency) sits behind the same store interface. `fleetops serve` ingests Prometheus remote_write and OTLP/HTTP JSON (metrics, logs, traces), with backpressure, idempotent dedupe and its own metrics. `data rollup` and `data compact` keep minute and hour rollups and incident windows at full resolution while old raw days are dropped. `data migrate` handles schema versions. Measured at 10,000 GPUs every 10 s (90M samples): ingest at 9× the rate needed on one thread, and a 24-hour root-cause query in 1.2 s (0.6 s with the hourly rollup). See [docs/SCALE.md](docs/SCALE.md).
 
+## Request and rank tracing
+
+Spans (OTLP, or forwarded clock-corrected by hybrid-tracing) become per-request records with router/queue/prefill/decode stages, tokens and replica. PyTorch profiler traces and step logs become per-rank steps with NCCL, data and compute time. Detection adds training slowdowns and hangs. Four rules point at the straggler rank and its GPU, the rank that never joined a hung collective, the replica holding the slow requests, and the stage that grew. See [docs/TRACING.md](docs/TRACING.md).
+
 ## Optimization with safe execution
 
 `fleetops optimize` collects candidate changes from gpu-health (right-sizing, scale-in, reclaiming idle GPUs), rca (retry storms) and FleetScope (the cheapest pool sizes that still meet the SLO). It picks a set that meets a savings goal without double-counting or touching protected classes, and stages it in gpu-health's approval queue. Each stage needs its own approval, runs dry unless both locks are open, and is followed by an SLO guard. A regression rolls back to the last verified state automatically. Applying a change never is automatic. See [docs/OPTIMIZE.md](docs/OPTIMIZE.md).
@@ -101,6 +105,7 @@ src/ingest.mjs           remote_write and OTLP receivers, bounded dedupe pipelin
 src/proto.mjs            Snappy and the remote_write protobuf, no dependencies
 src/retention.mjs        rollups, retention with incident windows kept
 src/migrate.mjs          schema versions and migrations
+src/traces.mjs           spans → requests with stages; Kineto traces and step logs → per-rank steps
 tools/bench-scale.mjs    ingest and 24 h root-cause benchmark
 src/optimize.mjs         candidates, selection, staged rollout through gpu-health's queue, guards, rollback, verify
 tools/fleetops.mjs       CLI

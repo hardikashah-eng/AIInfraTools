@@ -152,6 +152,8 @@ Milestones 5–10 close those gaps, in the order they should be built.
 
 **Done when:** a slow-rank injection is pinned to the right rank and node, and a TTFT regression is traced to the replica or stage that caused it.
 
+**Status:** built ([fleetops/docs/TRACING.md](fleetops/docs/TRACING.md)): OTLP and hybrid-tracing spans → per-request stages; Kineto traces and step logs → per-rank steps; training-slow and training-hang detection; straggler, collective-hang, replica-tail and slow-stage rules; `inject gpu-slow`. Checked on injected and synthetic cases. The NCCL profiler-plugin input and real-cluster labels are still to come.
+
 ### 9. Incidents as a workflow
 
 - **Lifecycle:** open, acknowledged, mitigated, resolved, with owner and severity. Links to the pager (PagerDuty or Opsgenie) and the ticket system.

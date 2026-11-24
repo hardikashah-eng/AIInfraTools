@@ -9,7 +9,9 @@
 // onset, in scope), infrastructure (many users and nodes at once, devices fine), kv-pressure, load (above baseline or
 // calibrated capacity), monitoring-gap (telemetry vanished),
 // shared-component (affected nodes behind one leaf/spine switch, rack, PDU or row), version-cohort (affected nodes run a
-// driver/firmware/kernel/image/NCCL version the rest of the fleet doesn't).
+// driver/firmware/kernel/image/NCCL version the rest of the fleet doesn't), straggler (one training rank computes
+// slower; the others wait in NCCL), collective-hang (watchdog timeouts; the rank that never joined), replica-tail (one
+// serving replica holds the slow requests), slow-stage (the request stage that grew: queue, prefill, decode).
 
 import { groups } from './adapters/topology.mjs';
 import { DEVICE_CLASSES } from './adapters/logs.mjs';
@@ -88,6 +90,10 @@ function context(store, inc, { lookbackH = 24 } = {}) {
   c.deviceBefore = (store.coarse || store).distinct('device', ['node', 'gpu'], { from: before, to: from - 2 * H });
   c.serving = store.query('serving', { from: before, to });
   c.calibration = store.query('calibration', { to });
+  c.store = store; // for narrow, rule-specific lookups (one node's samples)
+  // training steps of the job (6 h of history for its own baseline) and requests of the pool (the day before too)
+  c.steps = store.query('step', { from: from - 6 * H, to, where: s => !inc.job || s.job === inc.job });
+  c.requests = inc.pool ? store.query('request', { from: before, to, where: r => r.pool === inc.pool }) : [];
   // logs: the whole lookback (for baselines) and the incident window (2 h lead-in)
   c.logs = store.query('log', { from: before, to });
   c.logsWin = c.logs.filter(l => l.t >= from - 2 * H);
@@ -124,6 +130,8 @@ const holdingGroup = (c, nodes, cover = 0.8) => {
 // Log lines that point at a node's own hardware: device faults, CPU/DIMM errors, and its NIC (kernel IB link down).
 const isHardwareLog = l => l.severity === 'hard' && (DEVICE_CLASSES.has(l.class) || l.class === 'cpu' || l.class === 'host-memory' || (l.class === 'network' && l.source === 'kernel'));
 const where = l => `${l.node}${l.gpu != null ? '/' + l.gpu : l.pci ? ` (${l.pci})` : ''}`;
+// P(X ≥ k) for X ~ Binomial(n, p)
+const binomTail = (n, k, p) => { let t = 0, c = 1; for (let i = 0; i <= n; i++) { if (i > 0) c = c * (n - i + 1) / i; if (i >= k) t += c * p ** i * (1 - p) ** (n - i); } return Math.min(1, t); };
 const DIM_NAME = { leaf: 'leaf switch', spine: 'spine switch', rack: 'rack', pdu: 'PDU', row: 'row' };
 
 // ---------- rules ----------
@@ -374,6 +382,122 @@ const RULES = {
       against: [],
       verify: [`Roll one affected node back to the fleet's ${best.f} and rerun a failed job there.`, `Hold the ${best.f} ${best.v} rollout until that test passes.`],
       likelyCause: 'infra',
+    };
+  },
+
+  // One rank computes slower than the others in a synchronous training job; the others wait for it in collectives.
+  straggler(c) {
+    if (!['training-slow', 'training-hang', 'job-failures'].includes(c.inc.symptom)) return null;
+    const win = c.steps.filter(s => s.t > c.from && s.t <= c.to);
+    if (!win.length) return null;
+    const job = c.inc.job || share(count(win, s => s.job), win.length)[0].k;
+    const per = [...new Set(win.filter(s => s.job === job).map(s => s.rank))].map(r => {
+      const ss = win.filter(s => s.job === job && s.rank === r);
+      return { rank: r, node: ss[0].node, gpu: ss[0].gpu, compute: median(ss.map(s => s.computeS ?? (s.commS != null ? s.durS - s.commS : s.durS))), comm: median(ss.map(s => s.commS)), dur: median(ss.map(s => s.durS)) };
+    });
+    if (per.length < 4) return null;
+    const comp = per.map(p => p.compute), med = median(comp), mad = median(comp.map(v => Math.abs(v - med)));
+    const worst = per.slice().sort((a, b) => b.compute - a.compute)[0], ratio = worst.compute / med, z = (worst.compute - med) / Math.max(1.4826 * mad, 0.02 * med);
+    if (!(ratio >= 1.2 && z >= 3)) return null;
+    const othersComm = median(per.filter(p => p !== worst).map(p => p.comm)), waiting = Number.isFinite(othersComm) && Number.isFinite(worst.comm) && othersComm > worst.comm * 1.5;
+    // that GPU's own telemetry and logs: throttled clocks, heat, faults
+    const dev = c.store.query('device', { from: c.from, to: c.to, where: d => d.node === worst.node && (worst.gpu == null || String(d.gpu) === String(worst.gpu)) });
+    const clk = median(dev.map(d => d.clockMHz)), maxClk = median(dev.map(d => d.maxClockMHz)), temp = median(dev.map(d => d.tempC));
+    const peers = c.store.query('device', { from: c.from, to: c.to, where: d => d.node !== worst.node && Number.isFinite(d.clockMHz) }), peerClk = median(peers.map(d => d.clockMHz));
+    const slowClock = Number.isFinite(clk) && ((Number.isFinite(maxClk) && clk < 0.8 * maxClk) || (Number.isFinite(peerClk) && clk < 0.8 * peerClk));
+    const hw = c.logsWin.filter(l => l.node === worst.node && isHardwareLog(l));
+    const evidence = [
+      { what: `rank ${worst.rank} on ${worst.node}${worst.gpu != null ? '/' + worst.gpu : ''} computes ${worst.compute.toFixed(3)} s per step vs ${med.toFixed(3)} s for the median of ${per.length} ranks (${ratio.toFixed(2)}×)`, refs: [ref('step', { t: c.from }, { job, rank: worst.rank })] },
+      ...(waiting ? [{ what: `the other ranks spend ${othersComm.toFixed(3)} s per step in NCCL vs ${worst.comm.toFixed(3)} s for rank ${worst.rank}: they wait for it` }] : []),
+      ...(slowClock ? [{ what: `its SM clock runs at ${Math.round(clk)} MHz vs ${Math.round(Number.isFinite(maxClk) ? maxClk : peerClk)} MHz${Number.isFinite(temp) ? ` (${Math.round(temp)} °C)` : ''}`, refs: [ref('device', { t: c.from }, { node: worst.node, gpu: worst.gpu })] }] : []),
+      ...hw.slice(0, 2).map(l => ({ what: `${where(l)} logged ${l.code} at ${iso(l.t)}`, refs: [ref('log', l, { node: l.node, code: l.code })] })),
+    ];
+    return {
+      cause: 'straggler', title: `Straggler: rank ${worst.rank} on ${worst.node}${worst.gpu != null ? ' GPU ' + worst.gpu : ''} of ${job}`, score: clamp01(0.45 + 0.3 * Math.min(1, ratio - 1) + (slowClock || hw.length ? 0.15 : 0) + (waiting ? 0.05 : 0)),
+      evidence, against: [],
+      verify: [`Check ${worst.node}${worst.gpu != null ? ' GPU ' + worst.gpu : ''}: clocks and throttle reasons (nvidia-smi -q -d PERFORMANCE), temperature, and run a level-2 diag.`, 'Restart the job without that GPU (or node); step time should return to the others\' pace.'],
+      likelyCause: 'device', component: worst.node,
+    };
+  },
+
+  // A collective hung: ranks report NCCL watchdog timeouts; the rank that didn't (or stopped first) is the one stuck.
+  'collective-hang'(c) {
+    const tl = c.logsWin.filter(l => l.code === 'nccl_timeout' && (!c.inc.job || !l.job || l.job === c.inc.job) && (!c.inc.nodes || c.inc.nodes.includes(l.node) || l.job));
+    if (!tl.length) return null;
+    const job = c.inc.job || share(count(tl, l => l.job), tl.length)[0]?.k;
+    const steps = c.steps.filter(s => !job || s.job === job), rankNode = new Map();
+    for (const s of steps) rankNode.set(s.rank, s.node);
+    for (const l of tl) if (l.rank != null && !rankNode.has(l.rank)) rankNode.set(l.rank, l.node);
+    const reported = new Set(tl.map(l => l.rank).filter(r => r != null)), silent = [...rankNode.keys()].filter(r => !reported.has(r));
+    const lastSeq = new Map(); for (const l of tl) if (l.rank != null && l.seq != null) lastSeq.set(l.rank, Math.max(lastSeq.get(l.rank) ?? -1, l.seq));
+    const seqs = [...lastSeq.values()], minSeq = Math.min(...seqs), lowSeq = [...lastSeq].filter(([, v]) => v === minSeq).map(([r]) => r);
+    const lastStep = new Map(); for (const s of steps) lastStep.set(s.rank, Math.max(lastStep.get(s.rank) ?? -Infinity, s.t));
+    const firstStop = [...lastStep].sort((a, b) => a[1] - b[1]), stoppedFirst = firstStop.length > 1 && firstStop[1][1] - firstStop[0][1] > 30 ? firstStop[0][0] : null;
+    const culprit = silent.length === 1 ? silent[0] : seqs.length > 1 && lowSeq.length === 1 && minSeq < Math.max(...seqs) ? lowSeq[0] : stoppedFirst;
+    const node = culprit != null ? rankNode.get(culprit) : null;
+    const hw = node ? c.logsWin.filter(l => l.node === node && isHardwareLog(l)) : [];
+    return {
+      cause: 'collective-hang', title: `Collective hang in ${job || 'a job'}${culprit != null ? `: rank ${culprit} on ${node} never joined` : ''}`, score: clamp01(0.5 + (culprit != null ? 0.25 : 0) + (hw.length ? 0.15 : 0)),
+      evidence: [
+        { what: `${tl.length} watchdog timeout(s) from ${reported.size || new Set(tl.map(l => l.node)).size} rank(s), op ${[...new Set(tl.map(l => l.op).filter(Boolean))].join(', ') || '?'}, after ${Math.round(median(tl.map(l => l.ms)) / 1000)} s`, refs: tl.slice(0, 3).map(l => ref('log', l, { node: l.node, rank: l.rank })) },
+        ...(culprit != null && silent.length === 1 ? [{ what: `rank ${culprit} on ${node} is the only rank that logged no timeout: it never reached the collective` }] : []),
+        ...(culprit != null && silent.length !== 1 && lowSeq.length === 1 && lastSeq.size > 1 ? [{ what: `rank ${culprit} stopped at collective #${minSeq}; the others reached #${Math.max(...seqs)}` }] : []),
+        ...(culprit != null && culprit === stoppedFirst && silent.length !== 1 ? [{ what: `rank ${culprit}'s last step ended ${Math.round(firstStop[1][1] - firstStop[0][1])} s before the next rank's` }] : []),
+        ...hw.slice(0, 2).map(l => ({ what: `${where(l)} logged ${l.code} at ${iso(l.t)}`, refs: [ref('log', l, { node: l.node, code: l.code })] })),
+      ],
+      against: [],
+      verify: [culprit != null ? `Get a stack from rank ${culprit} on ${node} (py-spy dump, or cuda-gdb for a GPU hang) and check that GPU's health.` : 'Get stacks from every rank (py-spy dump) and compare the last collective each reached.', 'Rerun with NCCL_DEBUG=INFO and TORCH_NCCL_TRACE_BUFFER_SIZE set to capture the flight recorder.'],
+      likelyCause: hw.length ? 'device' : 'app', component: node || undefined,
+    };
+  },
+
+  // One replica serves most of the slow requests: that replica, not the pool.
+  'replica-tail'(c) {
+    if (c.inc.symptom !== 'latency') return null;
+    const m = /tpot/i.test(c.inc.metric || '') ? 'e2e' : 'ttft';
+    const rq = c.requests.filter(r => r.t > c.from && r.t <= c.to && Number.isFinite(r[m]) && r.replica);
+    if (rq.length < 20) return null;
+    // the slowest 10%; one replica holding far more of them than its traffic share, beyond chance (binomial tail < 1%)
+    const thr = rq.map(r => r[m]).sort((a, b) => a - b)[Math.floor(0.9 * (rq.length - 1))], slow = rq.filter(r => r[m] >= thr);
+    if (slow.length < 5) return null;
+    const all = count(rq, r => r.replica), sl = count(slow, r => r.replica);
+    const best = [...sl].map(([rep, n]) => ({ rep, n, slowShare: n / slow.length, allShare: all.get(rep) / rq.length, p: binomTail(slow.length, n, all.get(rep) / rq.length) })).sort((a, b) => a.p - b.p)[0];
+    if (!best || best.slowShare < 2 * best.allShare || best.p > 0.01) return null;
+    const mine = median(rq.filter(r => r.replica === best.rep).map(r => r[m])), others = median(rq.filter(r => r.replica !== best.rep).map(r => r[m]));
+    // and it is slow as a whole, not a few unlucky requests (a quiet replica can hold a small share of the slow ones)
+    if (!(mine >= 1.5 * others || best.slowShare >= 0.4)) return null;
+    const node = (rq.find(r => r.replica === best.rep) || {}).node, hw = node ? c.logsWin.filter(l => l.node === node && isHardwareLog(l)) : [];
+    return {
+      cause: 'replica-tail', title: `Replica ${best.rep}${node && node !== best.rep ? ` on ${node}` : ''} serves ${Math.round(best.slowShare * 100)}% of the slow requests and ${Math.round(best.allShare * 100)}% of the traffic`,
+      score: clamp01(0.4 + 0.25 * Math.min(1, (best.slowShare - best.allShare) / Math.max(0.01, 1 - best.allShare)) + 0.15 * Math.min(1, (mine / others - 1) / 2) + (hw.length ? 0.1 : 0) + (rq.length >= 100 ? 0.05 : 0)),
+      evidence: [{ what: `${m} median ${mine.toFixed(3)} s on ${best.rep} vs ${others.toFixed(3)} s on the other ${all.size - 1} replica(s); ${best.n} of the ${slow.length} slowest requests (p90, ${thr.toFixed(3)} s) are on it (chance ${best.p < 1e-4 ? '< 0.01%' : (best.p * 100).toFixed(2) + '%'})`, refs: slow.filter(r => r.replica === best.rep).slice(0, 3).map(r => ref('request', r, { traceId: r.traceId })) },
+        ...hw.slice(0, 2).map(l => ({ what: `${where(l)} logged ${l.code} at ${iso(l.t)}`, refs: [ref('log', l, { node: l.node, code: l.code })] }))],
+      against: [],
+      verify: [`Take ${best.rep} out of the load balancer: the pool's ${m} p99 should drop.`, `Open the slowest traces (refs) and compare their stages with the same stages on another replica.`],
+      likelyCause: hw.length ? 'device' : 'capacity', component: best.rep,
+    };
+  },
+
+  // The stage of the request that grew: queueing, prefill or decode (from request traces).
+  'slow-stage'(c) {
+    if (c.inc.symptom !== 'latency') return null;
+    const win = c.requests.filter(r => r.t > c.from && r.t <= c.to && r.stages), pre = c.requests.filter(r => r.t <= c.from && r.stages);
+    if (win.length < 20 || pre.length < 20) return null;
+    // a TTFT regression can only come from the stages before the first token
+    const stagesOf = /ttft/i.test(c.inc.metric || 'ttft') ? ['router', 'queue', 'prefill'] : ['router', 'queue', 'prefill', 'decode'];
+    const grow = stagesOf.map(st => ({ st, a: median(pre.map(r => r.stages[st])), b: median(win.map(r => r.stages[st])) })).filter(x => Number.isFinite(x.a) && Number.isFinite(x.b)).map(x => Object.assign(x, { d: x.b - x.a }));
+    const total = grow.reduce((t, x) => t + Math.max(0, x.d), 0), top = grow.sort((a, b) => b.d - a.d)[0], base = grow.reduce((t, x) => t + x.a, 0);
+    if (!top || top.d <= 0 || top.d < 0.3 * base) return null;
+    const shareG = top.d / total, isl0 = median(pre.map(r => r.isl)), isl1 = median(win.map(r => r.isl)), sameIsl = !(isl1 > 1.2 * isl0);
+    const hint = { queue: 'requests wait for a slot: capacity or scheduling', prefill: sameIsl ? 'prompts are no longer, so prefill itself got slower: contention, a kernel or config change, or slower GPUs' : 'prompts got longer', decode: 'token generation slowed: larger batches, KV-cache pressure or slower GPUs', router: 'the router or gateway added time' }[top.st];
+    return {
+      cause: 'slow-stage', title: `${top.st} time per request ${top.a.toFixed(3)} → ${top.b.toFixed(3)} s (${Math.round(shareG * 100)}% of the added latency)`,
+      score: clamp01(0.3 + 0.35 * shareG + (top.st === 'prefill' && sameIsl ? 0.1 : 0)),
+      evidence: [{ what: `median ${top.st} ${top.a.toFixed(3)} s in the day before vs ${top.b.toFixed(3)} s during, over ${win.length} traced requests; ${hint}` },
+        ...grow.filter(x => x !== top).map(x => ({ what: `${x.st}: ${x.a.toFixed(3)} → ${x.b.toFixed(3)} s` }))],
+      against: [],
+      verify: [`Compare ${top.st} spans of slow and normal requests in the trace view (exemplars).`, top.st === 'queue' ? 'Check replica count and the scheduler\'s waiting queue.' : 'Check for a model, kernel or engine change at the onset, and GPU clocks on the engines.'],
+      likelyCause: top.st === 'queue' ? 'capacity' : 'infra',
     };
   },
 

@@ -7,6 +7,7 @@ import { DataStore, whereFrom, openStore, SCHEMA } from '../src/store.mjs';
 import * as Retention from '../src/retention.mjs';
 import { migrate } from '../src/migrate.mjs';
 import * as Ingest from '../src/ingest.mjs';
+import * as Traces from '../src/traces.mjs';
 import { readLines } from '../src/lines.mjs';
 import * as Philly from '../src/adapters/philly.mjs';
 import * as Pub from '../src/adapters/public.mjs';
@@ -31,6 +32,7 @@ const HELP = `fleetops — shared data layer for AIInfraTools
   fleetops data summary [--store DIR]                             records per kind, time range and sources
   fleetops data query KIND [--from T] [--to T] [--where k=v]... [--limit N]
   fleetops data node NODE [--from T] [--to T]                    versions, shared switch/rack/PDU, log faults, changes
+  fleetops data requests [--from T] [--to T]                     per-request records (stages, replica) from stored spans
   fleetops data rollup [--steps 60,3600]                         minute and hour device rollups (rollup-60/, rollup-3600/)
   fleetops data compact [--raw-days 7] [--apply]                 drop old raw device/request/span days after rolling up,
                                                                  keeping incident windows at full resolution (keep/)
@@ -56,6 +58,9 @@ Sources (SOURCE):
   app-log          NCCL / PyTorch job output                 [--node N] [--job J] [--t T]
   k8s-events       kubectl get events -A -o json             cordon/reboot/scale changes; NotReady/OOM/mount/evict logs
   helm-history     helm history REL -n NS -o json            [--release R] [--namespace NS]
+  otlp-traces      OTLP/JSON traces (resourceSpans)          [--derive] (also write per-request records)
+  kineto           PyTorch profiler trace JSON (one rank)    [--job J] [--node N] [--rank R] [--t0 T]   per-rank steps
+  step-log         JSON lines {t, rank, node, step, durS, commS?, dataS?, ckptS?, mfu?}   [--job J]
   sacct            sacct -P -X --format=JobID,JobName,State,ExitCode,Start,End,NodeList,AllocTRES
   changes          JSON lines of change events
   git-log          git log --date=unix --pretty=format:'@@%H|%ad|%an|%s' --name-only   [--repo NAME]
@@ -156,6 +161,9 @@ function importSource(store, src, files, o) {
       case 'kernel-log': put('log', Logs.kernelLog(read(f), { node: o.node && o.node !== true ? o.node : undefined, boot: time(o.boot), year: o.year ? +o.year : undefined, utcOffset: o['utc-offset'] ? +o['utc-offset'] : 0, pciMap: pciMap(store) })); break;
       case 'app-log': put('log', Logs.ncclLog(read(f), { node: o.node && o.node !== true ? o.node : undefined, job: o.job && o.job !== true ? o.job : undefined, t: o.t ? time(o.t) : tOf(f) })); break;
       case 'k8s-events': { const e = Live.k8sEvents(read(f)); put('change', e.changes); put('log', e.logs); break; }
+      case 'kineto': put('step', Traces.kineto(read(f), { job: o.job && o.job !== true ? o.job : path.basename(f).split(/[._]/)[0], node: o.node && o.node !== true ? o.node : undefined, rank: o.rank != null && o.rank !== true ? +o.rank : undefined, t0: o.t0 ? time(o.t0) : undefined })); break;
+      case 'step-log': put('step', Traces.stepLog(read(f), { job: o.job && o.job !== true ? o.job : undefined })); break;
+      case 'otlp-traces': { const spans = Ingest.otlpTracesToSpans(JSON.parse(read(f))); put('span', spans); if (o.derive) put('request', Traces.requestsFromSpans(spans)); break; }
       case 'helm-history': put('change', Live.helmHistory(read(f), { release: o.release && o.release !== true ? o.release : path.basename(f, '.json'), namespace: o.namespace && o.namespace !== true ? o.namespace : 'default' })); break;
       case 'sacct': put('job', Live.slurmSacct(read(f))); break;
       case 'changes': put('change', Live.changesJsonl(read(f))); break;
@@ -251,6 +259,15 @@ async function main() {
     const changed = r.steps.filter(x => x.changed);
     say(`schema ${r.from} → ${r.to}: ${changed.length} day file(s) with ${changed.reduce((t, x) => t + x.changed, 0)} records to change${r.applied ? ' — done' : ' (dry run: --apply to rewrite)'}`);
     for (const x of changed.slice(0, 20)) say(`  v${x.to} ${x.kind} ${x.day}: ${x.changed} of ${x.records}  (${x.what})`);
+    return;
+  }
+  if (cmd === 'requests') {
+    // per-request records (stages, replica, tokens) from the spans in the store
+    const from = time(o.from), to = time(o.to), spans = store.query('span', { from, to });
+    const reqs = Traces.requestsFromSpans(spans);
+    const r = store.append('request', reqs, { dedupe: true });
+    if (J) { OUT.requests = { spans: spans.length, requests: reqs.length, written: r.written }; return; }
+    say(`${spans.length} spans → ${reqs.length} requests (${r.written} new)`);
     return;
   }
   if (cmd === 'node') {
@@ -356,10 +373,10 @@ async function rca(store, cmd, o) {
     const where = whereFrom(o.where);
     let incs;
     if (o.method === 'threshold') incs = [...RCA.detectJobFailureSpikes(store, { from, to, minFailures: o['min-failures'] ? +o['min-failures'] : 50, ratio: o.ratio ? +o.ratio : 4 }), ...RCA.detectServingRegressions(store, { from, to, targets })];
-    else incs = Detect.groupIncidents([...Detect.detectJobFailures(store, { from, to, binS: o.bin ? +o.bin : 600, minFailures: o['min-failures'] ? +o['min-failures'] : 20, where }), ...Detect.detectServing(store, { from, to, targets })], { gapS: o['group-gap'] ? +o['group-gap'] : 1800 });
+    else incs = Detect.groupIncidents([...Detect.detectJobFailures(store, { from, to, binS: o.bin ? +o.bin : 600, minFailures: o['min-failures'] ? +o['min-failures'] : 20, where }), ...Detect.detectServing(store, { from, to, targets }), ...Detect.detectTraining(store, { from, to })], { gapS: o['group-gap'] ? +o['group-gap'] : 1800 });
     if (!o.diagnose) {
       if (J) { OUT.incidents = incs; return; }
-      for (const i of incs) say(`${i.id}  ${i.failures != null ? `${i.failures} failures` : `${i.metric} peak ${i.peak.toFixed(3)}${i.limit ? ` > ${i.limit.toFixed(3)}` : i.baseline != null ? ` vs ${i.baseline.toFixed(3)}` : ''}`}${i.alarmAt ? `, alarm ${Math.round((i.alarmAt - i.from) / 60)} min after onset` : ''}, ${((i.to - i.from) / 3600).toFixed(1)} h${i.merged ? `, ${i.merged.length + 1} merged` : ''}${i.related ? `; related: ${i.related.join(', ')}` : ''}`);
+      for (const i of incs) say(`${i.id}  ${i.symptom.startsWith('training') ? `${i.job || i.nodes.join(',')}${i.peak != null ? ` step ${i.peak.toFixed(3)} s vs ${i.baseline.toFixed(3)} s` : ''}` : i.failures != null ? `${i.failures} failures` : `${i.metric} peak ${i.peak.toFixed(3)}${i.limit ? ` > ${i.limit.toFixed(3)}` : i.baseline != null ? ` vs ${i.baseline.toFixed(3)}` : ''}`}${i.alarmAt ? `, alarm ${Math.round((i.alarmAt - i.from) / 60)} min after onset` : ''}, ${((i.to - i.from) / 3600).toFixed(1)} h${i.merged ? `, ${i.merged.length + 1} merged` : ''}${i.related ? `; related: ${i.related.join(', ')}` : ''}`);
       return;
     }
     const ds = incs.map(i => RCA.diagnose(store, i, { weights }));

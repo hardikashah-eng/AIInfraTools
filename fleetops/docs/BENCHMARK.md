@@ -42,7 +42,7 @@ Three kinds of label, one format: `{ store, incident, cause (rule id), component
 
 | Source | Where labels come from | What it shows |
 |---|---|---|
-| synthetic | `generate()`: randomized fleets of 12–24 nodes (leaves of 4, racks of 6 or 8, 3–6 owners) with one planted cause and 0–2 distractors | Each rule finds its cause through noise. Not accuracy on a real fleet. |
+| synthetic | `generate()`: randomized fleets of 12–24 nodes (leaves of 4, racks of 6 or 8, 3–6 owners) with one planted cause and 0–2 distractors; 16 scenario kinds covering all 13 rules | Each rule finds its cause through noise. Not accuracy on a real fleet. |
 | injected | `injection` records written by `fleetops inject` on a test cluster | Detection delay and diagnosis on real faults through the real collectors |
 | postmortem | JSON lines `{ incident, cause, component? }` against a store rebuilt for each window | Accuracy on your fleet's real failures |
 
@@ -55,7 +55,11 @@ Three kinds of label, one format: `{ store, incident, cause (rule id), component
 - infrastructure: a storage outage with NFS or mount logs; many owners failing at once with nothing logged;
 - shared-component: a bad leaf switch, with fabric logs sometimes and an outside node sometimes; a rack losing power;
 - version-cohort: a bad driver, kernel or VBIOS on scattered nodes, recorded as a rollout half the time;
-- monitoring-gap: exporters stop.
+- monitoring-gap: exporters stop;
+- straggler: one slow GPU in a training job (clock drop sometimes);
+- collective-hang: one rank never joins (silent, or behind on the collective sequence);
+- replica-tail: one serving replica slow;
+- slow-stage: prefill slows on every replica.
 
 **Distractors:** an unrelated change, a harmless soft log line, a hard fault 10–20 hours earlier, another tenant
 failing a little on one node, version skew on one node, plus background failures at a random rate.
@@ -116,7 +120,8 @@ change that breaks a cause fails the PR (exit code 5).
 |---|---|---|---|
 | `xid` | `dcgmi test --inject` field 230 (XID) on one GPU; with `--kmsg --pci`, also an NVRM line written to `/dev/kmsg` | none (the value ages out) | hardware |
 | `ecc-dbe` | DCGM fields 311 / 313 (double-bit ECC, volatile / aggregate) | none | hardware |
-| `nccl-stall` | `kill -STOP` one rank of a running NCCL job, `-CONT` after `--for` | yes | detection only until milestone 8 (straggler, collective hang) |
+| `nccl-stall` | `kill -STOP` one rank of a running NCCL job, `-CONT` after `--for` | yes | collective-hang |
+| `gpu-slow` | `nvidia-smi -i GPU -lgc MHZ,MHZ` locks one GPU's clocks low, `-rgc` after `--for` | yes | straggler |
 | `nic-down` | `ip link set dev IFACE down` on one node (RoCE / Ethernet) | yes | hardware |
 | `ib-port-down` | `ibportstate LID PORT disable` from a fabric management host | yes | hardware (`--expect shared-component` for a leaf's uplinks) |
 | `nfs-block` | iptables drops NFS (TCP 2049) from some nodes to one server | yes | infrastructure |
