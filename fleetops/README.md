@@ -63,6 +63,10 @@ A Parquet backend queried with DuckDB (`--backend parquet`; optional dependency)
 
 Spans (OTLP, or forwarded clock-corrected by hybrid-tracing) become per-request records with router/queue/prefill/decode stages, tokens and replica. PyTorch profiler traces and step logs become per-rank steps with NCCL, data and compute time. Detection adds training slowdowns and hangs. Four rules point at the straggler rank and its GPU, the rank that never joined a hung collective, the replica holding the slow requests, and the stage that grew. See [docs/TRACING.md](docs/TRACING.md).
 
+## Incidents as a workflow
+
+`fleetops incidents` opens incidents from detection, moves them through open → acknowledged → mitigated → resolved (with owner, severity, notes and who did what), and pages PagerDuty, Opsgenie or a webhook (dry run unless `--live`). It draws a timeline page per incident and drafts the postmortem from the store. Resolving with `--cause` stores the confirmed cause as a label for `rca bench --from-incidents`. See [docs/INCIDENTS.md](docs/INCIDENTS.md).
+
 ## Optimization with safe execution
 
 `fleetops optimize` collects candidate changes from gpu-health (right-sizing, scale-in, reclaiming idle GPUs), rca (retry storms) and FleetScope (the cheapest pool sizes that still meet the SLO). It picks a set that meets a savings goal without double-counting or touching protected classes, and stages it in gpu-health's approval queue. Each stage needs its own approval, runs dry unless both locks are open, and is followed by an SLO guard. A regression rolls back to the last verified state automatically. Applying a change never is automatic. See [docs/OPTIMIZE.md](docs/OPTIMIZE.md).
@@ -105,6 +109,7 @@ src/ingest.mjs           remote_write and OTLP receivers, bounded dedupe pipelin
 src/proto.mjs            Snappy and the remote_write protobuf, no dependencies
 src/retention.mjs        rollups, retention with incident windows kept
 src/migrate.mjs          schema versions and migrations
+src/incidents.mjs        lifecycle, paging, timeline page, postmortem draft, labels from confirmed causes
 src/traces.mjs           spans → requests with stages; Kineto traces and step logs → per-rank steps
 tools/bench-scale.mjs    ingest and 24 h root-cause benchmark
 src/optimize.mjs         candidates, selection, staged rollout through gpu-health's queue, guards, rollback, verify

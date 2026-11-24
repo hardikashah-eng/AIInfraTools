@@ -163,6 +163,8 @@ Milestones 5–10 close those gaps, in the order they should be built.
 
 **Done when:** an injected incident goes from detection to a resolved postmortem with its label stored, without leaving the tools.
 
+**Status:** done ([fleetops/docs/INCIDENTS.md](fleetops/docs/INCIDENTS.md)), checked end to end through the CLI in `tests/incidents.test.mjs`. Paging is a dry run unless `--live`.
+
 ### 10. Run as a service, securely
 
 - **A service, not only cron:**
