@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// fleetops: the shared data layer for AIInfraTools, plus (in later steps) calibration, root-cause analysis and optimization.
+// fleetops: the shared data layer for AIInfraTools, with calibration, root-cause analysis and optimization on top.
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -11,6 +11,11 @@ import * as Live from '../src/adapters/live.mjs';
 import { toEpoch } from '../src/adapters/time.mjs';
 import { writeGpuHealth, toFleetScopeTrace } from '../src/export.mjs';
 import * as Calib from '../src/calibrate.mjs';
+import * as RCA from '../src/rca.mjs';
+import * as Opt from '../src/optimize.mjs';
+import { loadConfig as ghConfig } from '../../gpu-health/src/config.mjs';
+import { createRequire } from 'node:module';
+const FSIN = createRequire(import.meta.url)('../../fleetscope/src/ingest.js');
 
 const HELP = `fleetops — shared data layer for AIInfraTools
 
@@ -46,6 +51,23 @@ Calibration (fits are stored as calibration records; profiles are JSON files the
   fleetops calibrate drift --graph G --profile P [--from T] [--to T] [--fail-on-drift]
         simulate the latest window with the stored multipliers; outside the 10%/20% bar → a drift record
   fleetops calibrate apply --graph G --profile P --out G2      write the multipliers into a FleetScope graph
+
+Root-cause analysis (diagnoses are stored as incident records):
+  fleetops rca detect [--from T] [--to T] [--min-failures 50] [--ratio 4] [--targets targets.json] [--diagnose] [--format md]
+        find job-failure spikes and serving latency regressions; --diagnose ranks causes for each
+  fleetops rca diagnose --symptom job-failures|latency|device --from T --to T [--pool P] [--nodes n1,n2] [--format md]
+  fleetops rca eval --labels FILE      top-1 / top-3 accuracy on labeled incidents (JSON lines: { incident, cause })
+
+Optimization with safe execution (rollback is automatic; applying a stage always needs approval):
+  fleetops optimize candidates [--from T] [--to T] [--price 4] [--max-attempts 2] [--graph G [--trace-pool P [--trace-from T --trace-to T]] [--target 0.99]] [--out cands.json]
+        candidate changes from gpu-health (right-size, scale-in, reclaim), rca (retry storms) and FleetScope (pool sizes)
+  fleetops optimize plan --candidates cands.json --out plan.json [--save-pct 20] [--baseline-weekly $] [--max-risk medium]
+        [--guards guards.json] [--deployments deploy.json] [--bake 1800] [--state DIR]
+        pick a set that meets the goal, stage it, and queue every stage for approval in gpu-health's queue
+  fleetops optimize advance --plan plan.json [--state DIR] [--config gpu-health.json] [--live]
+        check the last stage's SLO guard (regression → roll back, no approval needed), then run the next approved stage
+  fleetops optimize verify --plan plan.json [--days 7]     before/after GPU-hours and guard breaches → an optimization record
+  Approve a stage with: gpu-health actions approve ID --by NAME --state DIR   (DIR defaults to <store>/rollouts/state)
 
 Times (T) are ISO dates or epoch seconds. Common: --store DIR (default ./fleet-data), --json.`;
 
@@ -118,6 +140,8 @@ async function main() {
   if (!area || o.help || area === 'help') return console.log(HELP);
   const store = new DataStore(o.store && o.store !== true ? o.store : 'fleet-data');
   if (area === 'calibrate') return calibrate(store, cmd, o);
+  if (area === 'rca') return rca(store, cmd, o);
+  if (area === 'optimize') return optimize(store, cmd, o);
   if (area !== 'data') throw new Error(`unknown command "${area}"\n\n${HELP}`);
   if (cmd === 'import') {
     const [src, ...files] = rest;
@@ -207,6 +231,117 @@ async function calibrate(store, cmd, o) {
     return;
   }
   throw new Error(`unknown: calibrate ${cmd}\n\n${HELP}`);
+}
+
+async function rca(store, cmd, o) {
+  const show = list => {
+    if (J) { OUT.incidents = list; return; }
+    if (o.format === 'md') { console.log(list.map(d => RCA.markdown(d)).join('\n')); return; }
+    for (const d of list) {
+      say(`${d.id}  [${d.confidence}]`);
+      d.hypotheses.slice(0, 3).forEach((h, i) => say(`  ${i + 1}. ${h.title}  (${h.rule}, ${h.score.toFixed(2)})`));
+      say(`     ${d.narrative}`);
+    }
+  };
+  if (cmd === 'detect') {
+    const from = time(o.from), to = time(o.to);
+    const incs = [...RCA.detectJobFailureSpikes(store, { from, to, minFailures: o['min-failures'] ? +o['min-failures'] : 50, ratio: o.ratio ? +o.ratio : 4 }),
+      ...RCA.detectServingRegressions(store, { from, to, targets: o.targets && o.targets !== true ? JSON.parse(read(o.targets)) : {} })];
+    if (!o.diagnose) { if (J) OUT.incidents = incs; else for (const i of incs) say(`${i.id}${i.failures ? `  ${i.failures} failures (baseline ${i.baselinePerHour}/h)` : `  peak ${i.peak.toFixed(3)} s > ${i.limit.toFixed(3)} s`}`); return; }
+    const ds = incs.map(i => RCA.diagnose(store, i));
+    store.append('incident', ds);
+    return show(ds);
+  }
+  if (cmd === 'diagnose') {
+    if (!o.symptom || !o.from || !o.to) throw new Error('--symptom job-failures|latency|device --from T --to T');
+    const inc = { symptom: o.symptom, from: time(o.from), to: time(o.to), pool: o.pool !== true ? o.pool : undefined, nodes: o.nodes && o.nodes !== true ? String(o.nodes).split(',') : undefined, metric: o.metric };
+    const d = RCA.diagnose(store, inc);
+    store.append('incident', [d]);
+    return show([d]);
+  }
+  if (cmd === 'eval') {
+    if (!o.labels || o.labels === true) throw new Error('--labels FILE');
+    const labeled = read(o.labels).split(/\r?\n/).filter(l => l.trim()).map(l => JSON.parse(l)).map(l => Object.assign(l, { incident: Object.assign({}, l.incident, { from: time(l.incident.from), to: time(l.incident.to) }) }));
+    const r = RCA.evaluate(store, labeled);
+    if (J) { OUT.evaluation = r; return; }
+    say(`${r.incidents} labeled incidents: top-1 ${(r.top1 * 100).toFixed(0)}%, top-3 ${(r.top3 * 100).toFixed(0)}%`);
+    for (const x of r.rows) say(`  ${x.id}: labeled ${x.cause}, ranked ${x.rank ?? 'not found'} (${x.got.join(', ')})`);
+    return;
+  }
+  throw new Error(`unknown: rca ${cmd}\n\n${HELP}`);
+}
+
+const money = v => '$' + Math.round(v).toLocaleString('en-US');
+// What the fleet costs per week now: GPUs in the inventory (or, without one, distinct GPUs seen) × 168 h × price.
+function baselineWeekly(store, from, to, price) {
+  const nodes = new Map(); for (const r of store.scan('inventory', { to })) if (r.kind !== 'cpu') nodes.set(r.node, r.devices || 0);
+  let n = [...nodes.values()].reduce((a, b) => a + b, 0);
+  if (!n) { const g = new Set(); for (const r of store.scan('device', { from, to })) g.add(`${r.node}:${r.gpu}`); n = g.size; }
+  return n * 168 * price;
+}
+async function optimize(store, cmd, o) {
+  const opt = k => (o[k] && o[k] !== true ? o[k] : undefined), json = k => (opt(k) ? JSON.parse(read(opt(k))) : undefined);
+  const now = o.now ? +o.now : Math.floor(Date.now() / 1000), price = o.price ? +o.price : 4;
+  const state = opt('state') || path.join(store.dir, 'rollouts', 'state');
+  const cfg = ghConfig(json('config'));
+  if (cmd === 'candidates') {
+    const from = time(o.from), to = time(o.to);
+    const cands = [...Opt.fromGpuHealth(store, { from, to, cfg }), ...Opt.fromRetryStorms(store, { from, to, price, maxAttempts: o['max-attempts'] ? +o['max-attempts'] : 2 })];
+    if (opt('graph')) {
+      // the store's requests go through the same CSV and parser as FleetScope's own --trace option
+      const rows = opt('trace-pool') ? FSIN.parseTrace(toFleetScopeTrace(store, { pool: o['trace-pool'], from: time(o['trace-from']), to: time(o['trace-to']) })).trace : null;
+      if (rows && !rows.length) throw new Error(`no request records for pool ${o['trace-pool']}`);
+      if (rows) say(`replaying ${rows.length} requests of ${o['trace-pool']} through the graph`);
+      cands.push(...Opt.fromFleetScope(json('graph'), { target: o.target ? +o.target : 0.99, traceRows: rows }));
+    }
+    const out = { from, to, price, baselineWeekly: baselineWeekly(store, from, to, price), candidates: cands.map(c => Object.assign({}, c, { graph: undefined })) };
+    if (opt('out')) fs.writeFileSync(o.out, JSON.stringify(out, null, 1));
+    if (J) { Object.assign(OUT, out); return; }
+    say(`${cands.length} candidates (fleet ≈ ${money(out.baselineWeekly)}/week at $${price}/GPU-hour)`);
+    say('  savings/week  risk    SLO                       candidate');
+    for (const c of cands.slice().sort((a, b) => b.savingsWeekly - a.savingsWeekly)) say(`  ${money(c.savingsWeekly).padStart(11)}  ${c.risk.padEnd(6)}  ${(c.protected ? 'PROTECTED' : c.slo.impact).padEnd(24)}  ${c.title}${c.realized ? ` (${c.realized})` : ''}`);
+    if (opt('out')) say(`written to ${o.out}`);
+    return;
+  }
+  if (cmd === 'plan') {
+    const c = json('candidates'); if (!c || !opt('out')) throw new Error('--candidates FILE --out plan.json');
+    const sel = Opt.select(c.candidates, { savePct: o['save-pct'] ? +o['save-pct'] : undefined, baselineWeekly: o['baseline-weekly'] ? +o['baseline-weekly'] : c.baselineWeekly, maxRisk: opt('max-risk') || 'medium' });
+    const plan = Opt.planRollout(sel, { guards: json('guards') || {}, deployments: json('deployments') || {}, bakeS: o.bake ? +o.bake : 1800, cfg });
+    plan.goal = { savePct: o['save-pct'] ? +o['save-pct'] : null, baselineWeekly: sel.baselineWeekly, savedPct: sel.savedPct, meetsGoal: sel.meetsGoal }; plan.skipped = sel.skipped; plan.state = state;
+    const ids = Opt.enqueue(plan, state, now);
+    Opt.savePlan(o.out, plan);
+    if (J) { OUT.plan = plan; OUT.queued = ids; return; }
+    say(`plan ${plan.id}: ${money(plan.totalWeekly)}/week${plan.potentialWeekly > plan.totalWeekly ? ` firm, up to ${money(plan.potentialWeekly)} if notified owners act` : ''}${sel.savedPct != null ? ` (${(sel.savedPct * 100).toFixed(1)}% of ${money(sel.baselineWeekly)})` : ''}${plan.goal.savePct ? ` — goal ${plan.goal.savePct}% ${sel.meetsGoal ? 'met' : 'NOT met'}` : ''}`);
+    const many = plan.candidates.length > 8;
+    for (const x of many ? plan.candidates.slice(0, 6) : plan.candidates) say(`  + ${x.title}  ${money(x.savingsWeekly)}/week, risk ${x.risk}`);
+    if (many) say(`  + … ${plan.candidates.length - 6} more`);
+    for (const x of sel.skipped.slice(0, 8)) say(`  - ${x.id}: ${x.why}`);
+    if (sel.skipped.length > 8) say(`  - … ${sel.skipped.length - 8} more skipped`);
+    say(`${plan.stages.length} stages queued for approval in ${state}:`);
+    plan.stages.forEach((st, i) => say(`  ${st.n}. ${st.title}${st.guard ? `  [guard: pool ${st.guard.pool} ${st.guard.metric} ≤ ${st.guard.limit ?? `+${Math.round((st.guard.maxRegression ?? 0.1) * 100)}%`}, bake ${st.bakeS}s]` : ''}\n     approve: gpu-health actions approve ${ids[i]} --by NAME --state ${state}`));
+    say(`then: fleetops optimize advance --plan ${o.out}`);
+    return;
+  }
+  const planFile = opt('plan'); if (!planFile) throw new Error('--plan plan.json');
+  const plan = JSON.parse(read(planFile));
+  if (cmd === 'advance') {
+    const r = await Opt.advance(plan, { store, stateDir: opt('state') || plan.state || state, cfg, live: !!o.live, now });
+    Opt.savePlan(planFile, plan);
+    if (J) { OUT.plan = plan; OUT.log = r.log; return; }
+    for (const l of r.log) say(l);
+    say(`plan ${plan.id}: ${plan.status}`);
+    if (plan.status === 'rolled-back') process.exitCode = 4;
+    return;
+  }
+  if (cmd === 'verify') {
+    const v = Opt.verify(plan, store, { days: o.days ? +o.days : 7, now });
+    store.append('optimization', [Object.assign({ t: now, id: plan.id, status: plan.status, expectedWeekly: plan.totalWeekly }, v)]);
+    if (J) { OUT.verification = v; return; }
+    if (!v.window) return say(v.note);
+    say(`${plan.id}: allocated GPU-hours ${v.before.gpuHours.toFixed(0)} → ${v.after.gpuHours.toFixed(0)} (${pc(v.gpuHoursChange)}) over ${(v.window / 86400).toFixed(1)} days; guard breaches ${v.before.breaches} → ${v.after.breaches}: ${v.verified ? 'verified' : 'NOT verified'}`);
+    return;
+  }
+  throw new Error(`unknown: optimize ${cmd}\n\n${HELP}`);
 }
 
 const self = fileURLToPath(import.meta.url);
