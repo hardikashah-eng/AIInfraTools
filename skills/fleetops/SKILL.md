@@ -1,6 +1,6 @@
 ---
 name: fleetops
-description: Finds the root cause of GPU fleet incidents, runs them as incidents, watches the fleet live and mitigates in real time, and measures training goodput. It ingests DCGM, AMD and SambaNova exporters, vLLM metrics, Prometheus and Loki, OTLP traces, kernel and NCCL logs, NCCL Inspector, PyTorch profiler traces, Slurm and Kubernetes. It detects job failures, latency regressions and training slowdowns, hangs and divergence, and ranks causes with evidence across 15 rules (hardware, bad change, shared switch or rack, version cohort, straggler, slow link, collective hang, silent data corruption, KV pressure, load, slow replica, storage, workload, monitoring gaps). A live agent mitigates within approval guardrails and verifies, with a live dashboard. It splits GPU-hours into goodput and badput, advises checkpoint intervals, finds GPUs that silently corrupt training, and writes postmortems. Use for why jobs fail, latency regressed, training broke, wasted GPU-hours, NaNs, or live auto-mitigation.
+description: Finds the root cause of GPU fleet incidents, runs them as incidents, mitigates live, measures training goodput and turns the user's traces into tuning changes. It ingests DCGM, AMD and SambaNova exporters, vLLM metrics, Prometheus, Loki, OTLP, kernel and NCCL logs, NCCL Inspector, PyTorch profiler traces, Slurm and Kubernetes, or a one-command trace bundle. It detects job failures, latency regressions and training slowdowns, hangs and divergence, and ranks causes across 15 rules (hardware, bad change, shared switch or rack, version cohort, straggler, slow link, collective hang, silent data corruption, KV pressure, load, slow replica, storage, workload, monitoring gaps). A live agent mitigates within approval guardrails. It advises checkpoint intervals, pool sizes and more, then measures whether each change worked. Use for why jobs fail, latency regressed, training broke, wasted GPU-hours, NaNs, tuning, or live auto-mitigation.
 ---
 
 # fleetops
@@ -109,6 +109,32 @@ seconds.
      (DIR defaults to `<store>/rollouts/state`). Then `optimize advance --plan
      plan.json` checks the last stage's SLO guard (rolls back on breach) and runs the next approved stage, dry run
      unless `--live`. `optimize verify` compares before and after. See [references/OPTIMIZE.md](references/OPTIMIZE.md).
+
+## Tuning from the user's traces
+
+Use this when asked whether the infrastructure could be tuned, what to change, or whether a change worked.
+1. **Get the traces in:**
+   - a bundle: `scripts/fleetops/tools/collect.sh` run by the user on a node, then
+     `fleetops data import bundle FILE`;
+   - loose files: `fleetops data import auto FILE…`;
+   - or pull or stream.
+
+   The collector is read-only, but the user runs it on their machines. Remind them that kernel and application logs go
+   in as they are.
+2. **Recommend:** `fleetops tune --days 7 [--pools pools.json] [--targets t.json] --json`.
+   - Give the top recommendations with their evidence, the change, the expected effect and its basis. Say "upper
+     bound" and "uncalibrated" when the report does.
+   - Pass on the report's list of missing data: it says what would unlock more.
+   - Pool sizing needs `--pools` (model, GPU and current GPUs per pool; `fleetops tune models` lists ids). Ask for it
+     rather than guessing.
+3. **Check before changing:** `fleetops tune holdout --from … --split … --to …` reports which premises held out of
+   sample.
+4. **After a change:** the user records it with `fleetops tune apply ID --by THEIR_NAME`. A week later,
+   `fleetops tune verify --json` gives the verdict, the interval, and measured against predicted. Before/after is not
+   an experiment: mention anything else that changed in the window.
+
+Without data, `fleetops demo --training --days 14 --tuned-at 7` gives a store where two changes were applied
+mid-way. Method and results: [references/TUNE.md](references/TUNE.md).
 
 ## Goodput and silent data corruption
 

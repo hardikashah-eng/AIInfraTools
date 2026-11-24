@@ -11,6 +11,8 @@ step it saw exporter counters, job outcomes and serving metrics. It now also see
 
 | Source | Command it reads | Records |
 |---|---|---|
+| `auto` | any of the files below | recognized by content (`fleetops data import auto FILE…`); a bundle from `tools/collect.sh` is imported with `data import bundle` ([TUNE.md](TUNE.md)) |
+| `requests` | gateway or proxy request logs: LiteLLM, OpenAI-style usage, OTLP gen_ai spans, CSV of t, isl, osl, ttft, e2e | `request` (token counts and latencies only) |
 | `kernel-log` | `journalctl -k -o short-iso`, `dmesg -T` (`--utc-offset`), `dmesg` (`--boot`), syslog (`--year`) | `log` |
 | `app-log` | NCCL / PyTorch job output, optionally `kubectl logs --timestamps` | `log` |
 | `nvidia-smi-q` | `nvidia-smi -q` | `inventory` with versions, GPU serials, UUIDs and the PCI → GPU map |

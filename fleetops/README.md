@@ -71,6 +71,20 @@ Spans (OTLP, or forwarded clock-corrected by hybrid-tracing) become per-request 
 
 `fleetops serve` also answers a read API (`/api/query`, `/api/series` for Grafana, `/api/incidents`, `/api/diagnose`). Tokens have roles (ingest, read, admin) and tenant scopes (namespaces, pools, clusters, infra); only their hashes are stored. Every read is audited. Prompts, completions and secrets are redacted at ingest. `--on-prem` refuses outbound calls to unlisted hosts. Optimizer guards can query Prometheus at check time. Exporter formats are pinned by contract tests. A Dockerfile, a Kubernetes manifest and a Grafana dashboard are in `Dockerfile` and `deploy/`. See [docs/SERVICE.md](docs/SERVICE.md).
 
+## Send your traces, get tuning advice, check it worked
+
+- **Collect:** `tools/collect.sh` gathers what a node or cluster has into one bundle: nvidia-smi, the kernel log, DCGM, vLLM metrics, kubectl or Slurm, Helm history, and the step and request logs you name.
+- **Send:** `fleetops data import bundle FILE` imports it, `fleetops send FILE --to URL` uploads it to a running fleetops, and `data import auto` recognizes loose files by their content.
+- **Tune:** `fleetops tune` ranks what to change, with evidence, knobs and the expected effect, and says whether that effect is measured, modelled or an upper bound:
+  - training: checkpoint interval, input pipeline, slow nodes, restarts, communication;
+  - inference: KV cache, pool size and autoscaling through the Inference Sizer;
+  - fleet: flaky nodes, idle GPUs.
+- **Check it worked:**
+  - `fleetops tune apply ID --by NAME` records a change, and `fleetops tune verify` measures it before and after, with a 95% interval;
+  - `tune holdout` checks a recommendation's premise out of sample before anything changes.
+
+On Philly's real job traces, the 10 flaky nodes found in the first half of a week kept failing at 3.5× their expected rate in the second half. See [docs/TUNE.md](docs/TUNE.md).
+
 ## Training goodput
 
 `fleetops goodput` splits every training allocation, per job, team and day:
@@ -151,6 +165,9 @@ src/calibrate.mjs        FleetScope pool and Inference Sizer fits, held-out chec
 src/rca.mjs              incident detection, causal rules, ranked hypotheses with evidence, evaluation
 src/detect.mjs           seasonal baselines, Poisson and z-score CUSUM, incident grouping
 src/bench.mjs            labeled scenarios, accuracy per cause, injected/postmortem scoring, fitted weights
+src/bundle.mjs           trace bundles: tar reading, content sniffing, import plans (tools/collect.sh makes them)
+src/tune.mjs             tuning recommendations, apply / verify (before-after with a bootstrap interval), holdout
+tools/collect.sh         one-command, read-only collection of a node's or cluster's traces into a bundle
 src/goodput.mjs          training goodput: allocations split into goodput and badput, interruption rate, checkpoint advice
 src/goodput-report.mjs   the goodput report (Markdown, HTML)
 src/sdc.mjs              silent-data-corruption evidence → suspect GPUs, first sign and checkpoint to resume from per job

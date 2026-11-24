@@ -118,5 +118,10 @@ test('fleetops: demo → diagnose names the planted cause, game day is a dry run
   json(d, [cli, 'demo', '--scenario', 'silent-corruption', '--store', 'sdc', '--json']);
   const sd = json(d, [cli, 'sdc', '--from', '2026-01-15T00:00:00Z', '--to', '2026-01-16T00:00:00Z', '--store', 'sdc', '--json']).sdc;
   assert.equal(sd.devices[0].verdict, 'confirmed'); assert.ok(sd.jobs[0].lastCleanCheckpoint);
+  // tune: two changes applied mid-way, measured
+  json(d, [cli, 'demo', '--training', '--days', '14', '--tuned-at', '7', '--store', 'tuned', '--json']);
+  const v = json(d, [cli, 'tune', 'verify', '--store', 'tuned', '--json']).verified;
+  assert.deepEqual(v.map(x => x.verdict), ['improved', 'improved']);
+  run(d, 'bash', ['-n', 'scripts/fleetops/tools/collect.sh']);
   assert.ok(st.waiting.some(a => a.kind === 'swap-at-checkpoint'));
 });

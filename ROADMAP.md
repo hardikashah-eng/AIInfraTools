@@ -282,6 +282,27 @@ it is applied.
 
 **Done when:** each team's bill shows what was useful and what was lost, and why.
 
+### 18. Tuning from real traces
+
+- **Getting traces in:**
+  - a read-only collector makes one bundle per node or cluster;
+  - bundles are imported or uploaded (`POST /v1/bundle`);
+  - loose files are recognized by content.
+- **Tuning:** recommendations across training, inference and the fleet, each with evidence, knobs, the expected
+  effect and its basis (measured, model, upper bound).
+- **Checking:**
+  - `tune apply` records a change, and `tune verify` measures it before and after with a 95% interval;
+  - `tune holdout` checks each premise out of sample.
+
+**Done when:** a change made on a recommendation is measured on the fleet, and the measurement is near the
+prediction.
+
+**Status:** built ([fleetops/docs/TUNE.md](fleetops/docs/TUNE.md)).
+- **Philly:** the flaky-node finding held out of sample (3.5× expected), at a smaller share than in sample.
+- **Synthetic, with a known answer:** two applied changes were measured as improved; the checkpoint model's
+  prediction was within 3 points.
+- **Still needed:** a change applied on a real fleet.
+
 ### 17. Fabric and storage stalls
 
 - **Fabric:** slow NCCL links traced to switch ports and congestion counters (UFM, SONiC, switch telemetry), not

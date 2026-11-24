@@ -28,6 +28,8 @@ import * as Bench from '../src/bench.mjs';
 import * as Agent from '../src/agent.mjs';
 import * as Goodput from '../src/goodput.mjs';
 import * as Sdc from '../src/sdc.mjs';
+import * as Bundle from '../src/bundle.mjs';
+import * as Tune from '../src/tune.mjs';
 import { goodputMarkdown, goodputHtml } from '../src/goodput-report.mjs';
 import * as LiveView from '../src/live.mjs';
 import * as Inject from '../src/inject.mjs';
@@ -38,6 +40,9 @@ const FSIN = createRequire(import.meta.url)('../../fleetscope/src/ingest.js');
 const HELP = `fleetops — shared data layer for AIInfraTools
 
   fleetops data import SOURCE FILE... [--store DIR] [options]     load records into the store
+  fleetops data import bundle FILE.tar.gz|DIR                     a trace bundle (tools/collect.sh): every file, by its
+                                                                 manifest entry or by content
+  fleetops send FILE.tar.gz|DIR --to URL [--token T]              upload a bundle to a fleetops server (POST /v1/bundle)
   fleetops data summary [--store DIR]                             records per kind, time range and sources
   fleetops data query KIND [--from T] [--to T] [--where k=v]... [--limit N]
   fleetops data node NODE [--from T] [--to T]                    versions, shared switch/rack/PDU, log faults, changes
@@ -54,7 +59,8 @@ const HELP = `fleetops — shared data layer for AIInfraTools
   fleetops token list --tokens FILE
   fleetops data export gpu-health --out DIR [--from T] [--to T]   samples.jsonl, jobs.json, results.jsonl for gpu-health
   fleetops data export fleetscope-trace --out FILE [--pool P]     CSV for FleetScope's Trace replay node
-  fleetops demo --training [--days 7]                             a week of training jobs with planted badput (for goodput)
+  fleetops demo --training [--days 7] [--tuned-at D]              training jobs with planted badput (for goodput and tune);
+                                                                 --tuned-at applies two recommendations on day D
   fleetops demo [--scenario NAME] [--seed N] [--list] [--now]      a store with one planted cause (a benchmark scenario) to
                                                                  try detect, diagnose and incidents without a fleet;
                                                                  --now moves it so the incident ends now (for the agent)
@@ -79,6 +85,10 @@ Sources (SOURCE):
   kineto           PyTorch profiler trace JSON (one rank)    [--job J] [--node N] [--rank R] [--t0 T]   per-rank steps
   nccl-inspector   NCCL Inspector profiler-plugin JSON       [--job J] (default: from the nccl-inspector-<jobid> directory)
   step-log         JSON lines {t, rank, node, step, durS, commS?, dataS?, ckptS?, mfu?, loss?, gradNorm?, n?}   [--job J]
+  requests         gateway or proxy request logs (LiteLLM, OpenAI-style usage, OTLP gen_ai spans, CSV with t, isl,
+                   osl, ttft?, e2e?): token counts and latencies, never prompts   [--pool P] [--start T]
+  auto             recognize each file by its content (exporter scrapes, vLLM metrics, nvidia-smi, kubectl JSON,
+                   sacct, kernel and NCCL logs, step logs, Kineto, OTLP, NCCL Inspector, request logs, …)
   sdc-checks       JSON lines of silent-data-corruption checks: tools/sdc-canary.py output, or your trainer's
                    {t, check: param-checksum|replay|nan, node, gpu, job, step, rank, group, value, ok}
   sacct            sacct -P -X --format=JobID,JobName,State,ExitCode,Start,End,NodeList,AllocTRES
@@ -133,6 +143,18 @@ Goodput (where training GPU-hours went; checkpoint interval advice):
   fleetops goodput [--from T] [--to T | --days 7] [--job J] [--targets targets.json] [--format md|html] [--out FILE]
         allocated GPU-hours per job, team and day split into productive, slow steps, data stalls, checkpoint saves,
         lost work, restarts, startup and idle; the fleet's interruption rate; the best checkpoint interval per job
+
+Tuning (what to change, the expected effect, and afterwards whether it worked):
+  fleetops tune [--from T] [--to T | --days 7] [--targets targets.json] [--pools pools.json] [--format md|json] [--out F]
+        ranked changes for training (checkpoint interval, input pipeline, slow nodes, restarts, communication),
+        inference (KV cache, pool size and autoscaling with the Inference Sizer) and the fleet (flaky nodes, idle GPUs),
+        each with its evidence, knobs, expected effect and its basis (measured, model, upper bound)
+        pools.json: { "chat": { "model": "llama33-70b", "gpu": "H100", "gpus": 32 } }  (fleetops tune models lists ids)
+  fleetops tune apply ID --by NAME [--at T] [--note TEXT]     record that a recommendation was applied
+  fleetops tune verify [ID] [--before 7d] [--after 7d]         the metric before and after, a 95% interval, a verdict
+  fleetops tune list                                           applied recommendations and their verdicts
+  fleetops tune holdout --from T --split T --to T              recommend on [from, split), check on [split, to) that
+                                                               the problem each names is still there (before changing anything)
 
 Silent data corruption (GPUs that compute wrong answers without an error):
   fleetops sdc [--from T] [--to T | --days 7] [--format md]
@@ -204,8 +226,8 @@ function importSource(store, src, files, o) {
   const each = f => (fs.statSync(f).isDirectory() ? [f] : [f]);
   for (const f of files.flatMap(each)) {
     switch (src) {
-      case 'exporter': put('device', Live.exporterScrape(read(f), { vendor: o.vendor !== true ? o.vendor : undefined, t: o.t ? +o.t : Math.floor(fs.statSync(f).mtimeMs / 1000), site: o.site })); break;
-      case 'vllm': put('serving', [Live.vllmSnapshot(read(f), { before: o.before ? read(o.before) : undefined, windowS: o.window ? +o.window : undefined, t: o.t ? +o.t : Math.floor(fs.statSync(f).mtimeMs / 1000), pool: o.pool || 'default', model: o.model, gpu: o.gpu })]); break;
+      case 'exporter': put('device', Live.exporterScrape(read(f), { vendor: o.vendor !== true ? o.vendor : undefined, t: o.t ? time(o.t) : Math.floor(fs.statSync(f).mtimeMs / 1000), site: o.site })); break;
+      case 'vllm': put('serving', [Live.vllmSnapshot(read(f), { before: o.before ? read(o.before) : undefined, windowS: o.window ? +o.window : undefined, t: o.t ? time(o.t) : Math.floor(fs.statSync(f).mtimeMs / 1000), pool: o.pool || 'default', model: o.model, gpu: o.gpu })]); break;
       case 'prom-range': if (!o.field) throw new Error('prom-range needs --field'); put('serving', Live.promRange(read(f), { field: o.field, pool: o.pool })); break;
       case 'k8s-nodes': putInventory(Live.k8sNodes(read(f), { t: tOf(f) })); put('topology', Live.k8sNodeTopology(read(f), { t: tOf(f) })); break;
       case 'k8s-pods': put('placement', Live.k8sPods(read(f))); break;
@@ -247,8 +269,24 @@ function importSource(store, src, files, o) {
       }
       case 'philly-jobs': { const x = Philly.jobLog(JSON.parse(read(f)), { from, to }); put('placement', x.placements); put('job', x.outcomes); break; }
       case 'azure-llm': put('request', Pub.azureLlm(read(f), { pool: o.pool || path.basename(f, '.csv'), limit: o.limit ? +o.limit : Infinity })); break;
-      case 'mlperf': put('benchmark', [Pub.mlperfSummary(read(f), { path: o.path || f, t: o.t ? +o.t : 0, meta: { islMean: o.isl ? +o.isl : undefined } })]); break;
+      case 'mlperf': put('benchmark', [Pub.mlperfSummary(read(f), { path: o.path || f, t: o.t ? time(o.t) : 0, meta: { islMean: o.isl ? +o.isl : undefined } })]); break;
       case 'acme': put('job', Pub.acme(read(f), { cluster: o.cluster || 'acme', limit: o.limit ? +o.limit : Infinity })); break;
+      // gateway or proxy request logs (LiteLLM, OpenAI-style usage, OTLP gen_ai spans, CSV), through FleetScope's parser;
+      // token counts and latencies only, never prompts or completions
+      case 'requests': {
+        const parsed = FSIN.parseTrace(read(f), { maxRows: 5000000, maxSeconds: Number.MAX_SAFE_INTEGER });
+        const pool = o.pool && o.pool !== true ? o.pool : path.basename(f).replace(/\.(jsonl?|csv|txt)$/, '');
+        const t0 = time(o.start) ?? tOf(f) - Math.max(0, ...parsed.trace.map(r => +r.t || 0));
+        put('request', parsed.trace.filter(r => +r.isl > 0 && +r.osl > 0).map(r => ({ t: r.abs != null ? r.abs : t0 + +r.t, pool, isl: +r.isl, osl: +r.osl, cached: r.cached != null ? +r.cached : undefined, ttft: r.ttft != null ? +r.ttft : undefined, e2e: r.e2e != null ? +r.e2e : undefined, source: 'requests' })));
+        break;
+      }
+      case 'auto': {
+        const s = Bundle.sniffFile(f, f);
+        if (!s) { res.push({ kind: 'unrecognized', written: 0, skipped: 0, invalid: 0, errors: [`${f}: not recognized; name its source (fleetops data import SOURCE FILE)`] }); break; }
+        const by = importSource(store, s, [f], o);
+        for (const [kind, b] of Object.entries(by)) res.push(Object.assign({ kind }, b));
+        break;
+      }
       default: throw new Error(`unknown source "${src}"\n\n${HELP}`);
     }
   }
@@ -258,19 +296,72 @@ function importSource(store, src, files, o) {
   return by;
 }
 
+// A bundle (tar, tar.gz or a directory): manifest entries, then anything recognized by content. One bad file doesn't
+// stop the rest; each file's result is reported.
+async function importBundle(store, target, o = {}) {
+  if (!target) throw new Error('fleetops data import bundle FILE.tar.gz|DIR');
+  let dir = target, tmp = null;
+  if (!fs.statSync(target).isDirectory()) { const u = Bundle.unpack(fs.readFileSync(target)); dir = tmp = u.dir; }
+  try {
+    const p = Bundle.plan(dir), files = [], totals = {};
+    // files another entry reads (a vLLM scrape's earlier snapshot) are not imported on their own
+    const used = new Set(p.entries.map(e => e.opts && e.opts.before).filter(Boolean).map(Bundle.safeName));
+    for (const e of p.entries) {
+      if (used.has(e.path)) continue;
+      if (e.opts && e.opts.before) e.opts = Object.assign({}, e.opts, { before: path.join(dir, Bundle.safeName(e.opts.before)) });
+      if (e.missing) { files.push({ path: e.path, source: e.source, error: 'listed in the manifest but not in the bundle' }); continue; }
+      if (!e.source) { files.push({ path: e.path, source: null, skipped: 'not recognized' }); continue; }
+      try {
+        const opts = Object.assign({}, e.opts);
+        if (['kernel-log', 'nvidia-smi-q', 'nvidia-topo', 'app-log'].includes(e.source) && !opts.node && p.manifest && p.manifest.host) opts.node = p.manifest.host;
+        if (opts.t != null) opts.t = String(opts.t);
+        const by = importSource(store, e.source, [e.abs], opts);
+        for (const [k, b] of Object.entries(by)) totals[k] = (totals[k] || 0) + b.written;
+        files.push({ path: e.path, source: e.source, from: e.from, imported: by });
+      } catch (err) { files.push({ path: e.path, source: e.source, error: err.message.split('\n')[0] }); }
+    }
+    if (store.flush) store.flush();
+    return { manifest: p.manifest, files, totals };
+  } finally { if (tmp) fs.rmSync(tmp, { recursive: true, force: true }); }
+}
+
+// fleetops send: a bundle (or a directory, tarred here) to a fleetops server's POST /v1/bundle.
+async function sendCmd(o) {
+  const target = o._[1], url = o.to && o.to !== true ? o.to : null, token = o.token && o.token !== true ? o.token : process.env.FLEETOPS_TOKEN;
+  if (!target || !url) throw new Error('fleetops send BUNDLE|DIR --to http://fleetops:9400 [--token T | FLEETOPS_TOKEN]');
+  let body;
+  if (fs.statSync(target).isDirectory()) {
+    const walk = (d, b = '') => fs.readdirSync(path.join(d, b), { withFileTypes: true }).flatMap(e => e.isDirectory() ? walk(d, b ? `${b}/${e.name}` : e.name) : e.isFile() ? [b ? `${b}/${e.name}` : e.name] : []);
+    body = (await import('node:zlib')).gzipSync(Bundle.writeTar(walk(target).map(n => ({ name: n, data: fs.readFileSync(path.join(target, n)) }))));
+  } else body = fs.readFileSync(target);
+  const r = await fetch(url.replace(/\/$/, '') + '/v1/bundle', { method: 'POST', headers: Object.assign({ 'content-type': 'application/gzip' }, token ? { authorization: `Bearer ${token}` } : {}), body });
+  const text = await r.text();
+  if (!r.ok) throw new Error(`${r.status}: ${text.trim()}`);
+  const j = JSON.parse(text);
+  if (J) { OUT.sent = j; return; }
+  say(`sent ${(body.length / 1e6).toFixed(1)} MB: ${Object.entries(j.totals).map(([k, n]) => `${k} ${n}`).join(', ') || 'nothing new'}${j.files.some(f => f.error) ? `\n  errors: ${j.files.filter(f => f.error).map(f => `${f.path}: ${f.error}`).join('; ')}` : ''}`);
+}
+
 // A demo store: one benchmark scenario (a fleet with one planted cause and distractors) written to --store, so the
 // detect → diagnose → incident flow can be tried without a fleet. The answer is printed so the result can be checked.
 function demo(store, o) {
   if (o.training) {
     const days = o.days ? +o.days : 7, t0 = Math.floor(Date.now() / 1000 / 3600) * 3600 - days * 86400;
-    const recs = Goodput.synthTraining({ t0, days, seed: o.seed ? +o.seed : 7 }), written = {};
+    const at = o['tuned-at'] && o['tuned-at'] !== true ? t0 + +o['tuned-at'] * 86400 : null;
+    // the two changes `tune` recommends for the first period: a faster input pipeline, more frequent checkpoints
+    const tuned = at ? { at, 'sft-8b': { data: 0.12 }, 'pretrain-70b': { ckptEvery: 40 * 60 } } : null;
+    const recs = Goodput.synthTraining({ t0, days, seed: o.seed ? +o.seed : 7, tuned }), written = {};
     for (const [k, r] of Object.entries(recs)) if (r.length) written[k] = store.append(k, r, { dedupe: true }).written;
     if (store.flush) store.flush();
+    if (at) {
+      const t = Tune.tune(store, { from: t0, to: at, now: at });
+      for (const id of ['data-pipeline:sft-8b', 'checkpoint:pretrain-70b']) { const r = t.recommendations.find(x => x.id === id); if (r) Tune.applyTune(store, r, { by: 'demo', at }); }
+    }
     const res = { store: store.dir, written, from: t0, to: t0 + days * 86400, planted: { 'pretrain-70b': 'checkpoints every 3 h on a fleet that interrupts it every ~6 h: lost work', 'sft-8b': 'a slow input pipeline: data stalls', 'rl-policy': 'one slow node for two days: slow steps' } };
     if (J) { OUT.demo = res; return; }
     say(`demo store ${store.dir}: ${days} days of training (${Object.entries(written).map(([k, n]) => `${k} ${n}`).join(', ')})`);
     for (const [j, w] of Object.entries(res.planted)) say(`  ${j}: ${w}`);
-    say(`try:\n  fleetops goodput --days ${days} --store ${store.dir}\n  fleetops goodput --days ${days} --format html --out goodput.html --store ${store.dir}`);
+    say(at ? `applied on day ${o['tuned-at']}: data-pipeline:sft-8b, checkpoint:pretrain-70b\ntry:\n  fleetops tune --from ${new Date(t0 * 1000).toISOString()} --to ${new Date(at * 1000).toISOString()} --store ${store.dir}\n  fleetops tune verify --store ${store.dir}` : `try:\n  fleetops goodput --days ${days} --store ${store.dir}\n  fleetops tune --days ${days} --store ${store.dir}\n  fleetops goodput --days ${days} --format html --out goodput.html --store ${store.dir}`);
     return;
   }
   const names = Bench.SCENARIO_NAMES;
@@ -309,6 +400,7 @@ async function main() {
   if (!area || o.help || area === 'help') return console.log(HELP);
   if (o['on-prem'] && process.env.FLEETOPS_EGRESS_ALLOW == null) process.env.FLEETOPS_EGRESS_ALLOW = typeof o['on-prem'] === 'string' ? o['on-prem'] : '';
   if (area === 'token') return tokenCmd(cmd, o);
+  if (area === 'send') return sendCmd(o);
   const store = await openStore(o.store && o.store !== true ? o.store : 'fleet-data', { backend: o.backend && o.backend !== true ? o.backend : undefined });
   // the hourly rollup answers long lookbacks (root-cause "day before") when it exists
   if (fs.existsSync(path.join(store.dir, 'rollup-3600', 'device'))) store.coarse = await Retention.rollupStore(store, 3600);
@@ -326,7 +418,16 @@ async function main() {
   if (area === 'agent') return agentCmd(store, cmd, o);
   if (area === 'goodput') return goodputCmd(store, o);
   if (area === 'sdc') return sdcCmd(store, o);
+  if (area === 'tune') return tuneCmd(store, cmd, o);
   if (area !== 'data') throw new Error(`unknown command "${area}"\n\n${HELP}`);
+  if (cmd === 'import' && rest[0] === 'bundle') {
+    const r = await importBundle(store, rest[1], o);
+    if (J) { OUT.bundle = r; return; }
+    say(`bundle ${rest[1]}${r.manifest ? ` (${r.manifest.host || '?'}, collected ${r.manifest.collectedAt || '?'})` : ''}`);
+    for (const e of r.files) say(`  ${e.path.padEnd(40)} ${(e.source || '–').padEnd(15)} ${e.error ? `error: ${e.error}` : e.skipped ? e.skipped : Object.entries(e.imported || {}).map(([k, b]) => `${k} ${b.written}${b.invalid ? ` (${b.invalid} invalid: ${b.errors[0] || ''})` : ''}`).join(', ') || 'nothing new'}`);
+    say(`  total: ${Object.entries(r.totals).map(([k, n]) => `${k} ${n}`).join(', ') || 'nothing imported'}`);
+    return;
+  }
   if (cmd === 'import') {
     const [src, ...files] = rest;
     if (!src || !files.length) throw new Error('give a SOURCE and at least one FILE');
@@ -781,6 +882,54 @@ function goodputCmd(store, o) {
   process.stdout.write(goodputMarkdown(g));
 }
 
+function tuneCmd(store, cmd, o) {
+  const opt = k => (o[k] && o[k] !== true ? o[k] : undefined), json = f => JSON.parse(read(f));
+  const to = time(opt('to')) ?? Math.floor(Date.now() / 1000), from = time(opt('from')) ?? to - (opt('days') ? +opt('days') : 7) * 86400;
+  const args = { from, to, now: Math.min(to, Math.floor(Date.now() / 1000)), targets: opt('targets') ? json(opt('targets')) : {}, pools: opt('pools') ? json(opt('pools')) : {} };
+  const last = path.join(store.dir, 'tune', 'last.json');
+  if (cmd === 'models') { const C = createRequire(import.meta.url)('../../inference-sizer/src/catalog.js'); if (J) { OUT.models = C.MODELS.map(m => m.id); OUT.gpus = C.GPUS.map(g => g.id); return; } say(`models: ${C.MODELS.map(m => m.id).join(' ')}\ngpus:   ${C.GPUS.map(g => g.id).join(' ')}`); return; }
+  if (cmd === 'apply') {
+    const id = o._[2]; if (!id) throw new Error('fleetops tune apply ID --by NAME');
+    let rec = fs.existsSync(last) ? JSON.parse(read(last)).recommendations.find(r => r.id === id) : null;
+    if (!rec) rec = Tune.tune(store, args).recommendations.find(r => r.id === id);
+    if (!rec) throw new Error(`no recommendation ${id} (run fleetops tune first; ids are shown in its output)`);
+    const c = Tune.applyTune(store, rec, { by: opt('by'), at: time(opt('at')), note: opt('note') });
+    if (J) { OUT.applied = c; return; }
+    say(`recorded ${id} applied at ${fmt(c.t)} by ${c.by}${rec.verify ? `\nmeasure it once there is data after the change: fleetops tune verify ${id}` : ''}`);
+    return;
+  }
+  if (cmd === 'verify' || cmd === 'list') {
+    const ids = cmd === 'verify' && o._[2] ? [o._[2]] : [...new Set(Tune.applied(store).map(c => c.tune.id))];
+    const vo = { beforeS: dur(opt('before')) ?? 7 * 86400, afterS: dur(opt('after')) ?? 7 * 86400, now: Math.floor(Date.now() / 1000) };
+    const res = ids.map(id => Object.assign({ title: (Tune.applied(store).filter(c => c.tune.id === id).pop() || { tune: {} }).tune.title }, Tune.verifyTune(store, id, vo)));
+    if (J) { OUT.verified = res; return; }
+    if (!res.length) { say('nothing applied yet: fleetops tune apply ID --by NAME after making a change'); return; }
+    const f = (m, x) => (x == null ? '–' : m === 'pool.ttftP99' ? `${x.toFixed(3)} s` : m === 'fleet.interruptions' ? x.toFixed(2) : `${(x * 100).toFixed(1)}%`);
+    for (const r of res) say(`${r.verdict.toUpperCase().padEnd(15)} ${r.id}${r.title ? `  ${r.title}` : ''}${r.before ? `\n                ${r.metric}${r.scope ? ` (${r.scope})` : ''}: ${f(r.metric, r.before.mean)} before (${r.before.n}) → ${f(r.metric, r.after.mean)} after (${r.after.n})${r.ci ? `, difference 95% CI ${f(r.metric, r.ci[0])} to ${f(r.metric, r.ci[1])}` : ''}` : ''}${r.note ? `\n                ${r.note}` : ''}`);
+    return;
+  }
+  if (cmd === 'holdout') {
+    const split = time(opt('split')) ?? Math.round((from + to) / 2);
+    const h = Tune.holdout(store, Object.assign({}, args, { from, split, to }));
+    if (J) { OUT.holdout = h; return; }
+    say(`recommendations from ${fmt(from)} → ${fmt(split)}, checked on ${fmt(split)} → ${fmt(to)}:`);
+    for (const r of h.rows) {
+      const o2 = r.outOfSample;
+      const txt = r.id === 'flaky-nodes' && o2 ? `the same nodes: ${o2.failed.toFixed(0)} failed attempts against ${o2.expected.toFixed(0)} expected (${o2.ratio ? o2.ratio.toFixed(1) : '–'}×), ${(o2.share * 100).toFixed(1)}% of failures`
+        : r.id.startsWith('reclaim:') && o2 ? `${o2.still} of ${o2.of} jobs still flagged`
+          : r.inSample != null && typeof r.inSample === 'number' && typeof o2 === 'number' ? `${(r.inSample * 100).toFixed(1)}% before, ${(o2 * 100).toFixed(1)}% after` : (r.note || '');
+      say(`  ${r.held == null ? '–' : r.held ? 'HELD ' : 'FADED'} ${r.id}: ${txt}`);
+    }
+    return;
+  }
+  if (cmd && cmd !== 'run') throw new Error(`unknown: tune ${cmd}`);
+  const t = Tune.tune(store, args);
+  fs.mkdirSync(path.dirname(last), { recursive: true }); fs.writeFileSync(last, JSON.stringify(t));
+  if (opt('format') === 'json' || J) { if (opt('out')) fs.writeFileSync(opt('out'), JSON.stringify(t, null, 1)); OUT.tune = t; if (!J) say(JSON.stringify(t, null, 1)); return; }
+  const text = Tune.tuneMarkdown(t);
+  if (opt('out')) { fs.writeFileSync(opt('out'), text); say(`wrote ${opt('out')}`); } else process.stdout.write(text);
+}
+
 function sdcCmd(store, o) {
   const opt = k => (o[k] && o[k] !== true ? o[k] : undefined);
   const to = time(opt('to')) ?? Math.floor(Date.now() / 1000), from = time(opt('from')) ?? to - (opt('days') ? +opt('days') : 7) * 86400;
@@ -856,14 +1005,28 @@ async function serve(store, o) {
   if (!tokens && !['127.0.0.1', 'localhost', '::1'].includes(host) && !o['no-auth']) throw new Error(`--host ${host} needs --tokens FILE (or --no-auth to run open on a trusted network)`);
   const pipe = new Ingest.Pipeline(store, { maxQueue: o['max-queue'] ? +o['max-queue'] : 200000, flushMs: o['flush-ms'] ? +o['flush-ms'] : 1000 }).start();
   let extra = null, page = null, agentRun = null;
+  // POST /v1/bundle (role ingest): a trace bundle, imported as `data import bundle` would
+  const bundleRoute = async (req, res, who, send) => {
+    if (req.method !== 'POST' || req.url.split('?')[0] !== '/v1/bundle') return false;
+    if (!Sec.can(who, 'ingest')) { send(res, 403, 'needs the ingest role\n'); return true; }
+    const chunks = []; let n = 0;
+    for await (const c of req) { n += c.length; if (n > Bundle.MAX_FILE) { send(res, 413, 'bundle too large: import it with fleetops data import bundle\n'); return true; } chunks.push(c); }
+    const f = path.join(fs.mkdtempSync(path.join((await import('node:os')).tmpdir(), 'fleetops-up-')), 'bundle.tgz');
+    try { fs.writeFileSync(f, Buffer.concat(chunks)); const r = await importBundle(store, f, {}); send(res, 200, JSON.stringify({ totals: r.totals, files: r.files.map(x => ({ path: x.path, source: x.source, error: x.error, skipped: x.skipped })) }), 'application/json'); }
+    catch (e) { send(res, 400, `${e.message}\n`); }
+    finally { fs.rmSync(path.dirname(f), { recursive: true, force: true }); }
+    return true;
+  };
+  extra = bundleRoute;
   if (o.agent) {
     const ao = agentOpts(store, o);
-    extra = LiveView.liveRoutes({ store, stateDir: ao.stateDir, agent: ao.agent, ghConfig: ao.ghConfig, audit: Sec.auditor(store.dir) }); page = LiveView.LIVE_HTML;
+    const live = LiveView.liveRoutes({ store, stateDir: ao.stateDir, agent: ao.agent, ghConfig: ao.ghConfig, audit: Sec.auditor(store.dir) }); page = LiveView.LIVE_HTML;
+    extra = async (req, res, who, send) => (await bundleRoute(req, res, who, send)) || live(req, res, who, send);
     agentRun = Agent.start(store, ao, { onTick: r => console.log(agentLine(r)), before: ao.before });
   }
   const srv = Ingest.server(pipe, { site: o.site && o.site !== true ? o.site : undefined, tokens, audit: Sec.auditor(store.dir), extra, page });
   await new Promise(r => srv.listen(port, host, r));
-  console.log(`fleetops on http://${host}:${port}  store ${store.dir}  ${tokens ? `${tokens.length} token(s)` : 'open (no tokens)'}${process.env.FLEETOPS_EGRESS_ALLOW != null ? `  egress: ${process.env.FLEETOPS_EGRESS_ALLOW || 'none'}` : ''}\n  POST /api/v1/write /v1/metrics /v1/logs /v1/traces   GET /api/summary /api/query /api/series /api/incidents /api/diagnose /metrics /healthz${o.agent ? `\n  agent every ${agentOpts(store, o).agent.intervalS ?? Agent.AGENT_DEFAULTS.intervalS} s${o.live ? ' (live: still needs policy.dryRun false)' : ' (dry run)'}; dashboard http://${host}:${port}/live` : ''}`);
+  console.log(`fleetops on http://${host}:${port}  store ${store.dir}  ${tokens ? `${tokens.length} token(s)` : 'open (no tokens)'}${process.env.FLEETOPS_EGRESS_ALLOW != null ? `  egress: ${process.env.FLEETOPS_EGRESS_ALLOW || 'none'}` : ''}\n  POST /api/v1/write /v1/metrics /v1/logs /v1/traces /v1/bundle   GET /api/summary /api/query /api/series /api/incidents /api/diagnose /metrics /healthz${o.agent ? `\n  agent every ${agentOpts(store, o).agent.intervalS ?? Agent.AGENT_DEFAULTS.intervalS} s${o.live ? ' (live: still needs policy.dryRun false)' : ' (dry run)'}; dashboard http://${host}:${port}/live` : ''}`);
   const stop = () => { if (agentRun) agentRun.stop(); srv.close(); pipe.stop(); if (store.close) store.close(); process.exit(0); };
   process.on('SIGINT', stop); process.on('SIGTERM', stop);
   await new Promise(() => {});

@@ -113,7 +113,7 @@ function splitAttempt(a, steps, ideal, ckpts, now) {
   const acc = sum(out), rest = wall - acc;
   if (rest >= 0) out.idle += rest;
   else { const k = wall / acc; for (const c of CATEGORIES) out[c] *= k; } // overlapping records: scale into the allocation
-  return { gpuS: add(zero(), out, g), resolution: 'step', failed, wall, lastMark: Number.isFinite(lastMark) ? lastMark : null, marks };
+  return { gpuS: add(zero(), out, g), resolution: 'step', failed, wall, lastMark: Number.isFinite(lastMark) ? lastMark : null, marks, toFirstStepS: first - a.start };
 }
 
 // Interruptions per GPU-hour of training on this fleet: attempts that ended abnormally, over training GPU-hours.
@@ -152,7 +152,9 @@ export function goodput(store, { from, to, now = to, job: only, serving = true, 
   let openGpuS = 0;
   for (const [name, list] of byJob) {
     if (only && name !== only) continue;
-    const steps = stepsOf(store, name, from - 86400, to);
+    // the steps of every attempt in full (a checkpoint after the window still keeps the steps inside it)
+    const span = list.filter(a => (a.end ?? now) > from && a.start < to);
+    const steps = stepsOf(store, name, Math.min(from, ...span.map(a => a.start)) - 3600, Math.max(to, ...span.map(a => a.end ?? now)) + 60);
     // ideal pace: the fast end of the job's own step times without data and checkpoint waits
     const per = steps.map(s => (s.dur * s.n - s.ckpt - s.data) / s.n).filter(v => v > 0);
     const ideal = per.length ? q(per, 0.1) : 0;
@@ -169,7 +171,7 @@ export function goodput(store, { from, to, now = to, job: only, serving = true, 
       add(tot, r.gpuS, share);
       gpus = Math.max(gpus, a.gpus);
       if (r.resolution === 'attempt') resolution = 'attempt';
-      atts.push({ id: a.id, n: a.n, start: a.start, end: a.end, gpus: a.gpus, failed: r.failed, cause: a.outcome ? a.outcome.cause : null, gpuHours: Object.fromEntries(CATEGORIES.map(c => [c, +(r.gpuS[c] * share / H).toFixed(6)])) });
+      atts.push({ id: a.id, n: a.n, start: a.start, end: a.end, gpus: a.gpus, failed: r.failed, cause: a.outcome ? a.outcome.cause : null, toFirstStepS: r.toFirstStepS ?? null, gpuHours: Object.fromEntries(CATEGORIES.map(c => [c, +(r.gpuS[c] * share / H).toFixed(6)])) });
       const d = Math.floor(s / 86400) * 86400;
       if (!days.has(d)) days.set(d, zero());
       add(days.get(d), r.gpuS, share);
@@ -239,7 +241,8 @@ export function servingGoodput(store, { from, to, targets = {} }) {
 //   pretrain-70b  256 GPUs, checkpoints every 3 h (blocking 2 min) on a fleet that interrupts it every ~6 h: lost work
 //   sft-8b        64 GPUs, a slow input pipeline: data stalls
 //   rl-policy     32 GPUs, one slow node for two days: slow steps
-export function synthTraining({ t0, days = 7, seed = 7 } = {}) {
+// tuned: { at, [job]: { data?, ckptEvery?, slowFactor? } } changes the job from `at` on (to measure a change).
+export function synthTraining({ t0, days = 7, seed = 7, tuned = null } = {}) {
   let a = seed >>> 0;
   const u = () => { a = (a + 0x6D2B79F5) >>> 0; let t = a; t = Math.imul(t ^ (t >>> 15), t | 1); t ^= t + Math.imul(t ^ (t >>> 7), t | 61); return ((t ^ (t >>> 14)) >>> 0) / 4294967296; };
   const end = t0 + days * 86400, rec = { placement: [], job: [], step: [], log: [] };
@@ -254,14 +257,15 @@ export function synthTraining({ t0, days = 7, seed = 7 } = {}) {
       step = lastCkptStep;
       let failedAt = null;
       while (cur < end) {
-        const slowNow = slow && cur >= slow.from && cur < slow.to ? slow.factor : 1;
-        const per = ideal * slowNow * (1 + 0.02 * u()) + data;
+        const tn = tuned && cur >= tuned.at && tuned[job] ? tuned[job] : {};
+        const slowNow = slow && cur >= slow.from && cur < slow.to ? (tn.slowFactor ?? slow.factor) : 1;
+        const per = ideal * slowNow * (1 + 0.02 * u()) + (tn.data ?? data);
         const dur = every * per;
         if (cur + dur > fail) { failedAt = fail; break; }
         cur += dur; step += every; sinceCk += dur;
         let ck = 0;
-        if (sinceCk >= ckptEvery) { ck = ckptS; cur += ck; sinceCk = 0; lastCkptStep = step; }
-        rec.step.push({ t: Math.round(cur), job, rank: 0, node: nodes[0], step, n: every, durS: +(per + ck / every).toFixed(4), dataS: data || undefined, ckptS: ck || undefined, source: 'demo' });
+        if (sinceCk >= (tn.ckptEvery ?? ckptEvery)) { ck = ckptS; cur += ck; sinceCk = 0; lastCkptStep = step; }
+        rec.step.push({ t: Math.round(cur), job, rank: 0, node: nodes[0], step, n: every, durS: +(per + ck / every).toFixed(4), dataS: (tn.data ?? data) || undefined, ckptS: ck || undefined, source: 'demo' });
       }
       const aEnd = failedAt != null ? Math.round(failedAt + 300) : Math.round(Math.min(cur, end)); // the watchdog fires 5 min later
       rec.placement.push({ t: start, job: `${job}#${attempt}`, class: 'training', owner, namespace, start, end: aEnd, devices, source: 'demo' });
