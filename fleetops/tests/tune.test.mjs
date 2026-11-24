@@ -111,15 +111,13 @@ test('collect.sh → bundle → import, and upload to a server by role', async (
   fs.writeFileSync(path.join(bin, 'journalctl'), `#!/bin/bash\ncat ${FX}/signals/kernel.log\n`, { mode: 0o755 });
   fs.writeFileSync(path.join(bin, 'kubectl'), `#!/bin/bash\ncase "$2" in nodes) cat ${FX}/k8s_nodes.json;; pods) cat ${FX}/k8s_pods.json;; events) cat ${FX}/signals/k8s_events.json;; esac\n`, { mode: 0o755 });
   fs.writeFileSync(path.join(d, 'steps.jsonl'), '{"t":1795500000,"rank":0,"node":"gpu-a1","step":100,"durS":1.2,"dataS":0.3,"job":"llm"}\n');
-  const env = Object.assign({}, process.env, { PATH: `${bin}:${process.env.PATH}` });
+  // an empty sysfs and no NFS mounts, so the host's own NICs don't change the bundle (fabric-storage-real covers those)
+  fs.mkdirSync(path.join(d, 'sys'));
+  const env = Object.assign({}, process.env, { PATH: `${bin}:${process.env.PATH}`, FLEETOPS_SYSFS: path.join(d, 'sys'), FLEETOPS_MOUNTSTATS: '/dev/null' });
   const c = spawnSync('bash', [path.join(here, '..', 'tools', 'collect.sh'), '--node', 'gpu-a1', '--dcgm', 'http://127.0.0.1:1/none', '--k8s', '--step-log', path.join(d, 'steps.jsonl'), '--out', path.join(d, 'b')], { env, cwd: d, encoding: 'utf8' });
   assert.equal(c.status, 0, c.stderr);
   const mf = JSON.parse(fs.readFileSync(path.join(d, 'b', 'manifest.json'), 'utf8'));
-  // ethtool counters (RDMA NICs under /sys/class/infiniband) and NFS mountstats come from the host itself, not the
-  // stand-ins: present on a CI runner with Mellanox NICs, absent in a container. They must parse when present.
-  const HOST = ['ethtool', 'mountstats'];
-  assert.deepEqual(mf.files.map(f => f.source).filter(x => !HOST.includes(x)).sort(), ['k8s-events', 'k8s-nodes', 'k8s-pods', 'kernel-log', 'nvidia-smi-q', 'nvidia-topo', 'step-log']);
-  for (const f of mf.files.filter(x => HOST.includes(x.source))) assert.ok(fs.statSync(path.join(d, 'b', f.path)).size > 0, f.path);
+  assert.deepEqual(mf.files.map(f => f.source).sort(), ['k8s-events', 'k8s-nodes', 'k8s-pods', 'kernel-log', 'nvidia-smi-q', 'nvidia-topo', 'step-log']);
   const r = JSON.parse((await run(process.execPath, [cli, 'data', 'import', 'bundle', path.join(d, 'b.tar.gz'), '--store', path.join(d, 's'), '--json'])).stdout).bundle;
   assert.ok(r.totals.inventory >= 2 && r.totals.log >= 1 && r.totals.step === 1 && r.totals.placement >= 1);
   assert.ok(r.files.every(f => !f.error), JSON.stringify(r.files.filter(f => f.error)));
