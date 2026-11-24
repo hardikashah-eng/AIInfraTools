@@ -29,3 +29,18 @@ test('fit.js runs as a browser global next to the catalog', () => {
   const c = ctx.SizerFit.capacity('llama33-70b', { gpu: 'H100', nodes: 2 }, { isl: 2000, osl: 400 }, { ttftS: 2, tpotS: 0.05 }, {});
   assert.ok(c.production.rate > 5 && c.maxPrompt > 2000);
 });
+
+// No mocks: the built page in a real headless Chrome, when one is installed (GitHub's runners have it).
+const CHROME = ['google-chrome', 'google-chrome-stable', 'chromium', 'chromium-browser'].find(c => { try { execFileSync('bash', ['-lc', `command -v ${c}`], { stdio: 'ignore' }); return true; } catch { return false; } });
+test('no mocks: headless Chrome opens dist/index.html#fit and renders a row per catalog model', { skip: !CHROME && 'no Chrome on this host' }, () => {
+  execFileSync(process.execPath, ['build.mjs'], { cwd: root });
+  const url = 'file://' + path.join(root, 'dist/index.html') + '#fit';
+  const dom = execFileSync(CHROME, ['--headless=new', '--no-sandbox', '--disable-gpu', '--virtual-time-budget=5000', '--dump-dom', url], { encoding: 'utf8', timeout: 60000, stdio: ['ignore', 'pipe', 'ignore'] });
+  const ctx = { console }; ctx.self = ctx; vm.createContext(ctx); vm.runInContext(fs.readFileSync(path.join(root, 'src', 'catalog.js'), 'utf8'), ctx);
+  const res = dom.slice(dom.indexOf('id="fit-results"'), dom.indexOf('</main>', dom.indexOf('id="fit-results"'))); // the rendered results, not the inlined script
+  const rows = [...res.matchAll(/<tr[^>]*data-model="([^"]+)"/g)].map(m => m[1]);
+  assert.deepEqual(rows.slice().sort(), JSON.parse(JSON.stringify(ctx.SizerCatalog.MODELS.map(m => m.id))).sort(), 'one row per built-in model');
+  assert.match(res, /What fits on 2 × NVIDIA H100/, 'the default hardware in the heading');
+  assert.match(dom, /id="fitview"(?![^>]*hidden)/, 'the fit view is shown, the sizing view hidden');
+  assert.ok(/class="fittable"/.test(res) && !/NaN|undefined/.test(res), 'no NaN or undefined in the results');
+});

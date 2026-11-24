@@ -105,4 +105,4 @@ In FleetScope, **Load graph JSON** runs it. The same recommendation replays at 9
 | `src/ui.js`, `src/fit-ui.js`, `src/index.src.html` | The page: the sizing view and the "What fits" view |
 | `specs/example.json` | Example spec sheet (one GPU, one model) |
 | `tools/size.mjs` | CLI |
-| `tests/` | Catalog, model, "What fits" and cross-tool FleetScope tests |
+| `tests/` | Catalog, model, "What fits" (in Node and in headless Chrome when there is one) and cross-tool FleetScope tests |
