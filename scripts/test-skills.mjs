@@ -86,6 +86,18 @@ test('gpu-health: demo, analyze digest, approval needs a name, execute is a dry 
   assert.ok(!mixed.openActions.some(a => a.id.startsWith('gpu-reset:t1/')));
 });
 
+test('gpu-ledger: demo → report finds the planted waste, FOCUS export, slurm import, serving sizing through the vendored sizer', () => {
+  const d = isolate('gpu-ledger'), cli = 'scripts/gpu-ledger/tools/ledger.mjs';
+  run(d, 'node', [cli, 'demo', '--out', 'ld']);
+  const r = json(d, [cli, 'report', '--usage', 'ld/usage.jsonl', '--config', 'ld/ledger.json', '--json']);
+  const kinds = new Set(r.insights.map(i => i.kind));
+  for (const k of ['idle-timeout', 'repeated-failure', 'gpu-type', 'serving-scale', 'commitment']) assert.ok(kinds.has(k), k);
+  run(d, 'node', [cli, 'focus', '--usage', 'ld/usage.jsonl', '--config', 'ld/ledger.json', '--out', 'f.csv']);
+  assert.match(fs.readFileSync(path.join(d, 'f.csv'), 'utf8'), /^BilledCost,/);
+  assert.match(run(d, 'node', [cli, 'rates', '--config', 'assets/ledger.example.json']), /H100 +onprem/);
+  assert.ok(fs.existsSync(path.join(d, 'scripts/inference-sizer/src/fit.js')), 'the sizer is vendored for serving sizing');
+});
+
 test('fleetops: demo → diagnose names the planted cause, game day is a dry run and checks the allowlist, k8s dry run', () => {
   const d = isolate('fleetops'), cli = 'scripts/fleetops/tools/fleetops.mjs', ex = 'scripts/fleetops/examples';
   assert.equal(json(d, [cli, 'demo', '--list', '--json']).scenarios.length, 18);

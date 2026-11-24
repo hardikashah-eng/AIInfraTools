@@ -1,0 +1,5 @@
+[{"status":"Failed","vc":"vc1","jobid":"app_1","user":"u1","submitted_time":"2017-11-07 23:00:00","attempts":[
+  {"start_time":"2017-11-07 23:30:00","end_time":"2017-11-07 23:59:00","detail":[{"ip":"m1","gpus":["gpu0","gpu1"]}]},
+  {"start_time":"2017-11-08 00:00:00","end_time":"2017-11-08 00:30:00","detail":[{"ip":"m1","gpus":["gpu0","gpu1"]}]}]},
+ {"status":"Pass","vc":"vc1","jobid":"app_2","user":"u2","submitted_time":"2017-11-07 23:00:00","attempts":[
+  {"start_time":"2017-11-08 00:00:00","end_time":null,"detail":[{"ip":"m2","gpus":["gpu0"]}]}]}]

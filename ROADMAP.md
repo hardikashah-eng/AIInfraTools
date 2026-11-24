@@ -291,6 +291,18 @@ it is applied.
 
 **Done when:** each team's bill shows what was useful and what was lost, and why.
 
+**Status:** built as a standalone tool, [gpu-ledger](gpu-ledger/), so it runs on any cluster, not only on fleetops
+data (`fleetops data export gpu-ledger` connects the two):
+- useful, idle and lost GPU-hours and cost per org, team, person, project, use case, GPU type and model;
+- ranked savings with owners, including serving cost per token and model/GPU matching;
+- FOCUS 1.4 export next to cloud bills.
+
+On Philly's week (real utilization), 70% of 314,261 allocated GPU-hours were useful, 25% idle and 4% lost.
+**Still needed:**
+- a bill reconciled against a real invoice or cloud FOCUS export;
+- on-prem vs neocloud for the same work;
+- the cost of each incident, joining fleetops incidents to the ledger.
+
 ### 18. Tuning from real traces
 
 - **Getting traces in:**
