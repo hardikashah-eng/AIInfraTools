@@ -80,7 +80,7 @@ case " \$* " in *" --store "*) exec node "$FO/tools/fleetops.mjs" "\$@";; esac
 exec node "$FO/tools/fleetops.mjs" "\$@" --store "$DIR/data"
 EOF
 chmod +x "$DIR/bin/fleetops"
-SERVE=(node "$FO/tools/fleetops.mjs" serve --store "$DIR/data" --backend "$BACKEND" --host "$HOST" --port "$PORT" --tokens "$TOK")
+SERVE=(node "$FO/tools/fleetops.mjs" serve --agent --store "$DIR/data" --backend "$BACKEND" --host "$HOST" --port "$PORT" --tokens "$TOK")
 [ -n "$ONPREM" ] && SERVE+=(--on-prem "$ONPREM")
 
 # 5. service
@@ -130,6 +130,8 @@ Next steps
   OTel collector: exporters: { otlphttp/fleetops: { endpoint: http://<this-host>:$PORT, headers: { Authorization: "Bearer ${ING:-<collector token>}" } } }
   Grafana:      Infinity data source → URL http://<this-host>:$PORT, header Authorization: Bearer ${RD:-<grafana token>};
                 import $FO/deploy/grafana-dashboard.json
+  Live:         http://<this-host>:$PORT/live  (the agent runs as a dry run; approvers get their own token:
+                fleetops token create --tokens $TOK --name <you> --roles read,approve)
   Backtest:     fleetops backtest --labels postmortems.jsonl --prom http://prometheus:9090 --loki http://loki:3100
   Uninstall:    $FO/install/uninstall.sh --dir $DIR   (keeps data unless --purge)
 $( [ "$HOST" != 127.0.0.1 ] || echo "  (listening on localhost only; rerun with --host 0.0.0.0 to accept other machines: tokens are required either way)" )

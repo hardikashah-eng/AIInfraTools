@@ -56,7 +56,7 @@ export const DEFAULTS = {
   // What may happen without a person. auto = executes at once; approve = queued for approval; never = suggestion only.
   policy: {
     dryRun: true,             // commands run only with this false AND --live
-    limits: { maxQuarantineShare: 0.1, minQuarantinePerRun: 2, maxNodeRebootsPerRun: 1, maxActionAgeSec: 3600 },
+    limits: { maxQuarantineShare: 0.1, minQuarantinePerRun: 2, maxNodeRebootsPerRun: 1, maxNodeCordonsPerRun: 2, maxScaleOutStep: 4, maxActionAgeSec: 3600 },
     cooldownSec: { rejected: 7 * 86400, executed: 86400 },
     actions: {
       'quarantine': 'auto', 'release': 'approve', 'notify-owner': 'auto', 'run-diag': 'auto', 'config-reset': 'auto',
@@ -65,6 +65,10 @@ export const DEFAULTS = {
       'reclaim-idle': 'approve', 'scale-in': 'approve', 'resize': 'approve',
       'deep-diag-next-boundary': 'auto', 'avoid-large-jobs': 'approve', 'label-capability': 'approve', 'repartition': 'approve',
       'swap-at-checkpoint': 'approve', 'drain-inference': 'approve',
+      // used by the fleetops live agent: stopping new work on a node and telling people is automatic; anything that
+      // moves running work, adds cost or undoes a change waits for a person (see fleetops examples/agent-policy.realtime.json)
+      'cordon-node': 'auto', 'uncordon-node': 'approve', 'link-check': 'auto', 'hold-rollout': 'auto',
+      'drain-replica': 'approve', 'scale-out': 'approve', 'rollback-change': 'approve', 'restart-without-node': 'approve',
     },
     // Per workload class overrides. Training jobs are never stopped automatically.
     classes: {
@@ -93,6 +97,17 @@ export const DEFAULTS = {
     'drain-inference': [['kubectl', '-n', '{namespace}', 'label', 'pods', '-l', 'app={job}', '--field-selector=spec.nodeName={node}', 'gpu-health.aiinfra/serving=false', '--overwrite']],
     'avoid-large-jobs': [['kubectl', 'label', 'node', '{node}', 'gpu-health.aiinfra/gpu-{gpu}-risk=high', '--overwrite']],
     'label-capability': [['kubectl', 'label', 'node', '{node}', 'gpu-health.aiinfra/capability={reason}', '--overwrite']],
+    // fleetops live agent. cordon stops new pods landing on the node; running work is untouched.
+    'cordon-node': [['kubectl', 'cordon', '{node}']],
+    'uncordon-node': [['kubectl', 'uncordon', '{node}']],
+    // one serving replica out of the Service (same label as drain-inference), by pod name
+    'drain-replica': [['kubectl', '-n', '{namespace}', 'label', 'pod', '{replica}', 'gpu-health.aiinfra/serving=false', '--overwrite']],
+    'scale-out': [['kubectl', '-n', '{namespace}', 'scale', 'deployment', '{job}', '--replicas={replicas}']],
+    'rollback-change': [['helm', 'rollback', '{release}', '{revision}', '-n', '{namespace}', '--wait']],
+    // the training launcher (elastic agent) watches this label: restart from the last checkpoint without the node
+    'restart-without-node': [['kubectl', 'label', 'node', '{node}', 'gpu-health.aiinfra/restart-without={job}', '--overwrite']],
+    'link-check': { webhook: 'check the node\'s NICs and cables (ibstat / ethtool counters, link speed and width, PCIe AER) and the switch port' },
+    'hold-rollout': { webhook: 'pause the rollout of this version until a node rolled back to the fleet version passes the failed job' },
     'notify-owner': 'webhook', 'rma': 'webhook', 'reseat': 'webhook', 'facilities-check': 'webhook', 'exporter-check': 'webhook',
     'resize': 'webhook', 'repartition': 'webhook', 'firmware-align': 'webhook', 'fabric-restart': 'webhook',
   },

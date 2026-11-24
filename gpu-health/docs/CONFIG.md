@@ -79,6 +79,7 @@ Action kinds:
 | `reclaim-idle` | idle allocation | delete the pod |
 | `swap-at-checkpoint` | training job on a suspect, quarantined or high-risk GPU; stragglers | label the node so the launcher checkpoints and restarts without it |
 | `drain-inference` | inference replica on a suspect, quarantined or high-risk GPU | flip the replica pods' `gpu-health.aiinfra/serving` label so the Service stops routing to them (`app={job}` label assumed) |
+| `cordon-node`, `uncordon-node`, `drain-replica`, `scale-out`, `rollback-change`, `restart-without-node`, `link-check`, `hold-rollout` | proposed by the fleetops live agent from its diagnoses | see [fleetops/docs/AGENT.md](../../fleetops/docs/AGENT.md#the-playbook) |
 | `resize`, `repartition`, `rma`, `reseat`, `firmware-align`, `fabric-restart`, `facilities-check`, `exporter-check`, `notify-owner` | various | webhook message to the owner or ops channel |
 
 ## Executors

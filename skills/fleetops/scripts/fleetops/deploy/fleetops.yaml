@@ -26,7 +26,7 @@ spec:
       containers:
         - name: fleetops
           image: REGISTRY/fleetops:0.1
-          args: [serve, --host, 0.0.0.0, --port, "9400", --store, /data, --backend, parquet, --tokens, /etc/fleetops/tokens.jsonl]
+          args: [serve, --agent, --host, 0.0.0.0, --port, "9400", --store, /data, --backend, parquet, --tokens, /etc/fleetops/tokens.jsonl]
           env:
             - { name: FLEETOPS_EGRESS_ALLOW, value: "prometheus-operated.monitoring.svc,*.svc.cluster.local" }   # on-prem: no external calls
           ports: [{ name: http, containerPort: 9400 }]

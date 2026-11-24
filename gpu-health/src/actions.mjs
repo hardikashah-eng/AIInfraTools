@@ -14,7 +14,7 @@ import { run } from './executors.mjs';
 import { ladderFor, supports, noun } from './vendors.mjs';
 
 const OPEN = new Set(['proposed', 'approved', 'suggested']);
-const DISRUPTIVE = new Set(['gpu-reset', 'node-reboot', 'fabric-restart', 'reclaim-idle', 'scale-in', 'resize', 'swap-at-checkpoint', 'drain-inference', 'release', 'repartition']);
+const DISRUPTIVE = new Set(['gpu-reset', 'node-reboot', 'fabric-restart', 'reclaim-idle', 'scale-in', 'resize', 'swap-at-checkpoint', 'drain-inference', 'release', 'repartition', 'drain-replica', 'rollback-change', 'restart-without-node']);
 
 // Candidate actions from an analysis.
 export function suggest(analysis, cfg) {
@@ -147,12 +147,13 @@ export class Store {
     const todo = this.data.actions.filter(a => a.status === 'approved' && (!ids || ids.some(i => a.id === i || a.id.startsWith(i))));
     const lim = cfg.policy.limits || {};
     const maxQ = Math.max(lim.minQuarantinePerRun ?? 2, Math.floor((lim.maxQuarantineShare ?? 0.1) * fleetSize));
-    let q = 0, reboots = 0;
+    let q = 0, reboots = 0, cordons = 0;
     const results = [];
     for (const a of todo.sort((x, y) => (x.severity === 'high' ? 0 : 1) - (y.severity === 'high' ? 0 : 1))) {
       let refuse = null;
       if (a.kind === 'quarantine' && ++q > maxQ) refuse = `quarantine limit reached (${maxQ} per run): check for a fleet-wide cause first`;
       if (a.kind === 'node-reboot' && ++reboots > (lim.maxNodeRebootsPerRun ?? 1)) refuse = 'node reboot limit reached for this run';
+      if (a.kind === 'cordon-node' && ++cordons > (lim.maxNodeCordonsPerRun ?? 2)) refuse = 'node cordon limit reached for this run: check for a shared cause first';
       if (!refuse && DISRUPTIVE.has(a.kind) && now - (a.analyzedAt || 0) > (lim.maxActionAgeSec ?? 3600)) refuse = 'analysis is older than the allowed age for this action: re-run analyze to confirm it still applies';
       if (refuse) { results.push({ id: a.id, ok: false, skipped: true, output: refuse }); this.audit(a, 'skipped', { why: refuse }); continue; }
       let r;

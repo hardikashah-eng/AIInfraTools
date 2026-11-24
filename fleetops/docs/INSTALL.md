@@ -20,7 +20,8 @@ It clones the repository into `~/.fleetops/src`.
 3. Creates `~/.fleetops/{data,etc,bin,log}`, the tokens, and a `fleetops` command bound to that store.
 4. Starts `fleetops serve` as a **systemd user service** on Linux or a **launchd agent** on macOS, else in the
    background with a pidfile.
-5. Waits for `/healthz` and prints the Prometheus `remote_write`, OpenTelemetry collector and Grafana settings with
+5. Runs the live agent in the same process, as a dry run: the dashboard is at `/live` ([AGENT.md](AGENT.md)).
+6. Waits for `/healthz` and prints the Prometheus `remote_write`, OpenTelemetry collector and Grafana settings with
    your tokens filled in.
 
 **Options:** `--dir`, `--port` (9400), `--host` (127.0.0.1; use 0.0.0.0 for other machines, tokens are always
@@ -47,6 +48,10 @@ required), `--backend parquet|jsonl`, `--on-prem HOSTS`, `--no-service`, `--no-s
 4. Waits for the rollout and prints the port-forward and in-cluster URLs.
 
 `--dry-run` renders everything to stdout and applies nothing, so you can review it or commit it to GitOps.
+
+All three run the live agent as a dry run (`serve --agent`) and serve its dashboard at `/live`. Give each approver
+their own token: `fleetops token create --tokens FILE --name NAME --roles read,approve`. Going live is a separate
+step; see [AGENT.md](AGENT.md#shadow-mode-first).
 
 ## Then: send data
 

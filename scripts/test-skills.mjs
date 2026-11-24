@@ -105,4 +105,11 @@ test('fleetops: demo → diagnose names the planted cause, game day is a dry run
   const k8s = run(d, 'bash', ['scripts/fleetops/install/install-k8s.sh', '--image', 'registry.example/fleetops:1', '--dry-run']);
   assert.match(k8s, /kind: Deployment/); assert.match(k8s, /image: registry\.example\/fleetops:1/);
   for (const f of ['install/install.sh', 'install/install-docker.sh', 'install/uninstall.sh']) run(d, 'bash', ['-n', `scripts/fleetops/${f}`]);
+  // the live agent: one check on a demo happening now; a dry run that proposes and waits for a person
+  json(d, [cli, 'demo', '--scenario', 'slow-link', '--now', '--store', 'live', '--json']);
+  const t = json(d, [cli, 'agent', '--once', '--store', 'live', '--json']).tick;
+  assert.equal(t.live, false); assert.equal(t.incidents[0].rule, 'slow-link');
+  assert.ok(t.executed.every(e => e.outcome === 'dry-run'));
+  const st = json(d, [cli, 'agent', 'status', '--store', 'live', '--json']).status;
+  assert.ok(st.waiting.some(a => a.kind === 'swap-at-checkpoint'));
 });

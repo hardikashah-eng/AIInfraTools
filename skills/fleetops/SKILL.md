@@ -1,6 +1,6 @@
 ---
 name: fleetops
-description: Finds the root cause of GPU fleet incidents and runs them as incidents, from one store of telemetry, logs, topology, jobs, traces and changes. It ingests DCGM, AMD and SambaNova exporters, vLLM metrics, Prometheus and Loki, OTLP traces, kernel and NCCL logs, NCCL Inspector, PyTorch profiler traces, Slurm and Kubernetes. It detects job-failure, latency and training slowdowns and hangs, and ranks causes with evidence across 14 rules (hardware, bad change, shared switch or rack, version cohort, straggler, slow link, collective hang, KV pressure, load, slow replica or stage, storage, workload, monitoring gaps). It tracks incidents with paging and postmortems, measures its own accuracy on postmortems and game days, calibrates capacity models, and stages cost-saving changes behind human approval and automatic rollback. Includes one-command installers. Use for why jobs fail or latency regressed, what broke a training run, incident timelines and postmortems, checking RCA accuracy, or installing fleetops.
+description: Finds the root cause of GPU fleet incidents, runs them as incidents, and can watch the fleet live and mitigate in real time. It ingests DCGM, AMD and SambaNova exporters, vLLM metrics, Prometheus and Loki, OTLP traces, kernel and NCCL logs, NCCL Inspector, PyTorch profiler traces, Slurm and Kubernetes. It detects job failures, latency regressions and training slowdowns and hangs, and ranks causes with evidence across 14 rules (hardware, bad change, shared switch or rack, version cohort, straggler, slow link, collective hang, KV pressure, load, slow replica or stage, storage, workload, monitoring gaps). A live agent mitigates within approval guardrails (cordon, drain a replica, scale out, swap a node at checkpoint, roll back) and verifies, with a live dashboard of GPU states, flakiness and incidents. It writes postmortems, measures its own accuracy and installs in one command. Use for why jobs fail, latency regressed, what broke a training run, live monitoring and auto-mitigation, postmortems, RCA accuracy.
 ---
 
 # fleetops
@@ -31,6 +31,9 @@ seconds.
   rules work, not accuracy on the user's fleet; that needs `backtest` (postmortems) or `gameday` results.
 - **Keep egress closed when asked.** With `--on-prem HOSTS` (or `FLEETOPS_EGRESS_ALLOW`), fleetops refuses outbound
   calls to unlisted hosts. Don't remove it to make a pull work; ask the user to add the host.
+- **The live agent stays as it is unless the user says otherwise.** Never add `--live` to the agent, set
+  `policy.dryRun` to false, switch an action kind to `auto`, resume a paused agent, or approve its proposals on the
+  user's behalf. Report what it proposes and let the user decide.
 - **Tokens are secrets.** Show a token only once, to the user, and never put one in a file you share or a command you
   echo back.
 
@@ -106,6 +109,30 @@ seconds.
      (DIR defaults to `<store>/rollouts/state`). Then `optimize advance --plan
      plan.json` checks the last stage's SLO guard (rolls back on breach) and runs the next approved stage, dry run
      unless `--live`. `optimize verify` compares before and after. See [references/OPTIMIZE.md](references/OPTIMIZE.md).
+
+## Live agent and dashboard
+
+Use this when asked to watch the fleet continuously, mitigate in real time, or show a live dashboard.
+
+- **Start it:** `fleetops serve --agent [--targets t.json] [--agent-config a.json]` runs the agent every 30 s and serves
+  the dashboard at `/live`. `fleetops agent --once` runs one check. Without a fleet, use
+  `fleetops demo --scenario slow-link --now --store demo` first.
+- **It is a dry run by default (shadow mode).** It opens incidents, decides, logs "would run", and checks whether each
+  incident cleared on its own. Commands run only with `--live` and `policy.dryRun: false`, and only for action kinds
+  the policy makes `auto`.
+- **What it does per cause, and its guardrails,** are in [references/AGENT.md](references/AGENT.md):
+  - confidence decides how far it goes;
+  - a monitoring gap freezes it;
+  - cordons and autonomous changes per hour are capped;
+  - pause stops it.
+- **Report:**
+  - `fleetops agent status --json` gives incidents with the agent's decision, actions waiting for approval, and
+    autonomous actions this hour;
+  - `fleetops agent log --json` gives its decisions.
+  - Explain each decision with its confidence. For waiting actions, say what each would run and why. A person
+    approves with `fleetops agent approve ID --by THEIR_NAME` or the dashboard's button.
+- **Real-time inference mitigation:** `scripts/fleetops/examples/agent-policy.realtime.json` lets it drain slow replicas
+  and scale pools out on its own. Suggest it only when the user asks for more autonomy, and point out what it changes.
 
 ## The rules (causes)
 

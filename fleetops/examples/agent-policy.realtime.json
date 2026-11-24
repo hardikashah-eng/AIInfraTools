@@ -1,0 +1,12 @@
+{
+  "_comment": "gpu-health policy for a live agent that acts on inference in real time. Pass with --config. Commands still run only with dryRun false here AND --live on the agent. Training work is never moved without a person.",
+  "policy": {
+    "dryRun": true,
+    "classes": {
+      "inference": { "drain-replica": "auto", "drain-inference": "auto", "scale-out": "auto" },
+      "training": { "swap-at-checkpoint": "approve", "restart-without-node": "approve", "reclaim-idle": "never" }
+    },
+    "limits": { "maxScaleOutStep": 2, "maxNodeCordonsPerRun": 2, "maxQuarantineShare": 0.05 }
+  },
+  "notify": { "webhook": "" }
+}
