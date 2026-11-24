@@ -4,6 +4,8 @@
 #   ./fleetops/install/install-serving.sh --model llama33-70b --gpu H100 --nodes 2 --hf-secret hf-token
 #   ./fleetops/install/install-serving.sh --model qwen3-32b --gpu H200 --rate 20 --autoscale
 #   ./fleetops/install/install-serving.sh --model kimi-k2 --gpu H100 --rate 1 --install-lws v0.7.0   # multi-node
+#   ./fleetops/install/install-serving.sh --model llama33-70b --gpu H200 --rate 20 --isl 8000 --mode disagg --install-prereqs
+#        # disaggregated prefill/decode on llm-d (DisaggregatedSet + the llm-d router chart)
 #   ./fleetops/install/install-serving.sh … --dry-run > serving.yaml                               # render only
 #
 # Not sure which model? See what fits first:
@@ -22,15 +24,19 @@
 # Options (all of `fleetops serving deploy`): --model M (required)  --gpu G (required)  --nodes N | --gpus N | --rate R
 #   --name N  --namespace NS (serving)  --hf-secret SECRET  --cache-pvc PVC  --image IMG  --autoscale  --prometheus URL
 #   --isl/--osl TOKENS  --ttft S  --tpot S  --from-pool P  --create-namespace  --endpoint URL  --wait S  --store DIR
+#   --mode agg|disagg|auto  --router-version V  --gaie-version vX.Y.Z
 #   Script only: --dry-run (print the manifests, apply nothing)  --install-lws VERSION (install LeaderWorkerSet first)
+#                --install-prereqs (for --mode disagg: LeaderWorkerSet 1.0.0 with DisaggregatedSet, and the InferencePool CRDs)
 set -euo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"; ROOT="$(cd "$HERE/.." && pwd)"
-DRY=0; LWS=""; PASS=()
+DRY=0; LWS=""; PREREQS=0; GAIE=latest; PASS=()
 while [ $# -gt 0 ]; do case "$1" in
   --dry-run) DRY=1; shift;;
   --install-lws) LWS="${2:-}"; shift 2;;
+  --install-prereqs) PREREQS=1; shift;;
+  --gaie-version) GAIE="${2:-}"; PASS+=("$1" "$2"); shift 2;;
   --apply) shift;;                                   # this script applies unless --dry-run
-  -h|--help) sed -n '2,25p' "$0"; exit 0;;
+  -h|--help) sed -n '2,28p' "$0"; exit 0;;
   *) PASS+=("$1"); shift;; esac; done
 die() { printf 'error: %s\n' "$*" >&2; exit 1; }
 log() { [ "$DRY" = 1 ] && printf '# %s\n' "$*" >&2 || printf '\033[1m==>\033[0m %s\n' "$*"; }
@@ -41,7 +47,8 @@ CLI="$ROOT/tools/fleetops.mjs"
 if [ "$DRY" = 1 ]; then
   T=$(mktemp); trap 'rm -f "$T"' EXIT
   node "$CLI" serving deploy "${PASS[@]}" --out "$T" >&2 || exit $?
-  cat "$T"; log "dry run: nothing applied"; exit 0
+  cat "$T"; if [ -f "$T.router.values.yaml" ]; then log "llm-d router values (helm upgrade --install NAME oci://ghcr.io/llm-d/charts/llm-d-router-standalone --version v0 -f FILE):"; sed 's/^/# /' "$T.router.values.yaml"; rm -f "$T.router.values.yaml"; fi
+  log "dry run: nothing applied"; exit 0
 fi
 
 command -v kubectl >/dev/null || die "kubectl is required (or use --dry-run and apply the output yourself)"
@@ -54,6 +61,15 @@ if [ -n "$LWS" ]; then
     kubectl apply --server-side -f "https://github.com/kubernetes-sigs/lws/releases/download/$LWS/manifests.yaml" >/dev/null
     kubectl -n lws-system rollout status deployment/lws-controller-manager --timeout=300s
   fi
+fi
+if [ "$PREREQS" = 1 ]; then
+  [[ "$GAIE" == latest || "$GAIE" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]] || die "--gaie-version like v1.0.1"
+  command -v helm >/dev/null || die "helm is required for --install-prereqs"
+  log "installing LeaderWorkerSet 1.0.0 with the DisaggregatedSet API"
+  helm upgrade --install lws oci://registry.k8s.io/lws/charts/lws --version=1.0.0 --namespace lws-system --create-namespace --set enableDisaggregatedSet=true --wait --timeout 300s
+  log "installing the Gateway API Inference Extension CRDs ($GAIE)"
+  if [ "$GAIE" = latest ]; then U=releases/latest/download; else U="releases/download/$GAIE"; fi
+  kubectl apply -f "https://github.com/kubernetes-sigs/gateway-api-inference-extension/$U/v1-manifests.yaml"
 fi
 log "planning, checking the cluster, applying"
 exec node "$CLI" serving deploy "${PASS[@]}" --apply

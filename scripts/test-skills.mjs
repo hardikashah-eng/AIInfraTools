@@ -128,5 +128,6 @@ test('fleetops: demo → diagnose names the planted cause, game day is a dry run
   assert.ok(fit.rows[0].meetsRate);
   assert.ok(json(d, [cli, 'serving', 'capacity', '--model', 'llama33-70b', '--gpu', 'H100', '--nodes', '2', '--store', 'sv', '--json']).capacity.production.rate > 10);
   assert.match(run(d, 'bash', ['scripts/fleetops/install/install-serving.sh', '--model', 'qwen3-32b', '--gpu', 'H200', '--rate', '20', '--store', 'sv', '--dry-run']), /kind: Deployment/);
+  assert.match(run(d, 'bash', ['scripts/fleetops/install/install-serving.sh', '--model', 'llama33-70b', '--gpu', 'H100', '--rate', '20', '--isl', '8000', '--osl', '300', '--mode', 'disagg', '--store', 'sv', '--dry-run']), /kind: DisaggregatedSet/);
   assert.ok(st.waiting.some(a => a.kind === 'swap-at-checkpoint'));
 });

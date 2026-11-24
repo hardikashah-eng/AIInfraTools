@@ -89,7 +89,7 @@ On Philly's real job traces, the 10 flaky nodes found in the first half of a wee
 
 - **What fits:** `fleetops serving fit --gpu H100 --nodes 2 [--rate 5]` lists every catalog model with the load it carries on that hardware within the TTFT and TPOT targets (production and flat out), output tokens/s, $ per million tokens and the layout. With `--rate`, the models that carry it come first, largest first.
 - **What one model carries:** `fleetops serving capacity --model llama33-70b --gpu H100 --nodes 2` gives the max request rate, concurrency, the longest prompt that still meets TTFT, and the layout.
-- **Deploy:** `install/install-serving.sh --model … --gpu … --nodes 2 --hf-secret hf-token` (or `fleetops serving deploy … --apply`) renders vLLM as a Deployment, or a LeaderWorkerSet when an instance spans nodes, plus a Service and optional KEDA autoscaling; checks the cluster; applies; waits; sends a test completion; and registers the pool so `fleetops tune` and the agent know it. A dry run unless told to apply.
+- **Deploy:** `install/install-serving.sh --model … --gpu … --nodes 2 --hf-secret hf-token` (or `fleetops serving deploy … --apply`) renders vLLM as a Deployment, or a LeaderWorkerSet when an instance spans nodes, plus a Service and optional KEDA autoscaling; checks the cluster; applies; waits; sends a test completion; and registers the pool so `fleetops tune` and the agent know it. A dry run unless told to apply. `--mode disagg` (or `auto`) deploys disaggregated prefill and decode pools on llm-d instead.
 
 The numbers are the Inference Sizer's, from spec sheets unless `fleetops calibrate` has fitted them to your benchmarks. See [docs/SERVING.md](SERVING.md).
 

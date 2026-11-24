@@ -165,7 +165,9 @@ Serving (Inference Sizer both ways, and a one-command vLLM deployment on Kuberne
         the most a model carries on given hardware: req/s (production and edge), concurrency, longest prompt, layout
   fleetops serving deploy --model M --gpu G (--nodes N | --gpus N | --rate R) [--name N] [--namespace serving]
         [--hf-secret SECRET] [--cache-pvc PVC] [--image IMG] [--autoscale [--prometheus URL]] [--create-namespace]
-        [--from-pool P] [--out FILE] [--apply [--endpoint URL] [--wait 2400]]
+        [--from-pool P] [--out FILE] [--apply [--endpoint URL] [--wait 2400]] [--mode agg|disagg|auto]
+        --mode disagg (or auto, when the sizer finds it smaller): prefill and decode pools on llm-d (DisaggregatedSet,
+        NIXL KV transfer, the llm-d router chart); needs LeaderWorkerSet ≥ 0.11.1 and the InferencePool CRDs
         plan → Deployment or LeaderWorkerSet + Service (+ KEDA) → preflight; with --apply: apply, wait, smoke test, and
         register the pool for tune and the agent (<store>/serving/pools.json, targets.json). Without --apply: a dry run.
   fleetops serving delete NAME [--namespace serving] [--apply]
@@ -999,28 +1001,33 @@ async function servingCmd(store, cmd, o) {
     const name = o._[2], ns = opt('namespace') || 'serving', f = path.join(store.dir, 'serving', `${name}.yaml`);
     if (!name) throw new Error('fleetops serving delete NAME [--namespace serving] [--apply]');
     const argv = fs.existsSync(f) ? ['delete', '-f', f, '--ignore-not-found'] : ['-n', ns, 'delete', 'deployment,leaderworkerset,service,scaledobject', '-l', `app=${name}`, '--ignore-not-found'];
-    if (!o.apply) { say(`would run: kubectl ${argv.join(' ')}\nadd --apply to delete`); return; }
+    const routerValues = path.join(store.dir, 'serving', `${name}.router.values.yaml`), helmArgv = fs.existsSync(routerValues) ? ['uninstall', name, '-n', ns] : null;
+    if (!o.apply) { say(`would run: kubectl ${argv.join(' ')}${helmArgv ? `\n           helm ${helmArgv.join(' ')}  (the llm-d router)` : ''}\nadd --apply to delete`); return; }
     const r = Serving.kubectl(argv); if (r.code !== 0) throw new Error(r.err.trim());
+    if (helmArgv) { const h = Serving.helmRun(helmArgv); if (h.code !== 0) say(`helm uninstall: ${h.err.trim()}`); else fs.rmSync(routerValues); }
     for (const reg of ['pools.json', 'targets.json']) { const p = path.join(store.dir, 'serving', reg); if (fs.existsSync(p)) { const x = JSON.parse(read(p)); delete x[name]; fs.writeFileSync(p, JSON.stringify(x, null, 1)); } }
     say(r.out.trim()); return;
   }
   if (cmd !== 'deploy') throw new Error(`unknown: serving ${cmd || ''} (models, gpus, fit, capacity, deploy, delete)`);
   const d = Serving.planDeployment({ model: opt('model'), gpu: opt('gpu'), nodes: hw.nodes, gpus: hw.gpus, gpusPerNode: hw.gpusPerNode, rate: wl.rate, isl: wl.isl, osl: wl.osl, islP99: wl.islP99, oslP99: wl.oslP99, ttftS: tg.ttftS, tpotS: tg.tpotS,
     name: opt('name'), namespace: opt('namespace'), image: opt('image'), hf: opt('hf'), hfSecret: opt('hf-secret'), cachePvc: opt('cache-pvc'), maxModelLen: num('max-model-len'), autoscale: !!o.autoscale, prometheus: opt('prometheus'),
-    minReplicas: num('min-replicas'), maxReplicas: num('max-replicas'), createNamespace: !!o['create-namespace'], weights: opt('weights'), kvDtype: opt('kv-dtype') });
-  if (opt('out')) fs.writeFileSync(opt('out'), d.yaml);
+    minReplicas: num('min-replicas'), maxReplicas: num('max-replicas'), createNamespace: !!o['create-namespace'], weights: opt('weights'), kvDtype: opt('kv-dtype'), mode: opt('mode'), routerVersion: opt('router-version'), sidecarImage: opt('sidecar-image'), gaieVersion: opt('gaie-version') });
+  if (opt('out')) { fs.writeFileSync(opt('out'), d.yaml); if (d.router) fs.writeFileSync(opt('out').replace(/(\.ya?ml)?$/, '.router.values.yaml'), d.router.yaml); }
   if (!J) {
     say(`${d.name}: ${d.model} (${d.hf}) on ${d.gpu}, ${d.sized.basis}`);
-    say(`  ${d.layout.instances} × TP${d.multiNode ? `${d.layout.gpusPerInstance / d.nodesPerInstance} × PP${d.nodesPerInstance} (LeaderWorkerSet, ${d.nodesPerInstance} nodes each)` : d.layout.tp + (d.layout.pp > 1 ? ` × PP${d.layout.pp}` : '')} = ${d.layout.gpus} GPUs; max-num-seqs ${d.layout.maxNumSeqs}, max-model-len ${d.layout.maxModelLen}; TTFT ≤ ${d.targets.ttftS}s, TPOT ≤ ${d.targets.tpotS * 1000}ms`);
+    if (d.mode === 'disagg') say(`  disaggregated on llm-d: prefill ${d.layout.prefill.instances} × TP${d.layout.prefill.tp}, decode ${d.layout.decode.instances} × TP${d.layout.decode.tp} (max-num-seqs ${d.layout.decode.maxNumSeqs}) = ${d.layout.gpus} GPUs; max-model-len ${d.layout.maxModelLen}; TTFT ≤ ${d.targets.ttftS}s, TPOT ≤ ${d.targets.tpotS * 1000}ms\n  router: helm upgrade --install ${d.router.release} ${d.router.chart} --version ${d.router.version} -n ${d.namespace} -f <router values>`);
+    else say(`  ${d.layout.instances} × TP${d.multiNode ? `${d.layout.gpusPerInstance / d.nodesPerInstance} × PP${d.nodesPerInstance} (LeaderWorkerSet, ${d.nodesPerInstance} nodes each)` : d.layout.tp + (d.layout.pp > 1 ? ` × PP${d.layout.pp}` : '')} = ${d.layout.gpus} GPUs; max-num-seqs ${d.layout.maxNumSeqs}, max-model-len ${d.layout.maxModelLen}; TTFT ≤ ${d.targets.ttftS}s, TPOT ≤ ${d.targets.tpotS * 1000}ms`);
     for (const n of d.notes) say(`  note: ${n}`);
-    if (!o.apply && !opt('out')) say(`\n${d.yaml}`);
-    else if (opt('out')) say(`  wrote ${opt('out')}`);
+    if (!o.apply && !opt('out')) say(`\n${d.yaml}${d.router ? `\n# llm-d router values (${d.router.chart})\n${d.router.yaml}` : ''}`);
+    else if (opt('out')) say(`  wrote ${opt('out')}${d.router ? ` and ${opt('out').replace(/(\.ya?ml)?$/, '.router.values.yaml')}` : ''}`);
+    if (d.prereqs && !o.apply) say(`  prerequisites (once per cluster; install-serving.sh --install-prereqs runs them):\n${d.prereqs.map(c => `    ${c.join(' ')}`).join('\n')}`);
   }
   const log = (s, x) => {
     if (J) return;
     if (s === 'preflight') for (const c of x.checks) say(`  ${c.pass ? 'ok  ' : 'FAIL'} ${c.name}: ${c.detail}`);
     else if (s === 'apply') say(`  applied${x.out ? `:\n    ${x.out.replace(/\n/g, '\n    ')}` : ''}`);
-    else if (s === 'wait') say(`  ${x.code === 0 ? 'ready' : 'not ready'}`);
+    else if (s === 'router') say(`  llm-d router ${x.code === 0 ? 'installed' : 'failed'}`);
+    else if (s === 'wait') say(`  ${x.code === 0 ? 'ready' : 'not ready'}${x.out && x.out.includes('pods') ? `: ${x.out}` : ''}`);
     else if (s === 'smoke') say(x.ok ? `  smoke test: ${x.models.join(', ')} answered "${x.text}" (first response ${x.firstByteMs} ms)` : `  smoke test failed: ${x.error}`);
     else if (s === 'register') say(x.pools ? `  registered: ${x.pools} (tune and the agent see the pool)` : '');
   };
@@ -1028,7 +1035,7 @@ async function servingCmd(store, cmd, o) {
   if (J) { OUT.deploy = Object.assign({ plan: Object.assign({}, d, { docs: undefined }) }, r); return; }
   if (r.dryRun) say(`\ndry run: nothing applied. Add --apply to deploy${r.steps[0].ready ? '' : ' (fix the failed checks first)'}.`);
   if (r.error) throw new Error(r.error);
-  if (r.ok) say(`\n${d.name} is serving: kubectl -n ${d.namespace} port-forward svc/${d.name} 8000:8000, then the OpenAI API at http://127.0.0.1:8000/v1 (model "${d.model}")`);
+  if (r.ok) say(`\n${d.name} is serving: kubectl -n ${d.namespace} port-forward svc/${d.service || d.name} 8000:${d.servicePort || 8000}, then the OpenAI API at http://127.0.0.1:8000/v1 (model "${d.model}")`);
 }
 
 function sdcCmd(store, o) {

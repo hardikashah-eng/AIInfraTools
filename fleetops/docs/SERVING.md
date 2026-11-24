@@ -97,10 +97,49 @@ What happens:
    its pool-sizing and latency recommendations cover the new pool without `--pools` or `--targets`. The manifest is
    kept beside them; `fleetops serving delete NAME --apply` removes both.
 
+### Disaggregated prefill/decode on llm-d
+
+```bash
+fleetops/install/install-serving.sh --model llama33-70b --gpu H200 --rate 20 --isl 8000 --osl 300 \
+  --mode disagg --hf-secret hf-token --install-prereqs
+```
+
+`--mode disagg` deploys the sizer's disaggregated plan. `--mode auto` deploys it only when it needs fewer nodes
+(for a rate) or carries more (for fixed hardware) than aggregated serving.
+
+The shape follows llm-d's P/D guide (`guides/pd-disaggregation` at commit `a3ae49a`):
+- **A `DisaggregatedSet`** with a `prefill` role and a `decode` role, each one pod per instance at the sizer's tensor
+  parallelism.
+- **vLLM moves the KV cache with NixlConnector:** the prefill role is the producer, the decode role the consumer, and
+  each pod advertises its side channel on its pod IP.
+- **The llm-d routing sidecar** sits in front of each decode pod.
+- **The llm-d router** (Helm chart `llm-d-router-standalone`) gets values that send every request to a prefill pod,
+  then a decode pod. Its InferencePool selects the pods by `llm-d.ai/guide: NAME`.
+- **The prefill pods** keep prefix caching. The decode pods get `--max-num-seqs` from the planned concurrency.
+
+**Prerequisites (`--install-prereqs`):**
+- LeaderWorkerSet 1.0.0 with `enableDisaggregatedSet=true`;
+- the Gateway API Inference Extension CRDs (`--gaie-version` pins them);
+- helm.
+
+**After `--apply`:**
+1. The router is installed (`helm upgrade --install NAME`) and the set applied.
+2. It waits until every prefill and decode pod is ready.
+3. One completion goes through the router's Service (`NAME-epp`).
+4. The pool is registered with fleetops.
+
+`serving delete NAME --apply` also uninstalls the router.
+
+**Left to you:**
+- **RDMA between the prefill and decode nodes.** NIXL works over TCP, but slowly.
+- **The router's prefix-cache affinity gate** (`peakPrefillThroughput`): calibrate it for your model and GPU with
+  llm-d's calibration recipe.
+- **Roles larger than a node** (multi-node prefill or decode) are not rendered. `--mode auto` falls back to
+  aggregated serving there; `--mode disagg` says so.
+
 ### What it does not do
 
-- **Disaggregated prefill/decode.** When the sizer would choose it, the plan says so and deploys aggregated serving;
-  disaggregation needs llm-d or NVIDIA Dynamo.
+- **Disaggregated roles across nodes,** or NVIDIA Dynamo. llm-d is the disaggregated path (above).
 - **Pick an image version.** The default `vllm/vllm-openai:latest` (`rocm/vllm` on AMD) is a moving tag; pin one with
   `--image` for production.
 - **Fetch secrets.** The Hugging Face token comes from a Secret you create.
