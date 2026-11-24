@@ -8,6 +8,8 @@
 //   node tools/fleetscope.mjs ask  "QUESTION" SOURCE [--trace FILE] [-o edited-graph.json] [--json]
 //   node tools/fleetscope.mjs compare --base DIR --head DIR [--json]      what changes between two versions of a scenario
 //   node tools/fleetscope.mjs examples                                    what-if phrasings `ask` understands
+//   node tools/fleetscope.mjs power SOURCE [--cap POOL=PCT,...] [--budget SITE=KW,...] [--alpha-compute 0.35] [--json]
+//        power per pool and site (IT kW against budgets), tokens per MWh, and what power caps do to latency and power
 //
 // SOURCE is one of: --scenario DIR (graph.json, cluster.json, training.json, kueue.yaml), --graph FILE (also an
 // Inference Sizer export), or --template ID. --trace replays your own request log (vLLM OTLP/Jaeger, gateway JSON, CSV)
@@ -119,4 +121,30 @@ if (cmd === 'templates') {
   const r = P.compare(base, head, { thresholds: head.thresholds });
   print({ verdict: r.verdict, checks: r.checks, changes: r.changes, owners: r.owners }, P.markdown(r, { scenario: opt.head }));
   process.exit(r.verdict === 'fail' ? 1 : 0);
-} else die(`Unknown command "${cmd}". Commands: templates, template, run, ask, compare, examples`);
+} else if (cmd === 'power') {
+  const sc = source(); if (!sc.graph) die('power needs a fleet graph (--graph, --template, or a scenario with graph.json)');
+  const t = traceOptions(sc), lookup = t.traceLookup || ((k, s) => E.scaleTrace(E.genTrace(k === 'live' ? 'chat' : k, 7), s || 1, 7));
+  const kv = s => Object.fromEntries(String(s || '').split(',').filter(Boolean).map(x => { const i = x.lastIndexOf('='); return [x.slice(0, i), parseFloat(x.slice(i + 1))]; }));
+  const caps = kv(opt.cap), budgets = kv(opt.budget);
+  const power = Object.assign({ sites: Object.fromEntries(Object.entries(budgets).map(([k, v]) => [k, { budgetKw: v }])) }, opt['alpha-compute'] ? { alphaCompute: +opt['alpha-compute'] } : {}, opt['alpha-memory'] ? { alphaMemory: +opt['alpha-memory'] } : {}, opt.pue ? { pue: +opt.pue } : {});
+  const run = withCaps => {
+    const g = JSON.parse(JSON.stringify(sc.graph)); g.power = power;
+    for (const n of g.nodes) if (n.type === 'pool') { const c = caps[n.id] ?? caps[n.cfg.name] ?? caps['*']; if (withCaps && c != null) n.cfg.powerCapPct = c; }
+    const c = E.compileGraph(g, lookup); if (c.errors.length) die('The graph cannot run: ' + c.errors.map(e => e.msg).join('; '));
+    const R = E.simulate(c.spec, null); return { s: R.summary, p: E.powerBreakdown(R) };
+  };
+  const base = run(false), capped = Object.keys(caps).length ? run(true) : null;
+  const unknown = Object.keys(caps).filter(k => k !== '*' && !sc.graph.nodes.some(n => n.type === 'pool' && (n.id === k || n.cfg.name === k)));
+  if (unknown.length) die(`no pool named ${unknown.join(', ')}`);
+  const kw = v => (v == null || !isFinite(v) ? '–' : v >= 100 ? Math.round(v).toLocaleString('en-US') : v.toFixed(1));
+  const view = r => ({ slo: r.s.slo, ttftP99: r.s.ttftP99, tpotP99: r.s.tpotP99, tokensPerMWh: r.p.tokensPerMWh, facilityKWh: r.p.facilityKWh, pools: r.p.pools, sites: r.p.sites });
+  const res = { scenario: sc.name, caps, budgets, base: view(base), capped: capped ? view(capped) : null, assumptions: base.p.assumptions };
+  const lines = [`FleetScope power: ${sc.name}`, '', 'Pool                     GPU     cap   IT kW avg  IT kW peak  tokens/kWh'];
+  for (const [id, p] of Object.entries((capped || base).p.pools)) lines.push(`${(p.name || id).padEnd(24)} ${String(p.gpu).padEnd(7)} ${(p.capPct + '%').padStart(4)}  ${kw(p.itKwAvg).padStart(9)}  ${kw(p.itKwPeak).padStart(10)}  ${kw(p.tokensPerKWh).padStart(10)}`);
+  lines.push('', 'Site            IT kW peak  budget   headroom   over budget');
+  for (const s of Object.values((capped || base).p.sites)) lines.push(`${String(s.site).padEnd(15)} ${kw(s.itKwPeak).padStart(10)}  ${kw(s.budgetKw).padStart(6)}  ${(s.headroomKw == null ? '–' : kw(s.headroomKw)).padStart(9)}   ${s.budgetKw == null ? '–' : s.overBudgetS + ' s'}`);
+  if (capped) lines.push('', `With the caps: SLO ${pct(base.s.slo)} → ${pct(capped.s.slo)}, TTFT p99 ${sec(base.s.ttftP99)} → ${sec(capped.s.ttftP99)}, TPOT p99 ${sec(base.s.tpotP99)} → ${sec(capped.s.tpotP99)}, tokens per MWh ${kw(base.p.tokensPerMWh)} → ${kw(capped.p.tokensPerMWh)}, energy ${kw(base.p.facilityKWh)} → ${kw(capped.p.facilityKWh)} kWh (facility)`);
+  else lines.push('', `Tokens per MWh (facility): ${kw(base.p.tokensPerMWh)}. Try --cap POOL=70 to see what a cap does.`);
+  lines.push('', `Model: busy GPUs draw ${base.p.assumptions.busyDraw * 100}% of board power or the cap, idle ${base.p.assumptions.idleDraw * 100}%; GPUs are ${base.p.assumptions.gpuShare * 100}% of IT power; PUE ${base.p.assumptions.pue}. A cap slows compute-bound prefill as cap^${base.p.assumptions.alphaCompute}, memory-bound decode as cap^${base.p.assumptions.alphaMemory} (fleetops power fit measures it). Uncalibrated.`);
+  print(res, lines.join('\n'));
+} else die(`Unknown command "${cmd}". Commands: templates, template, run, ask, compare, examples, power`);

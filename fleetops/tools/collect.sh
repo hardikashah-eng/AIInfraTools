@@ -6,11 +6,13 @@
 #                    [--dcgm URL] [--vllm URL]... [--amd URL]
 #                    [--k8s] [--slurm] [--helm RELEASE:NAMESPACE]...
 #                    [--step-log FILE]... [--requests FILE]... [--app-log FILE]... [--kineto FILE]...
-#                    [--nccl-inspector DIR] [--sdc-checks FILE]... [--no-kernel] [--no-gpu]
+#                    [--nccl-inspector DIR] [--sdc-checks FILE]... [--fabric] [--no-kernel] [--no-gpu]
 #
 # Per node (by default): nvidia-smi -q and topo -m (or rocm-smi), the kernel log since --since, and the DCGM exporter
 # at http://localhost:9400/metrics if it answers. --k8s adds nodes, pods and events cluster-wide; --slurm adds sacct
-# and scontrol show node. vLLM /metrics are scraped twice, a minute apart, so rates can be computed.
+# and scontrol show node. vLLM /metrics are scraped twice, a minute apart, so rates can be computed. NFS mountstats
+# (per-export latency) and ethtool -S of the RDMA NICs (pause frames, discards, link errors) are taken at the start and
+# the end. --fabric adds ibnetdiscover and ibqueryerrors (switch ports with error counters), from a host that sees the fabric.
 #
 # What it does not collect: prompts, completions, environment variables, credentials. Request logs you pass with
 # --requests are reduced to token counts and latencies when imported. Kernel and application logs are copied as they
@@ -18,7 +20,7 @@
 set -euo pipefail
 
 SINCE=24h OUT="" NODE="$(hostname -s 2>/dev/null || hostname)" DCGM="http://localhost:9400/metrics" AMD=""
-K8S=0 SLURM=0 KERNEL=1 GPU=1
+K8S=0 SLURM=0 KERNEL=1 GPU=1 FABRIC=0
 VLLM=() HELM=() STEPS=() REQS=() APPS=() KINETO=() SDC=() NCCLI=""
 while [ $# -gt 0 ]; do
   case "$1" in
@@ -37,6 +39,7 @@ while [ $# -gt 0 ]; do
     --kineto) KINETO+=("$2"); shift 2 ;;
     --sdc-checks) SDC+=("$2"); shift 2 ;;
     --nccl-inspector) NCCLI="$2"; shift 2 ;;
+    --fabric) FABRIC=1; shift ;;
     --no-kernel) KERNEL=0; shift ;;
     --no-gpu) GPU=0; shift ;;
     -h|--help) sed -n '2,17p' "$0"; exit 0 ;;
@@ -60,6 +63,10 @@ SINCE_ISO="$(date -u -d "@$(( $(date +%s) - $(secs "$SINCE") ))" +%Y-%m-%dT%H:%M
 
 echo "collecting into $OUT (node $NODE, since $SINCE)"
 mkdir -p "$OUT/node"
+# counters taken now and again at the end, so the bundle holds what happened in between
+T0S=$(date +%s)
+if grep -q 'fstype nfs' /proc/self/mountstats 2>/dev/null; then cp /proc/self/mountstats "$OUT/node/mountstats-before.txt"; fi
+NICS=(); for d in /sys/class/infiniband/*/device/net/*; do [ -e "$d" ] && NICS+=("$(basename "$d")"); done
 if [ "$GPU" = 1 ]; then
   if have nvidia-smi; then
     nvidia-smi -q > "$OUT/node/nvidia-smi-q.txt" 2>/dev/null || true; add node/nvidia-smi-q.txt nvidia-smi-q "{\"node\":\"$NODE\",\"t\":\"$NOW\"}"
@@ -87,6 +94,11 @@ if [ "$K8S" = 1 ] && have kubectl; then
   kubectl get pods -A -o json > "$OUT/k8s/pods.json" 2>/dev/null && add k8s/pods.json k8s-pods "{\"t\":\"$NOW\"}"
   kubectl get events -A -o json > "$OUT/k8s/events.json" 2>/dev/null && add k8s/events.json k8s-events
 fi
+if [ "$FABRIC" = 1 ]; then
+  mkdir -p "$OUT/fabric"
+  have ibnetdiscover && ibnetdiscover > "$OUT/fabric/ibnetdiscover.txt" 2>/dev/null && add fabric/ibnetdiscover.txt ibnetdiscover "{\"t\":\"$NOW\"}"
+  have ibqueryerrors && ibqueryerrors > "$OUT/fabric/ibqueryerrors.txt" 2>/dev/null; add fabric/ibqueryerrors.txt ibqueryerrors "{\"t\":\"$NOW\"}"
+fi
 for h in "${HELM[@]+"${HELM[@]}"}"; do
   rel="${h%%:*}" ns="${h#*:}"; [ "$ns" = "$h" ] && ns=default
   [[ "$rel$ns" =~ ^[A-Za-z0-9._-]+$ ]] || { echo "  skipped helm $h: bad name" >&2; continue; }
@@ -106,6 +118,15 @@ if [ -n "$NCCLI" ] && [ -d "$NCCLI" ]; then
   mkdir -p "$OUT/nccl"; n=0
   for f in "$NCCLI"/*.log "$NCCLI"/*.json "$NCCLI"/*.jsonl; do [ -f "$f" ] || continue; n=$((n+1)); cp "$f" "$OUT/nccl/$(basename "$f")"; add "nccl/$(basename "$f")" nccl-inspector "{\"job\":\"$(basename "$NCCLI" | sed 's/^nccl-inspector-//')\"}"; done
 fi
+
+# the end of the counter window (at least 30 s after the start)
+W=$(( $(date +%s) - T0S )); [ "$W" -lt 30 ] && { sleep $((30 - W)); W=30; }
+TE="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+if [ -f "$OUT/node/mountstats-before.txt" ]; then cp /proc/self/mountstats "$OUT/node/mountstats.txt"; add node/mountstats.txt mountstats "{\"node\":\"$NODE\",\"before\":\"node/mountstats-before.txt\",\"window\":$W,\"t\":\"$TE\"}"; fi
+for n in "${NICS[@]+"${NICS[@]}"}"; do
+  [[ "$n" =~ ^[A-Za-z0-9._-]+$ ]] || continue
+  have ethtool && ethtool -S "$n" > "$OUT/node/ethtool-$n.txt" 2>/dev/null && add "node/ethtool-$n.txt" ethtool "{\"node\":\"$NODE\",\"iface\":\"$n\",\"t\":\"$TE\"}"
+done
 
 { printf '{"version":1,"collectedAt":"%s","host":"%s","since":"%s","files":[' "$NOW" "$NODE" "$SINCE"
   sep=""; for e in "${ENTRIES[@]+"${ENTRIES[@]}"}"; do printf '%s%s' "$sep" "$e"; sep=","; done

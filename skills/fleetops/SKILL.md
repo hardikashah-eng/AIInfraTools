@@ -1,6 +1,6 @@
 ---
 name: fleetops
-description: Finds the root cause of GPU fleet incidents, runs them as incidents, mitigates live, measures training goodput, turns the user's traces into tuning changes, and sizes and deploys vLLM serving. It ingests DCGM, AMD and SambaNova exporters, vLLM metrics, Prometheus, Loki, OTLP, kernel and NCCL logs, NCCL Inspector, PyTorch profiler traces, Slurm and Kubernetes, or a one-command trace bundle. It detects job failures, latency regressions and training slowdowns, hangs and divergence, and ranks causes across 15 rules (hardware, bad change, shared switch or rack, version cohort, straggler, slow link, collective hang, silent data corruption, KV pressure, load, slow replica, storage, workload, monitoring gaps). A live agent mitigates within approval guardrails. It advises checkpoint intervals, pool sizes and more, then measures whether each change worked. Use for why jobs fail, latency regressed, training broke, wasted GPU-hours, NaNs, tuning, live auto-mitigation, what models fit on GPUs, or deploying one.
+description: Finds the root cause of GPU fleet incidents, runs them as incidents, mitigates live, measures training goodput, turns the user's traces into tuning changes, and sizes and deploys vLLM serving. It ingests DCGM, AMD and SambaNova exporters, vLLM, Prometheus, Loki, OTLP, kernel and NCCL logs, profiler traces, switch counters, Lustre and NFS stats, Slurm and Kubernetes. It detects job failures, latency regressions, training slowdowns, hangs and divergence, and ranks causes across 17 rules (hardware, bad change, shared switch or rack, version cohort, straggler, slow link to the switch port, fabric congestion, storage stalls, collective hang, silent corruption, KV pressure, load, slow replica, workload, monitoring gaps). A live agent mitigates within approval guardrails. It advises checkpoint intervals, pool sizes, and measures whether changes worked. Use for why jobs fail, latency or training slowed, wasted GPU-hours, NaNs, tuning, live mitigation, power caps, rollouts, or what models fit and deploying them.
 ---
 
 # fleetops
@@ -38,6 +38,9 @@ seconds.
   (plan, notes, failed checks) before anyone applies. Add `--apply`, or run `install-serving.sh` without `--dry-run`,
   only when the user asks to deploy to a cluster they name. Never create the Hugging Face Secret or handle the token:
   the user does.
+- **Admission and rollouts stay gated.** Never approve `admit-node` or a `rollout-stage` on the user's behalf, and
+  never add `--live` unless the user asks for that node or rollout. `tools/admit-node.sh` loads every GPU: suggest it
+  only for nodes out of production.
 - **Tokens are secrets.** Show a token only once, to the user, and never put one in a file you share or a command you
   echo back.
 
@@ -45,7 +48,7 @@ seconds.
 
 1. **Get data.**
    - **No fleet at hand:** `fleetops demo --store demo [--scenario NAME]` writes a fleet with one planted cause and
-     prints the commands to try and the answer to check against. `demo --list` names the 18 scenarios.
+     prints the commands to try and the answer to check against. `demo --list` names the 22 scenarios.
    - **Files:** `fleetops data import SOURCE FILE… --store S`. Sources include `exporter` (DCGM, AMD, SambaNova text),
      `vllm`, `prom-range`, `kernel-log` (journalctl, dmesg, syslog), `app-log` (NCCL, PyTorch), `nccl-inspector`,
      `kineto`, `step-log`, `sacct`, `k8s-nodes`, `k8s-pods`, `k8s-events`, `helm-history`, `slurm-nodes`,
@@ -159,6 +162,35 @@ Use this when asked which models fit on some GPUs, how much a model can serve, o
 - **Say:** the numbers are spec-sheet estimates unless calibrated (`fleetops calibrate`); a load test against the
   endpoint confirms them. Details: [references/SERVING.md](references/SERVING.md).
 
+## Power
+
+Use this when asked about power budgets, what fits under a rack's or site's power, or whether power caps would hurt.
+- `fleetops power report --budgets b.json --json` gives per group: p99 and peak IT kW, the budget, headroom, and
+  `moreNodes`.
+- `fleetops power predict --cap 70% --json` gives per job the predicted slowdown and kW saved. Lead with the jobs a
+  cap would slow most.
+- `fleetops power plan --budgets b.json --out plan.json` queues caps for approval, applied with
+  `fleetops optimize advance`. Never approve them for the user.
+- Say "uncalibrated" unless `fleetops power fit` found GPUs under different limits. Details:
+  [references/POWER.md](references/POWER.md).
+
+## Node admission and safe rollouts
+
+Use this when asked whether a node is ready to join or return, or how to roll out a driver, firmware, CUDA or NCCL
+version safely.
+- **Admission:**
+  - the user runs `scripts/fleetops/tools/admit-node.sh [--burn-in 6h] --out admit.jsonl` on the drained node;
+  - `fleetops data import admission admit.jsonl`;
+  - `fleetops admit check NODE --json` gives the verdict and, per check, pass, fail or missing, with the evidence
+    and the fix.
+
+  Lead with the verdict, then the failed checks. `admit pending` lists nodes waiting.
+- **Rollouts:** `fleetops rollout plan --field F --version V [--apply "…{node}…"] --out rollout.json` queues waves for
+  approval. `rollout advance` judges each baked wave against the old version and rolls a regression back.
+  `rollout check --field F --version V --json` compares a version already in the fleet with the rest. Report each
+  signal's ratio and p-value, and say when exposure is too low to judge.
+- Details: [references/ADMISSION.md](references/ADMISSION.md).
+
 ## Goodput and silent data corruption
 
 - **Goodput** (where training GPU-hours went; asked as "are we wasting GPUs", "how often should we checkpoint"):
@@ -213,7 +245,9 @@ Use this when asked to watch the fleet continuously, mitigate in real time, or s
 | `infrastructure` | many owners and nodes failing at once on healthy devices: storage, network, scheduler |
 | `workload` | one owner or namespace holds most of the failures |
 | `straggler` | one rank's compute is slow and the job waits for it |
-| `slow-link` | one node's NCCL bus bandwidth is well below the others' while its compute is normal |
+| `slow-link` | one node's NCCL bus bandwidth is well below the others' while its compute is normal; names its switch port, bad link or congestion |
+| `fabric-congestion` | communication slower on most nodes at once; a leaf's uplinks congested |
+| `storage-stall` | steps wait on data or checkpoints; names the OST, NFS export or bucket that slowed |
 | `collective-hang` | a rank never joins a collective; the watchdog fires |
 | `kv-pressure` | KV cache full during a latency regression, with preemptions |
 | `load` | request rate or prompt length above baseline |
