@@ -1,6 +1,6 @@
 ---
 name: fleetops
-description: Finds the root cause of GPU fleet incidents, runs them as incidents, mitigates live, measures training goodput and turns the user's traces into tuning changes. It ingests DCGM, AMD and SambaNova exporters, vLLM metrics, Prometheus, Loki, OTLP, kernel and NCCL logs, NCCL Inspector, PyTorch profiler traces, Slurm and Kubernetes, or a one-command trace bundle. It detects job failures, latency regressions and training slowdowns, hangs and divergence, and ranks causes across 15 rules (hardware, bad change, shared switch or rack, version cohort, straggler, slow link, collective hang, silent data corruption, KV pressure, load, slow replica, storage, workload, monitoring gaps). A live agent mitigates within approval guardrails. It advises checkpoint intervals, pool sizes and more, then measures whether each change worked. Use for why jobs fail, latency regressed, training broke, wasted GPU-hours, NaNs, tuning, or live auto-mitigation.
+description: Finds the root cause of GPU fleet incidents, runs them as incidents, mitigates live, measures training goodput, turns the user's traces into tuning changes, and sizes and deploys vLLM serving. It ingests DCGM, AMD and SambaNova exporters, vLLM metrics, Prometheus, Loki, OTLP, kernel and NCCL logs, NCCL Inspector, PyTorch profiler traces, Slurm and Kubernetes, or a one-command trace bundle. It detects job failures, latency regressions and training slowdowns, hangs and divergence, and ranks causes across 15 rules (hardware, bad change, shared switch or rack, version cohort, straggler, slow link, collective hang, silent data corruption, KV pressure, load, slow replica, storage, workload, monitoring gaps). A live agent mitigates within approval guardrails. It advises checkpoint intervals, pool sizes and more, then measures whether each change worked. Use for why jobs fail, latency regressed, training broke, wasted GPU-hours, NaNs, tuning, live auto-mitigation, what models fit on GPUs, or deploying one.
 ---
 
 # fleetops
@@ -34,6 +34,10 @@ seconds.
 - **The live agent stays as it is unless the user says otherwise.** Never add `--live` to the agent, set
   `policy.dryRun` to false, switch an action kind to `auto`, resume a paused agent, or approve its proposals on the
   user's behalf. Report what it proposes and let the user decide.
+- **Deploy only when asked, dry run first.** `serving deploy` without `--apply` changes nothing; show that output
+  (plan, notes, failed checks) before anyone applies. Add `--apply`, or run `install-serving.sh` without `--dry-run`,
+  only when the user asks to deploy to a cluster they name. Never create the Hugging Face Secret or handle the token:
+  the user does.
 - **Tokens are secrets.** Show a token only once, to the user, and never put one in a file you share or a command you
   echo back.
 
@@ -135,6 +139,23 @@ Use this when asked whether the infrastructure could be tuned, what to change, o
 
 Without data, `fleetops demo --training --days 14 --tuned-at 7` gives a store where two changes were applied
 mid-way. Method and results: [references/TUNE.md](references/TUNE.md).
+
+## Serving: what fits, capacity, deploy
+
+Use this when asked which models fit on some GPUs, how much a model can serve, or to deploy one.
+- **Which models:** `fleetops serving fit --gpu G --nodes N [--rate R] [--isl --osl] [--ttft --tpot] --json`. Ids:
+  `serving gpus`. With `--rate`, rows with `meetsRate` carry it, largest first. Size is a capability proxy, not a
+  quality score: say so, and suggest evaluating the top two or three.
+- **How much:** `fleetops serving capacity --model M --gpu G --nodes N --json` gives `production.rate` (with headroom,
+  an N+1 spare and a margin), `edge.rate` (none), the layout, concurrency and `maxPrompt`.
+- **The workload:** ask for prompt and output lengths and the latency targets, or measure them from request records
+  with `--from-pool P`. The defaults (2000/400 tokens, 2 s / 50 ms) are placeholders: say when you used them.
+- **Deploy:** `fleetops serving deploy --model M --gpu G --nodes N [--hf-secret S] [--cache-pvc P] [--autoscale]` is a
+  dry run that prints the plan, the manifests and the cluster checks. The user (or you, when asked) runs it with
+  `--apply`, or `scripts/fleetops/install/install-serving.sh`. Relay its notes: image tag, weights cache, gated models,
+  disaggregation.
+- **Say:** the numbers are spec-sheet estimates unless calibrated (`fleetops calibrate`); a load test against the
+  endpoint confirms them. Details: [references/SERVING.md](references/SERVING.md).
 
 ## Goodput and silent data corruption
 

@@ -123,5 +123,10 @@ test('fleetops: demo → diagnose names the planted cause, game day is a dry run
   const v = json(d, [cli, 'tune', 'verify', '--store', 'tuned', '--json']).verified;
   assert.deepEqual(v.map(x => x.verdict), ['improved', 'improved']);
   run(d, 'bash', ['-n', 'scripts/fleetops/tools/collect.sh']);
+  // serving: fit, capacity, a deploy dry run, and the installer's dry run renders manifests
+  const fit = json(d, [cli, 'serving', 'fit', '--gpu', 'H100', '--nodes', '2', '--rate', '5', '--store', 'sv', '--json']).fit;
+  assert.ok(fit.rows[0].meetsRate);
+  assert.ok(json(d, [cli, 'serving', 'capacity', '--model', 'llama33-70b', '--gpu', 'H100', '--nodes', '2', '--store', 'sv', '--json']).capacity.production.rate > 10);
+  assert.match(run(d, 'bash', ['scripts/fleetops/install/install-serving.sh', '--model', 'qwen3-32b', '--gpu', 'H200', '--rate', '20', '--store', 'sv', '--dry-run']), /kind: Deployment/);
   assert.ok(st.waiting.some(a => a.kind === 'swap-at-checkpoint'));
 });

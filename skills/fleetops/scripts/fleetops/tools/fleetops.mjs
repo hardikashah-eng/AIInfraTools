@@ -30,6 +30,7 @@ import * as Goodput from '../src/goodput.mjs';
 import * as Sdc from '../src/sdc.mjs';
 import * as Bundle from '../src/bundle.mjs';
 import * as Tune from '../src/tune.mjs';
+import * as Serving from '../src/serving.mjs';
 import { goodputMarkdown, goodputHtml } from '../src/goodput-report.mjs';
 import * as LiveView from '../src/live.mjs';
 import * as Inject from '../src/inject.mjs';
@@ -155,6 +156,19 @@ Tuning (what to change, the expected effect, and afterwards whether it worked):
   fleetops tune list                                           applied recommendations and their verdicts
   fleetops tune holdout --from T --split T --to T              recommend on [from, split), check on [split, to) that
                                                                the problem each names is still there (before changing anything)
+
+Serving (Inference Sizer both ways, and a one-command vLLM deployment on Kubernetes):
+  fleetops serving models | gpus                               the catalog (ids, sizes, Hugging Face repos; GPU types)
+  fleetops serving fit --gpu H100 --nodes 2 [--rate R] [--isl 2000 --osl 400] [--ttft 2 --tpot 0.05] [--rank largest|throughput]
+        which models fit on that hardware, and how much load each carries within the targets
+  fleetops serving capacity --model M --gpu G --nodes N | --gpus N [workload, targets]
+        the most a model carries on given hardware: req/s (production and edge), concurrency, longest prompt, layout
+  fleetops serving deploy --model M --gpu G (--nodes N | --gpus N | --rate R) [--name N] [--namespace serving]
+        [--hf-secret SECRET] [--cache-pvc PVC] [--image IMG] [--autoscale [--prometheus URL]] [--create-namespace]
+        [--from-pool P] [--out FILE] [--apply [--endpoint URL] [--wait 2400]]
+        plan → Deployment or LeaderWorkerSet + Service (+ KEDA) → preflight; with --apply: apply, wait, smoke test, and
+        register the pool for tune and the agent (<store>/serving/pools.json, targets.json). Without --apply: a dry run.
+  fleetops serving delete NAME [--namespace serving] [--apply]
 
 Silent data corruption (GPUs that compute wrong answers without an error):
   fleetops sdc [--from T] [--to T | --days 7] [--format md]
@@ -419,6 +433,7 @@ async function main() {
   if (area === 'goodput') return goodputCmd(store, o);
   if (area === 'sdc') return sdcCmd(store, o);
   if (area === 'tune') return tuneCmd(store, cmd, o);
+  if (area === 'serving') return servingCmd(store, cmd, o);
   if (area !== 'data') throw new Error(`unknown command "${area}"\n\n${HELP}`);
   if (cmd === 'import' && rest[0] === 'bundle') {
     const r = await importBundle(store, rest[1], o);
@@ -885,7 +900,9 @@ function goodputCmd(store, o) {
 function tuneCmd(store, cmd, o) {
   const opt = k => (o[k] && o[k] !== true ? o[k] : undefined), json = f => JSON.parse(read(f));
   const to = time(opt('to')) ?? Math.floor(Date.now() / 1000), from = time(opt('from')) ?? to - (opt('days') ? +opt('days') : 7) * 86400;
-  const args = { from, to, now: Math.min(to, Math.floor(Date.now() / 1000)), targets: opt('targets') ? json(opt('targets')) : {}, pools: opt('pools') ? json(opt('pools')) : {} };
+  // pools deployed with `fleetops serving deploy` are known without --pools / --targets
+  const reg = f => { const p = path.join(store.dir, 'serving', f); return fs.existsSync(p) ? JSON.parse(read(p)) : {}; };
+  const args = { from, to, now: Math.min(to, Math.floor(Date.now() / 1000)), targets: Object.assign(reg('targets.json'), opt('targets') ? json(opt('targets')) : {}), pools: Object.assign(reg('pools.json'), opt('pools') ? json(opt('pools')) : {}) };
   const last = path.join(store.dir, 'tune', 'last.json');
   if (cmd === 'models') { const C = createRequire(import.meta.url)('../../inference-sizer/src/catalog.js'); if (J) { OUT.models = C.MODELS.map(m => m.id); OUT.gpus = C.GPUS.map(g => g.id); return; } say(`models: ${C.MODELS.map(m => m.id).join(' ')}\ngpus:   ${C.GPUS.map(g => g.id).join(' ')}`); return; }
   if (cmd === 'apply') {
@@ -928,6 +945,90 @@ function tuneCmd(store, cmd, o) {
   if (opt('format') === 'json' || J) { if (opt('out')) fs.writeFileSync(opt('out'), JSON.stringify(t, null, 1)); OUT.tune = t; if (!J) say(JSON.stringify(t, null, 1)); return; }
   const text = Tune.tuneMarkdown(t);
   if (opt('out')) { fs.writeFileSync(opt('out'), text); say(`wrote ${opt('out')}`); } else process.stdout.write(text);
+}
+
+async function servingCmd(store, cmd, o) {
+  const opt = k => (o[k] != null && o[k] !== true ? o[k] : undefined), num = k => (opt(k) != null ? +opt(k) : undefined);
+  const f1 = v => (v == null ? '–' : v >= 100 ? Math.round(v).toLocaleString('en-US') : v.toFixed(v >= 10 ? 1 : 2));
+  if (cmd === 'models') { const ms = Serving.models(); if (J) { OUT.models = ms; return; } for (const m of ms) say(`${m.id.padEnd(18)} ${String(m.params).padStart(7)}B${m.active !== m.params ? ` (${m.active}B active)` : ''}  ctx ${m.maxCtx}  ${m.hf || ''}`); return; }
+  if (cmd === 'gpus') { const gs = Serving.gpus(); if (J) { OUT.gpus = gs; return; } for (const g of gs) say(`${g.id.padEnd(12)} ${g.label} · ${g.hbmGB} GB · ${g.perNode} per node${g.price ? ` · $${g.price}/GPU-h` : ''}`); return; }
+  const FIT = createRequire(import.meta.url)('../../inference-sizer/src/fit.js');
+  // workload: measured from a pool in the store, or given
+  let wl = { isl: num('isl') || 2000, osl: num('osl') || 400, islP99: num('isl-p99'), oslP99: num('osl-p99'), rate: num('rate') };
+  if (opt('from-pool')) {
+    const to = Math.floor(Date.now() / 1000), m = Serving.workloadFromStore(store, opt('from-pool'), { from: time(opt('from')) ?? to - 7 * 86400, to: time(opt('to')) ?? to });
+    if (!m) throw new Error(`fewer than 50 requests for pool ${opt('from-pool')} in the store (import request logs first)`);
+    wl = Object.assign(m, { rate: num('rate') ?? m.rate });
+    say(`workload ${m.source}: ISL ${Math.round(m.isl)} (p99 ${Math.round(m.islP99)}), OSL ${Math.round(m.osl)} (p99 ${Math.round(m.oslP99)}), p99 load ${m.rate.toFixed(2)} req/s`);
+  }
+  const tg = { ttftS: num('ttft') || 2, tpotS: num('tpot') || 0.05 };
+  const hw = { gpu: opt('gpu'), nodes: num('nodes'), gpus: num('gpus'), gpusPerNode: num('gpus-per-node') };
+  if (cmd === 'fit') {
+    if (!hw.gpu || (hw.nodes == null && hw.gpus == null)) throw new Error('fleetops serving fit --gpu G --nodes N (or --gpus N)');
+    if (hw.nodes == null) delete hw.nodes;
+    const r = FIT.fitModels(hw, wl, tg, { rank: opt('rank'), prompt: !!o.prompt });
+    if (J) { OUT.fit = r; return; }
+    say(`${hw.nodes != null ? `${hw.nodes} node(s)` : `${hw.gpus} GPUs`} of ${hw.gpu}; ISL ${Math.round(wl.isl)} / OSL ${Math.round(wl.osl)} tokens; TTFT ≤ ${tg.ttftS}s, TPOT ≤ ${tg.tpotS * 1000}ms${wl.rate ? `; needs ${wl.rate} req/s` : ''}`);
+    say(`ranked by ${r.rank === 'largest' ? 'size among the models that carry the load (size is a proxy for capability, not a quality score)' : 'requests per second'}\n`);
+    say(`${'model'.padEnd(18)} ${'params'.padStart(8)}  ${'req/s'.padStart(8)}  ${'edge'.padStart(8)}  ${'out tok/s'.padStart(10)}  ${'$/1M out'.padStart(8)}  layout`);
+    for (const x of r.rows) {
+      const p = x.production, L = p.layout;
+      say(`${(r.need && x.meetsRate ? '✓ ' : r.need ? '  ' : '') + x.model.padEnd(r.need ? 16 : 18)} ${(x.params + 'B').padStart(8)}  ${f1(p.rate).padStart(8)}  ${f1(x.edge.rate).padStart(8)}  ${f1(p.outTokensPerS).padStart(10)}  ${(p.dollarsPerMOut ? '$' + p.dollarsPerMOut.toFixed(2) : '–').padStart(8)}  ${L ? `${L.mode === 'agg' ? `${L.instances} × ${L.label}` : `P ${L.prefill.instances}×${L.prefill.label} / D ${L.decode.instances}×${L.decode.label}`}` : (p.why || '')}`);
+    }
+    say(`\nreq/s: production (15% headroom, an N+1 spare, 10% under the targets); edge: none of those. Spec-sheet efficiencies unless calibrated (fleetops calibrate).`);
+    return;
+  }
+  if (cmd === 'capacity') {
+    if (!opt('model') || !hw.gpu || (hw.nodes == null && hw.gpus == null)) throw new Error('fleetops serving capacity --model M --gpu G --nodes N (or --gpus N)');
+    if (hw.nodes == null) delete hw.nodes;
+    const c = FIT.capacity(opt('model'), hw, wl, tg, {});
+    if (J) { OUT.capacity = Object.assign({}, c, { production: Object.assign({}, c.production, { usersAt: undefined }) }); return; }
+    const p = c.production, L = p.layout;
+    say(`${c.name} on ${c.gpus} ${c.gpu}; ISL ${Math.round(c.wl.isl)} / OSL ${Math.round(c.wl.osl)}; TTFT ≤ ${c.tg.ttftS}s, TPOT ≤ ${c.tg.tpotS * 1000}ms`);
+    if (!p.rate) { say(`  doesn't fit: ${p.why}${c.edge.rate ? ` (without headroom and the spare it carries ${f1(c.edge.rate)} req/s)` : ''}`); return; }
+    say(`  max load:        ${f1(p.rate)} req/s in production (${f1(c.edge.rate)} at the edge), ${f1(p.outTokensPerS)} output tokens/s`);
+    say(`  users:           ~${f1(p.usersAt(20))} daily active users at 20 requests each, if the load were flat (peaks need more)`);
+    say(`  concurrency:     ${L.concurrency} sequences in flight (${L.instances} instance(s) × ${Math.round(L.concurrency / L.instances)})`);
+    say(`  layout:          ${L.mode === 'agg' ? `${L.instances} × ${L.label} (${L.gpusPerInstance} GPU(s) each)` : `prefill ${L.prefill.instances}×${L.prefill.label}, decode ${L.decode.instances}×${L.decode.label}`}, ${p.nodes} node(s) with the spare`);
+    say(`  longest prompt:  ${c.maxPrompt ? `${c.maxPrompt.toLocaleString('en-US')} tokens at light load (model maximum ${c.modelMaxCtx.toLocaleString('en-US')})` : 'none fits'}`);
+    if (p.dollarsPerMOut) say(`  cost:            $${p.dollarsPerMOut.toFixed(2)} per million output tokens at that load (catalog price)`);
+    say(`  ${p.reason}`);
+    return;
+  }
+  if (cmd === 'delete') {
+    const name = o._[2], ns = opt('namespace') || 'serving', f = path.join(store.dir, 'serving', `${name}.yaml`);
+    if (!name) throw new Error('fleetops serving delete NAME [--namespace serving] [--apply]');
+    const argv = fs.existsSync(f) ? ['delete', '-f', f, '--ignore-not-found'] : ['-n', ns, 'delete', 'deployment,leaderworkerset,service,scaledobject', '-l', `app=${name}`, '--ignore-not-found'];
+    if (!o.apply) { say(`would run: kubectl ${argv.join(' ')}\nadd --apply to delete`); return; }
+    const r = Serving.kubectl(argv); if (r.code !== 0) throw new Error(r.err.trim());
+    for (const reg of ['pools.json', 'targets.json']) { const p = path.join(store.dir, 'serving', reg); if (fs.existsSync(p)) { const x = JSON.parse(read(p)); delete x[name]; fs.writeFileSync(p, JSON.stringify(x, null, 1)); } }
+    say(r.out.trim()); return;
+  }
+  if (cmd !== 'deploy') throw new Error(`unknown: serving ${cmd || ''} (models, gpus, fit, capacity, deploy, delete)`);
+  const d = Serving.planDeployment({ model: opt('model'), gpu: opt('gpu'), nodes: hw.nodes, gpus: hw.gpus, gpusPerNode: hw.gpusPerNode, rate: wl.rate, isl: wl.isl, osl: wl.osl, islP99: wl.islP99, oslP99: wl.oslP99, ttftS: tg.ttftS, tpotS: tg.tpotS,
+    name: opt('name'), namespace: opt('namespace'), image: opt('image'), hf: opt('hf'), hfSecret: opt('hf-secret'), cachePvc: opt('cache-pvc'), maxModelLen: num('max-model-len'), autoscale: !!o.autoscale, prometheus: opt('prometheus'),
+    minReplicas: num('min-replicas'), maxReplicas: num('max-replicas'), createNamespace: !!o['create-namespace'], weights: opt('weights'), kvDtype: opt('kv-dtype') });
+  if (opt('out')) fs.writeFileSync(opt('out'), d.yaml);
+  if (!J) {
+    say(`${d.name}: ${d.model} (${d.hf}) on ${d.gpu}, ${d.sized.basis}`);
+    say(`  ${d.layout.instances} × TP${d.multiNode ? `${d.layout.gpusPerInstance / d.nodesPerInstance} × PP${d.nodesPerInstance} (LeaderWorkerSet, ${d.nodesPerInstance} nodes each)` : d.layout.tp + (d.layout.pp > 1 ? ` × PP${d.layout.pp}` : '')} = ${d.layout.gpus} GPUs; max-num-seqs ${d.layout.maxNumSeqs}, max-model-len ${d.layout.maxModelLen}; TTFT ≤ ${d.targets.ttftS}s, TPOT ≤ ${d.targets.tpotS * 1000}ms`);
+    for (const n of d.notes) say(`  note: ${n}`);
+    if (!o.apply && !opt('out')) say(`\n${d.yaml}`);
+    else if (opt('out')) say(`  wrote ${opt('out')}`);
+  }
+  const log = (s, x) => {
+    if (J) return;
+    if (s === 'preflight') for (const c of x.checks) say(`  ${c.pass ? 'ok  ' : 'FAIL'} ${c.name}: ${c.detail}`);
+    else if (s === 'apply') say(`  applied${x.out ? `:\n    ${x.out.replace(/\n/g, '\n    ')}` : ''}`);
+    else if (s === 'wait') say(`  ${x.code === 0 ? 'ready' : 'not ready'}`);
+    else if (s === 'smoke') say(x.ok ? `  smoke test: ${x.models.join(', ')} answered "${x.text}" (first response ${x.firstByteMs} ms)` : `  smoke test failed: ${x.error}`);
+    else if (s === 'register') say(x.pools ? `  registered: ${x.pools} (tune and the agent see the pool)` : '');
+  };
+  const r = await Serving.deploy(d, { apply: !!o.apply, endpoint: opt('endpoint'), waitS: num('wait') || 2400, registerDir: path.join(store.dir, 'serving'), log });
+  if (J) { OUT.deploy = Object.assign({ plan: Object.assign({}, d, { docs: undefined }) }, r); return; }
+  if (r.dryRun) say(`\ndry run: nothing applied. Add --apply to deploy${r.steps[0].ready ? '' : ' (fix the failed checks first)'}.`);
+  if (r.error) throw new Error(r.error);
+  if (r.ok) say(`\n${d.name} is serving: kubectl -n ${d.namespace} port-forward svc/${d.name} 8000:8000, then the OpenAI API at http://127.0.0.1:8000/v1 (model "${d.model}")`);
 }
 
 function sdcCmd(store, o) {
