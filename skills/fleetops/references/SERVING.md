@@ -137,6 +137,22 @@ The shape follows llm-d's P/D guide (`guides/pd-disaggregation` at commit `a3ae4
 - **Roles larger than a node** (multi-node prefill or decode) are not rendered. `--mode auto` falls back to
   aggregated serving there; `--mode disagg` says so.
 
+### Checked against llm-d and the real CRDs
+
+`tests/llmd-real.test.mjs` checks the rendered manifests against the real thing, not against our own expectations:
+
+- **The DisaggregatedSet CRD schema** from LeaderWorkerSet v1.0.0, with the strict field checks `kubectl apply`
+  makes: our manifest passes with no unknown fields, as llm-d's guide manifest does, and a typo fails. The CLI's dry
+  run output is checked the same way.
+- **llm-d's P/D guide:** the same KV connector settings per role, routing sidecar, ports, probes, keep-alive and
+  router labels.
+- **The router values:** the guide's service port, pool selection and EPP plugins, layered on the base values. The
+  one plugin left out needs a throughput measured on your fleet.
+- **The CRD names** that preflight looks for.
+
+Two deliberate differences from the guide: roles roll out with `maxSurge: 0` (no spare GPUs needed, the guide's
+setting for constrained clusters), and pods carry no CPU or memory requests (add them for your nodes).
+
 ### What it does not do
 
 - **Disaggregated roles across nodes,** or NVIDIA Dynamo. llm-d is the disaggregated path (above).
