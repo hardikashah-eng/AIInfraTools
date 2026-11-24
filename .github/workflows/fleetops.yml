@@ -18,6 +18,10 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 22
+      # The Parquet backend's optional dependency, so its tests run (fleetops itself needs no dependencies).
+      - name: Install DuckDB for the Parquet backend
+        working-directory: fleetops
+        run: npm install --no-save --no-package-lock --no-audit --no-fund @duckdb/node-api@2.0.1-r.1
       - name: Tests
         working-directory: fleetops
         run: npm test
@@ -26,3 +30,8 @@ jobs:
       - name: Root-cause benchmark
         working-directory: fleetops
         run: node tools/fleetops.mjs rca bench --per-cause 10 --seed 7 --min-top1 0.95 --min-top3 0.98 --store "$RUNNER_TEMP/fleet-data"
+      # Ingest throughput (remote_write path) and the 24 h root-cause query at CI size, both backends. The full size
+      # (10,000 GPUs every 10 s) is in docs/SCALE.md; CI keeps the run to about a minute.
+      - name: Scale benchmark
+        working-directory: fleetops
+        run: node tools/bench-scale.mjs --gpus 1000 --interval 60 --hours 26 --backend both --min-ingest 3000 --max-rca 10

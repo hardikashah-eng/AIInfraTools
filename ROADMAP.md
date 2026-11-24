@@ -134,6 +134,8 @@ Milestones 5–10 close those gaps, in the order they should be built.
 
 **Done when:** sustained ingest of 10,000 GPUs at a 10-second interval on one node, and a 24-hour root-cause query in under 10 seconds. Both are measured by a benchmark in CI that replays Philly at 100× speed.
 
+**Status:** done on the Parquet backend, measured at full size (90M samples) on 2 vCPUs: ingest at 9× the rate needed, root-cause query 1.22 s (0.62 s with the hourly rollup). CI runs the benchmark at 1,000 GPUs on generated DCGM series, not a Philly replay, because the Philly data is downloaded at run time and too large for CI ([fleetops/docs/SCALE.md](fleetops/docs/SCALE.md)).
+
 ### 8. Request and rank tracing
 
 - **Serving:** per-request spans (router queue, prefill, decode, KV eviction, retry) with one correlation ID from router to engine.

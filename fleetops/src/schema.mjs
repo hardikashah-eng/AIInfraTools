@@ -15,6 +15,7 @@
 //              (kernel: XID, AER, NVLink, AMD RAS, MCE, IB link, NFS/Lustre, OOM; app: NCCL/PyTorch; Kubernetes events)
 //   topology   an edge: { kind: nvlink|pcie|ib|rack|row|pdu|site, from, to, … }  (node/gpuN, switch:NAME, rack:NAME, …)
 //   injection  a fault injected on a test cluster (the label): { id, fault, expect (rule id | null), nodes, pool?, from, to, applied, reverted }
+//   span       one OpenTelemetry span: { traceId, spanId, parentSpanId?, name, durS, service?, node?, attrs }
 //   inventory records may carry versions: { driver, cuda, vbios, inforom, firmware, kernel, os, runtime, kubelet, image }
 // Later PRs add calibration, drift, incident and optimization records.
 
@@ -35,6 +36,7 @@ export const KINDS = {
   log: ['node', 'code', 'class'],
   topology: ['kind', 'from', 'to'],
   injection: ['fault', 'id'],
+  span: ['traceId', 'spanId', 'name'],
 };
 
 export const JOB_STATUS = new Set(['ok', 'failed', 'killed', 'cancelled', 'timeout', 'retried']);

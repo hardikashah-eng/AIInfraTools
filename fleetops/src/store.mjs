@@ -11,8 +11,21 @@ import { KINDS, validate } from './schema.mjs';
 const day = t => new Date(t * 1000).toISOString().slice(0, 10);
 const dayStart = d => Date.parse(d + 'T00:00:00Z') / 1000;
 
+// Store layout version. Each version above 1 has a migration in migrate.mjs; `fleetops data migrate` applies them.
+export const SCHEMA = 2;
+const META = 'fleetops-store.json';
+export function readMeta(dir) { const f = path.join(dir, META); return fs.existsSync(f) ? JSON.parse(fs.readFileSync(f, 'utf8')) : null; }
+export function writeMeta(dir, meta) { fs.mkdirSync(dir, { recursive: true }); fs.writeFileSync(path.join(dir, META), JSON.stringify(meta, null, 1) + '\n'); }
+// A store's files from before versioning are version 1; a new, empty store starts at the current version.
+function checkMeta(dir, backend) {
+  let m = readMeta(dir);
+  if (!m) { const empty = !fs.existsSync(dir) || !fs.readdirSync(dir).length; m = { schema: empty ? SCHEMA : 1, backend }; writeMeta(dir, m); }
+  if (m.schema > SCHEMA) throw new Error(`store ${dir} is schema ${m.schema}, newer than this fleetops (${SCHEMA}): upgrade fleetops`);
+  return m;
+}
+
 export class DataStore {
-  constructor(dir) { this.dir = path.resolve(dir); fs.mkdirSync(this.dir, { recursive: true }); }
+  constructor(dir) { this.dir = path.resolve(dir); this.meta = checkMeta(this.dir, 'jsonl'); fs.mkdirSync(this.dir, { recursive: true }); }
   files(kind) {
     const d = path.join(this.dir, kind);
     return fs.existsSync(d) ? fs.readdirSync(d).filter(f => /^\d{4}-\d{2}-\d{2}\.jsonl$/.test(f)).sort().map(f => path.join(d, f)) : [];
@@ -70,6 +83,16 @@ export class DataStore {
     return opts.sort === false ? out : out.sort((a, b) => a.t - b.t);
   }
 
+  // Distinct values of some fields in a window: [{ field: value, … }]. (`sql` is for the Parquet backend; ignored here.)
+  distinct(kind, fields, opts = {}) {
+    const seen = new Map();
+    for (const r of this.scan(kind, opts)) { const k = fields.map(f => r[f]).join('\u0000'); if (!seen.has(k)) seen.set(k, Object.fromEntries(fields.map(f => [f, r[f] == null ? null : String(r[f])]))); }
+    return [...seen.values()];
+  }
+  days(kind) { return this.files(kind).map(f => path.basename(f, '.jsonl')); }
+  dropDay(kind, d) { fs.rmSync(path.join(this.dir, kind, d + '.jsonl'), { force: true }); }
+  rewriteDay(kind, d, records) { const f = path.join(this.dir, kind, d + '.jsonl'); fs.writeFileSync(f + '.tmp', records.map(r => JSON.stringify(r)).join('\n') + (records.length ? '\n' : '')); fs.renameSync(f + '.tmp', f); }
+
   // Per kind: record count, first and last time, sources.
   summary() {
     const out = {};
@@ -96,4 +119,14 @@ export function whereFrom(list) {
     if (op === '~') return String(x ?? '').includes(v);
     return op === '>' ? +x > +v : +x < +v;
   });
+}
+
+// Open a store with the backend it was created with (fleetops-store.json), or `backend` for a new one:
+// 'jsonl' (default, no dependencies) or 'parquet' (DuckDB; needs @duckdb/node-api installed in fleetops/).
+export async function openStore(dir, { backend } = {}) {
+  const m = readMeta(path.resolve(dir));
+  const b = (m && m.backend) || backend || 'jsonl';
+  if (m && backend && m.backend && backend !== m.backend) throw new Error(`store ${dir} uses the ${m.backend} backend, not ${backend}`);
+  if (b === 'parquet') { const { ParquetStore } = await import('./parquet-store.mjs'); return new ParquetStore(dir); }
+  return new DataStore(dir);
 }
