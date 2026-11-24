@@ -74,7 +74,7 @@ test('pipeline: dedupes retried deliveries, refuses a batch when full, counts la
   assert.match(p.metrics(), /fleetops_ingest_written_total\{kind="device"\} 5/);
 });
 
-test('server: remote_write 204, OTLP JSON 200, protobuf OTLP 415, 429 when the queue is full, /metrics', async () => {
+test('server: remote_write 204, OTLP JSON 200, bad payloads 400/415, 429 when the queue is full, /metrics', async () => {
   const s = new DataStore(tmp()), p = new G.Pipeline(s, { maxQueue: 3, batch: 1000 }), srv = G.server(p);
   await new Promise(r => srv.listen(0, '127.0.0.1', r));
   const url = `http://127.0.0.1:${srv.address().port}`;
@@ -83,7 +83,8 @@ test('server: remote_write 204, OTLP JSON 200, protobuf OTLP 415, 429 when the q
     assert.equal((await fetch(`${url}/api/v1/write`, { method: 'POST', body: rw([0, 1]) })).status, 204);
     const full = await fetch(`${url}/api/v1/write`, { method: 'POST', body: rw([2, 3]) });
     assert.equal(full.status, 429); assert.equal(full.headers.get('retry-after'), '1');
-    assert.equal((await fetch(`${url}/v1/traces`, { method: 'POST', body: 'x', headers: { 'content-type': 'application/x-protobuf' } })).status, 415);
+    assert.equal((await fetch(`${url}/v1/traces`, { method: 'POST', body: Buffer.from([0x0a, 0xff]), headers: { 'content-type': 'application/x-protobuf' } })).status, 400, 'malformed protobuf');
+    assert.equal((await fetch(`${url}/v1/traces`, { method: 'POST', body: 'x', headers: { 'content-type': 'text/plain' } })).status, 415);
     assert.equal((await fetch(`${url}/v1/logs`, { method: 'POST', body: '{"resourceLogs":[]}', headers: { 'content-type': 'application/json' } })).status, 200);
     assert.equal((await fetch(`${url}/api/v1/write`, { method: 'POST', body: Buffer.from([1, 2, 3]) })).status, 400);
     assert.match(await (await fetch(`${url}/metrics`)).text(), /fleetops_ingest_queue_depth 2/);

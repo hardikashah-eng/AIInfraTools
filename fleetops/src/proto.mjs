@@ -47,11 +47,12 @@ function* fields(buf, start = 0, end = buf.length) {
     let key = 0, shift = 0, b;
     do { b = buf[p++]; key += (b & 0x7f) * 2 ** shift; shift += 7; } while (b & 0x80);
     const no = Math.floor(key / 8), wt = key & 7;
-    if (wt === 0) { let v = 0; shift = 0; do { b = buf[p++]; v += (b & 0x7f) * 2 ** shift; shift += 7; } while (b & 0x80); yield { no, wt, v }; }
-    else if (wt === 1) { yield { no, wt, v: buf.readDoubleLE(p) }; p += 8; }
-    else if (wt === 2) { let n = 0; shift = 0; do { b = buf[p++]; n += (b & 0x7f) * 2 ** shift; shift += 7; } while (b & 0x80); yield { no, wt, start: p, end: p + n }; p += n; }
-    else if (wt === 5) { p += 4; }
+    if (wt === 0) { let v = 0n, sh = 0n; do { b = buf[p++]; v |= BigInt(b & 0x7f) << sh; sh += 7n; } while (b & 0x80); yield { no, wt, v: Number(v), big: v }; }
+    else if (wt === 1) { yield { no, wt, v: buf.readDoubleLE(p), raw: p }; p += 8; }
+    else if (wt === 2) { let n = 0; shift = 0; do { b = buf[p++]; n += (b & 0x7f) * 2 ** shift; shift += 7; } while (b & 0x80); if (!(p + n <= end) || p > end) throw new Error('protobuf: truncated message'); yield { no, wt, start: p, end: p + n }; p += n; }
+    else if (wt === 5) { yield { no, wt, raw: p }; p += 4; }
     else throw new Error(`protobuf: wire type ${wt} not supported`);
+    if (p > end) throw new Error('protobuf: truncated message');
   }
 }
 
@@ -83,3 +84,50 @@ export function encodeWriteRequest(series) {
     ...s.samples.map(x => { const d = Buffer.alloc(8); d.writeDoubleLE(x.v); return ld(2, Buffer.concat([Buffer.from([9]), d, Buffer.from([16]), varintBuf(Math.round(x.t * 1000))])); }),
   ]))));
 }
+
+// ---------- OTLP over HTTP, protobuf ----------
+// ExportTraceServiceRequest / ExportLogsServiceRequest / ExportMetricsServiceRequest decoded into the OTLP JSON
+// mapping (hex trace and span ids, 64-bit integers as strings), so the JSON converters handle both encodings.
+// Field numbers from opentelemetry-proto (checked against fixtures encoded by protobufjs from the official .proto files).
+const L = true;
+const OTLP = {
+  traces: { 1: ['resourceSpans', 'ResourceSpans', L] }, logs: { 1: ['resourceLogs', 'ResourceLogs', L] }, metrics: { 1: ['resourceMetrics', 'ResourceMetrics', L] },
+  ResourceSpans: { 1: ['resource', 'Resource'], 2: ['scopeSpans', 'ScopeSpans', L], 3: ['schemaUrl', 'string'] },
+  ResourceLogs: { 1: ['resource', 'Resource'], 2: ['scopeLogs', 'ScopeLogs', L], 3: ['schemaUrl', 'string'] },
+  ResourceMetrics: { 1: ['resource', 'Resource'], 2: ['scopeMetrics', 'ScopeMetrics', L], 3: ['schemaUrl', 'string'] },
+  Resource: { 1: ['attributes', 'KeyValue', L] },
+  Scope: { 1: ['name', 'string'], 2: ['version', 'string'], 3: ['attributes', 'KeyValue', L] },
+  ScopeSpans: { 1: ['scope', 'Scope'], 2: ['spans', 'Span', L] }, ScopeLogs: { 1: ['scope', 'Scope'], 2: ['logRecords', 'LogRecord', L] }, ScopeMetrics: { 1: ['scope', 'Scope'], 2: ['metrics', 'Metric', L] },
+  Span: { 1: ['traceId', 'hex'], 2: ['spanId', 'hex'], 3: ['traceState', 'string'], 4: ['parentSpanId', 'hex'], 5: ['name', 'string'], 6: ['kind', 'enum'], 7: ['startTimeUnixNano', 'fixed64'], 8: ['endTimeUnixNano', 'fixed64'], 9: ['attributes', 'KeyValue', L], 15: ['status', 'Status'], 16: ['flags', 'fixed32'] },
+  Status: { 2: ['message', 'string'], 3: ['code', 'enum'] },
+  LogRecord: { 1: ['timeUnixNano', 'fixed64'], 11: ['observedTimeUnixNano', 'fixed64'], 2: ['severityNumber', 'enum'], 3: ['severityText', 'string'], 5: ['body', 'AnyValue'], 6: ['attributes', 'KeyValue', L], 9: ['traceId', 'hex'], 10: ['spanId', 'hex'], 12: ['eventName', 'string'] },
+  Metric: { 1: ['name', 'string'], 2: ['description', 'string'], 3: ['unit', 'string'], 5: ['gauge', 'Gauge'], 7: ['sum', 'Sum'] },
+  Gauge: { 1: ['dataPoints', 'NumberDataPoint', L] }, Sum: { 1: ['dataPoints', 'NumberDataPoint', L], 2: ['aggregationTemporality', 'enum'], 3: ['isMonotonic', 'bool'] },
+  NumberDataPoint: { 7: ['attributes', 'KeyValue', L], 2: ['startTimeUnixNano', 'fixed64'], 3: ['timeUnixNano', 'fixed64'], 4: ['asDouble', 'double'], 6: ['asInt', 'sfixed64'], 8: ['flags', 'uint32'] },
+  KeyValue: { 1: ['key', 'string'], 2: ['value', 'AnyValue'] },
+  AnyValue: { 1: ['stringValue', 'string'], 2: ['boolValue', 'bool'], 3: ['intValue', 'int64'], 4: ['doubleValue', 'double'], 5: ['arrayValue', 'ArrayValue'], 6: ['kvlistValue', 'KeyValueList'], 7: ['bytesValue', 'base64'] },
+  ArrayValue: { 1: ['values', 'AnyValue', L] }, KeyValueList: { 1: ['values', 'KeyValue', L] },
+};
+function decodeMsg(buf, type, start, end) {
+  const spec = OTLP[type], out = {};
+  for (const f of fields(buf, start, end)) {
+    const d = spec[f.no];
+    if (!d) continue;
+    const [name, t, rep] = d;
+    let v;
+    if (OTLP[t]) v = decodeMsg(buf, t, f.start, f.end);
+    else if (t === 'string') v = buf.toString('utf8', f.start, f.end);
+    else if (t === 'hex') v = buf.toString('hex', f.start, f.end);
+    else if (t === 'base64') v = buf.toString('base64', f.start, f.end);
+    else if (t === 'fixed64') v = buf.readBigUInt64LE(f.raw).toString();
+    else if (t === 'sfixed64') v = buf.readBigInt64LE(f.raw).toString();
+    else if (t === 'fixed32') v = buf.readUInt32LE(f.raw);
+    else if (t === 'double') v = f.v;
+    else if (t === 'int64') v = BigInt.asIntN(64, f.big).toString();
+    else if (t === 'bool') v = f.v !== 0;
+    else v = f.v; // enum, uint32
+    if (rep) (out[name] = out[name] || []).push(v); else out[name] = v;
+  }
+  return out;
+}
+export const decodeOtlp = (kind, buf) => decodeMsg(buf, kind, 0, buf.length);

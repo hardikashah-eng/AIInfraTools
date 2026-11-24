@@ -119,7 +119,7 @@ Milestones 5–10 close those gaps, in the order they should be built.
 
 **Done when:** top-1 ≥ 80% and top-3 ≥ 95% on at least 30 labeled incidents, half of them from fault injection; detection fires within 5 minutes of the injected onset.
 
-**Status:** the tooling is built: the benchmark, fault injection, CUSUM detection with grouping, weight fitting and the CI gate ([fleetops/docs/BENCHMARK.md](fleetops/docs/BENCHMARK.md)). On synthetic scenarios not used for tuning: top-1 98.8–100%, top-3 99.6–100%. The done-when still needs real labels from a test cluster and from postmortems.
+**Status:** the tooling is built: the benchmark, fault injection, CUSUM detection with grouping, weight fitting and the CI gate ([fleetops/docs/BENCHMARK.md](fleetops/docs/BENCHMARK.md)). On synthetic scenarios not used for tuning: top-1 98.8–100%, top-3 99.6–100%. The done-when still needs real labels: `fleetops backtest` (postmortem windows pulled from Prometheus and Loki) and `fleetops gameday` (a plan of injections on a test cluster) produce them in one command each.
 
 ### 7. A store that holds production volume
 
@@ -152,7 +152,7 @@ Milestones 5–10 close those gaps, in the order they should be built.
 
 **Done when:** a slow-rank injection is pinned to the right rank and node, and a TTFT regression is traced to the replica or stage that caused it.
 
-**Status:** built ([fleetops/docs/TRACING.md](fleetops/docs/TRACING.md)): OTLP and hybrid-tracing spans → per-request stages; Kineto traces and step logs → per-rank steps; training-slow and training-hang detection; straggler, collective-hang, replica-tail and slow-stage rules; `inject gpu-slow`. Checked on injected and synthetic cases. The NCCL profiler-plugin input and real-cluster labels are still to come.
+**Status:** built ([fleetops/docs/TRACING.md](fleetops/docs/TRACING.md)): OTLP and hybrid-tracing spans → per-request stages; Kineto traces and step logs → per-rank steps; training-slow and training-hang detection; straggler, collective-hang, replica-tail and slow-stage rules; `inject gpu-slow`. Checked on injected and synthetic cases. NCCL Inspector (the profiler plugin) is read in JSON and Prometheus form and feeds a slow-link rule. Real-cluster labels are still to come.
 
 ### 9. Incidents as a workflow
 

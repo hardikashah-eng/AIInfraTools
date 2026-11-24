@@ -10,6 +10,7 @@ import * as Ingest from '../src/ingest.mjs';
 import * as Traces from '../src/traces.mjs';
 import * as Inc from '../src/incidents.mjs';
 import * as Sec from '../src/security.mjs';
+import * as Pull from '../src/pull.mjs';
 import { postWebhook } from '../../gpu-health/src/executors.mjs';
 import { readLines } from '../src/lines.mjs';
 import * as Philly from '../src/adapters/philly.mjs';
@@ -67,6 +68,7 @@ Sources (SOURCE):
   helm-history     helm history REL -n NS -o json            [--release R] [--namespace NS]
   otlp-traces      OTLP/JSON traces (resourceSpans)          [--derive] (also write per-request records)
   kineto           PyTorch profiler trace JSON (one rank)    [--job J] [--node N] [--rank R] [--t0 T]   per-rank steps
+  nccl-inspector   NCCL Inspector profiler-plugin JSON       [--job J] (default: from the nccl-inspector-<jobid> directory)
   step-log         JSON lines {t, rank, node, step, durS, commS?, dataS?, ckptS?, mfu?}   [--job J]
   sacct            sacct -P -X --format=JobID,JobName,State,ExitCode,Start,End,NodeList,AllocTRES
   changes          JSON lines of change events
@@ -107,6 +109,14 @@ Incidents (lifecycle as incident_event records; paging is a dry run unless --liv
   fleetops incidents show ID | timeline ID [--out FILE.html] | postmortem ID [--out FILE.md]
   fleetops incidents page ID --to pagerduty|opsgenie|webhook --action trigger|ack|resolve [--key K] [--url U] [--live]
   rca bench --from-incidents    score root-cause analysis on resolved incidents' confirmed causes
+
+Real labels from a real fleet:
+  fleetops pull --from T [--to T] --prom URL [--loki URL] [--loki-query Q]… [--step 60] [--header 'Authorization: Bearer X']
+        a window of DCGM/AMD/vLLM/NCCL-Inspector series and kernel/NCCL logs from the fleet's own monitoring
+  fleetops backtest --labels postmortems.jsonl --prom URL [--loki URL] [--lookback 26h] [--weights W]
+        pull each confirmed incident's window and score root-cause analysis on it (misses name the incident)
+  fleetops gameday PLAN.json --allow FILE [--live] [--cooldown 900] [--prom URL --loki URL]
+        run injections one after another on a TEST cluster (dry run unless --live), then score detection and diagnosis
 
 Fault injection on a TEST cluster (dry-run unless --live; every target must be in the --allow file):
   fleetops inject list
@@ -178,6 +188,7 @@ function importSource(store, src, files, o) {
       case 'app-log': put('log', Logs.ncclLog(read(f), { node: o.node && o.node !== true ? o.node : undefined, job: o.job && o.job !== true ? o.job : undefined, t: o.t ? time(o.t) : tOf(f) })); break;
       case 'k8s-events': { const e = Live.k8sEvents(read(f)); put('change', e.changes); put('log', e.logs); break; }
       case 'kineto': put('step', Traces.kineto(read(f), { job: o.job && o.job !== true ? o.job : path.basename(f).split(/[._]/)[0], node: o.node && o.node !== true ? o.node : undefined, rank: o.rank != null && o.rank !== true ? +o.rank : undefined, t0: o.t0 ? time(o.t0) : undefined })); break;
+      case 'nccl-inspector': put('collective', Traces.ncclInspector(read(f), { job: o.job && o.job !== true ? o.job : (path.basename(path.dirname(path.resolve(f))).match(/nccl-inspector-(\S+)/) || [])[1], node: o.node && o.node !== true ? o.node : undefined })); break;
       case 'step-log': put('step', Traces.stepLog(read(f), { job: o.job && o.job !== true ? o.job : undefined })); break;
       case 'otlp-traces': { const spans = Ingest.otlpTracesToSpans(JSON.parse(read(f))); put('span', spans); if (o.derive) put('request', Traces.requestsFromSpans(spans)); break; }
       case 'helm-history': put('change', Live.helmHistory(read(f), { release: o.release && o.release !== true ? o.release : path.basename(f, '.json'), namespace: o.namespace && o.namespace !== true ? o.namespace : 'default' })); break;
@@ -233,6 +244,9 @@ async function main() {
   if (area === 'optimize') return optimize(store, cmd, o);
   if (area === 'inject') return inject(store, cmd, o);
   if (area === 'incidents') return incidents(store, cmd, rest, o);
+  if (area === 'backtest') return backtest(store, o);
+  if (area === 'gameday') return gameday(store, cmd, o);
+  if (area === 'pull') return pull(store, cmd, o);
   if (area !== 'data') throw new Error(`unknown command "${area}"\n\n${HELP}`);
   if (cmd === 'import') {
     const [src, ...files] = rest;
@@ -457,6 +471,66 @@ async function bench(store, o, weights) {
   }
   const minT1 = o['min-top1'] ? +o['min-top1'] : null, minT3 = o['min-top3'] ? +o['min-top3'] : null;
   if ((minT1 != null && sum.top1 < minT1) || (minT3 != null && sum.top3 < minT3)) { console.error(`below the bar: top-1 ${pct(sum.top1)} (min ${pct(minT1)}), top-3 ${pct(sum.top3)} (min ${pct(minT3)})`); process.exitCode = 5; }
+}
+
+const hdrs = o => Object.fromEntries([].concat(o.header || []).filter(h => h !== true).map(h => { const i = String(h).indexOf(':'); return [h.slice(0, i).trim(), h.slice(i + 1).trim()]; }));
+const lokiQueries = o => [].concat(o['loki-query'] || ['{job=~".*kernel.*|.*syslog.*"}', '{container=~".+"} |~ "NCCL WARN|Watchdog caught|CUDA error|OutOfMemoryError"']).filter(q => q !== true);
+const dur = v => { const m = String(v || '').match(/^(\d+(?:\.\d+)?)([smhd]?)$/); return m ? +m[1] * { '': 1, s: 1, m: 60, h: 3600, d: 86400 }[m[2]] : undefined; };
+
+// Pull a window from Prometheus and/or Loki into the store.
+async function pull(store, cmd, o) {
+  const from = time(o.from), to = time(o.to) ?? Math.floor(Date.now() / 1000);
+  if (from == null) throw new Error('pull needs --from (and --to, default now)');
+  const out = {};
+  if (o.prom && o.prom !== true) out.prometheus = await Pull.pullPrometheus(store, o.prom, { from, to, step: o.step ? +o.step : 60, headers: hdrs(o) });
+  if (o.loki && o.loki !== true) out.loki = await Pull.pullLoki(store, o.loki, lokiQueries(o), { from, to, headers: hdrs(o) });
+  if (!out.prometheus && !out.loki) throw new Error('pull --prom URL and/or --loki URL');
+  if (J) { OUT.pulled = out; return; }
+  if (out.prometheus) say(`Prometheus: ${out.prometheus.device} device samples, ${out.prometheus.serving} serving rows, ${out.prometheus.collective} NCCL collective rows (${out.prometheus.unmapped} unmapped series samples)`);
+  if (out.loki) say(`Loki: ${out.loki.lines} lines → ${out.loki.logs} classified log records (${out.loki.unmatched} not matched)`);
+}
+
+// Backtest: pull each labeled incident's window from the fleet's own monitoring and score root-cause analysis on it.
+async function backtest(store, o) {
+  if (!o.labels || o.labels === true) throw new Error('backtest --labels postmortems.jsonl --prom URL [--loki URL]');
+  const labels = read(o.labels).split(/\r?\n/).filter(l => l.trim()).map(l => JSON.parse(l)).map(l => Object.assign(l, { incident: Object.assign({}, l.incident, { from: time(l.incident.from), to: time(l.incident.to) }) }));
+  const lookback = dur(o.lookback) ?? 26 * 3600, pulled = [];
+  for (const l of labels) {
+    const w = { from: l.incident.from - lookback, to: l.incident.to + 3600 }, got = { id: l.incident.id || `${l.cause}@${l.incident.from}` };
+    if (o.prom && o.prom !== true) got.prometheus = await Pull.pullPrometheus(store, o.prom, Object.assign({ step: o.step ? +o.step : 60, headers: hdrs(o) }, w));
+    if (o.loki && o.loki !== true) got.loki = await Pull.pullLoki(store, o.loki, lokiQueries(o), Object.assign({ headers: hdrs(o) }, w));
+    pulled.push(got);
+    if (!J) say(`  pulled ${got.id}: ${got.prometheus ? `${got.prometheus.device} device, ${got.prometheus.serving} serving` : ''}${got.loki ? `, ${got.loki.logs} log records` : ''}`);
+  }
+  const weights = o.weights && o.weights !== true ? JSON.parse(read(o.weights)) : undefined;
+  const rows = Bench.evalLabels(store, labels, { weights }), sum = Bench.summarize(rows);
+  if (J) { Object.assign(OUT, { backtest: { incidents: rows.length, top1: sum.top1, top3: sum.top3, componentTop1: sum.componentTop1, rows: rows.map(({ hyps, ...r }) => Object.assign(r, { ranked: hyps.slice(0, 3) })) }, pulled }); return; }
+  const pc = v => (v == null ? '–' : `${(v * 100).toFixed(1)}%`);
+  say(`backtest on ${rows.length} confirmed incidents: top-1 ${pc(sum.top1)}, top-3 ${pc(sum.top3)}${sum.componentTop1 != null ? `, component ${pc(sum.componentTop1)}` : ''}`);
+  for (const r of rows) say(`  ${r.rank === 1 ? 'ok  ' : 'MISS'} ${r.id}: confirmed ${r.cause}${r.component ? ` (${r.component})` : ''}; ranked ${r.rank ?? 'not found'}${r.rank !== 1 ? `, top: ${r.top || 'none'} ${r.hyps[0] ? r.hyps[0].score.toFixed(2) : ''}` : ''}`);
+  if (sum.misses.length) say('A miss usually means a signal the store didn\'t get (no logs for that window, no topology) or a rule gap: check `fleetops data node` for the component and the window.');
+}
+
+// Game day: run a plan of injections on a test cluster one after another, then score them.
+async function gameday(store, cmd, o) {
+  const planFile = cmd && cmd !== true ? cmd : o.plan;
+  if (!planFile) throw new Error('gameday PLAN.json --allow FILE [--live] [--cooldown 900] [--prom URL --loki URL]');
+  const plan = JSON.parse(read(planFile)), allow = Inject.loadAllow(o.allow && o.allow !== true ? o.allow : process.env.FLEETOPS_INJECT_ALLOW);
+  const steps = plan.steps || plan, cool = o.cooldown ? +o.cooldown : plan.cooldownS ?? 900, live = !!o.live;
+  const preps = steps.map(st => { const { fault, forS, ...params } = st; return { st, prep: Inject.prepare(fault, params, { allow }) }; }); // check every step before running any
+  const done = [];
+  for (const [i, { st, prep }] of preps.entries()) {
+    if (!J) say(`step ${i + 1}/${preps.length}: ${prep.fault} on ${prep.nodes.join(', ') || prep.params.release || prep.params.host} for ${st.forS || 300} s (expect ${prep.expect || 'detection only'})`);
+    const r = await Inject.run(prep, { live, forS: st.forS || 300, store, log: J ? () => {} : l => say('  ' + l.trim()) });
+    done.push(r);
+    if (live && i < preps.length - 1) { if (!J) say(`  cooling down ${cool} s`); await new Promise(res => setTimeout(res, cool * 1000)); }
+  }
+  if (!live) { if (!J) say('dry run: nothing was run. Add --live on a test cluster.'); else OUT.gameday = { dryRun: true, steps: preps.length }; return; }
+  if (o.prom || o.loki) { const lo = Math.min(...done.map(d => d.from)) - 26 * 3600, hi = Math.max(...done.map(d => d.to || d.from)) + 3600; if (o.prom && o.prom !== true) await Pull.pullPrometheus(store, o.prom, { from: lo, to: hi, headers: hdrs(o) }); if (o.loki && o.loki !== true) await Pull.pullLoki(store, o.loki, lokiQueries(o), { from: lo, to: hi, headers: hdrs(o) }); }
+  const r = Bench.evalInjections(store, { from: Math.min(...done.map(d => d.from)) - 1, to: Math.max(...done.map(d => d.to || d.from)) + 1 });
+  if (J) { OUT.gameday = { injections: r.injections, detected: r.detected, delayP50: r.delayP50, delayP90: r.delayP90, top1: r.diagnosis.top1, rows: r.rows.map(({ hyps, ...x }) => x) }; return; }
+  say(`game day: ${r.injections} injections, detected ${(r.detected * 100).toFixed(0)}%, alarm after ${r.delayP50 != null ? Math.round(r.delayP50 / 60) : '–'} min (p50); diagnosis top-1 ${r.diagnosis.incidents ? (r.diagnosis.top1 * 100).toFixed(0) + '%' : '–'}`);
+  for (const x of r.rows) say(`  ${x.id}: ${x.detected ? `detected after ${Math.round(x.delayS / 60)} min` : 'not detected'}; ${x.cause ? `expected ${x.cause}, ranked ${x.rank ?? 'not found'}` : `top ${x.top}`}`);
 }
 
 // The incident workflow: open from detection, lifecycle, paging, timeline, postmortem.

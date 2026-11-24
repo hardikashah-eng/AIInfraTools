@@ -83,3 +83,32 @@ export function stepLog(text, { job } = {}) {
   }
   return out;
 }
+
+// NCCL Inspector JSON output (NCCL_INSPECTOR_ENABLE=1, the profiler plugin): one object per operation per
+// communicator, { header: { id, comm_name, rank, n_ranks, nnodes }, metadata: { dump_timestamp_us, hostname, pid, … },
+// coll_perf: { coll, coll_sn, coll_msg_size_bytes, coll_exec_time_us, coll_timing_source, coll_algobw_gbs,
+// coll_busbw_gbs } | p2p_perf: { p2p, p2p_sn, p2p_peer, … } }. Files may hold JSON lines, concatenated objects or an
+// array; all are read. → collective records.
+export function ncclInspector(text, { job, node } = {}) {
+  const objs = [], s = String(text);
+  let depth = 0, start = -1, inStr = false, esc = false;
+  for (let i = 0; i < s.length; i++) { // split concatenated / line-delimited JSON objects without assuming newlines
+    const ch = s[i];
+    if (inStr) { if (esc) esc = false; else if (ch === '\\') esc = true; else if (ch === '"') inStr = false; continue; }
+    if (ch === '"') inStr = true;
+    else if (ch === '{') { if (depth++ === 0) start = i; }
+    else if (ch === '}' && --depth === 0 && start >= 0) { try { objs.push(JSON.parse(s.slice(start, i + 1))); } catch { /* skip a torn record */ } start = -1; }
+  }
+  const out = [];
+  for (const o of objs) {
+    const h = o.header || {}, m = o.metadata || {}, c = o.coll_perf, p = o.p2p_perf, perf = c || p;
+    if (!perf) continue;
+    const pre = c ? 'coll' : 'p2p', ts = Number(m.dump_timestamp_us ?? h.dump_timestamp_us);
+    if (!Number.isFinite(ts)) continue;
+    const rec = { t: ts / 1e6, job: job || o.job, node: node || m.hostname || h.hostname, rank: h.rank, comm: h.id ?? h.comm_hash, commName: h.comm_name, nranks: h.n_ranks ?? h.nranks, nnodes: h.nnodes,
+      op: perf[pre], sn: perf[`${pre}_sn`], bytes: perf[`${pre}_msg_size_bytes`], execS: perf[`${pre}_exec_time_us`] / 1e6, busbw: perf[`${pre}_busbw_gbs`], algobw: perf[`${pre}_algobw_gbs`], timing: perf[`${pre}_timing_source`], peer: p ? p.p2p_peer : undefined, source: 'nccl-inspector' };
+    for (const k of Object.keys(rec)) if (rec[k] === undefined || (typeof rec[k] === 'number' && !Number.isFinite(rec[k]))) delete rec[k];
+    out.push(rec);
+  }
+  return out.sort((a, b) => a.t - b.t);
+}
