@@ -27,6 +27,9 @@
 //              fecUncorrected?, xmitWait?, pfcPause?, ecnMarked?, cnpSent?, outOfBuffer?, rxBytes?, txBytes? }   (src/adapters/fabric.mjs)
 //   storage    I/O against one storage target over a window: { target, op: read|write|meta, node?, job?, ops?, bytes?, latMs?, windowS? }
 //   inventory records may carry versions: { driver, cuda, vbios, inforom, firmware, kernel, os, runtime, kubelet, image }
+//   check      a node check before admission (tools/admit-node.sh): { node, check: dcgm-diag|nccl-allreduce|burn-in|pcie|gpu-count, ok?, value?, unit?, detail? }
+//   admission  a node's admission verdict: { node, verdict: admit|reject|incomplete, failed, missing, by? }
+//   rollout    a step of a version rollout: { id, event: applied|verified|rolled-back|halted, stage, field, version, nodes }
 // Later PRs add calibration, drift, incident and optimization records.
 
 export const KINDS = {
@@ -53,6 +56,9 @@ export const KINDS = {
   sdc_check: ['check', 'node'],
   port: ['switch', 'port'],
   storage: ['target'],
+  check: ['node', 'check'],
+  admission: ['node', 'verdict'],
+  rollout: ['id', 'event'],
 };
 
 export const JOB_STATUS = new Set(['ok', 'failed', 'killed', 'cancelled', 'timeout', 'retried']);

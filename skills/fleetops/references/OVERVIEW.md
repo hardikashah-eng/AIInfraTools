@@ -85,6 +85,17 @@ Spans (OTLP, or forwarded clock-corrected by hybrid-tracing) become per-request 
 
 On Philly's real job traces, the 10 flaky nodes found in the first half of a week kept failing at 3.5× their expected rate in the second half. See [docs/TUNE.md](TUNE.md).
 
+## Power-aware capacity
+
+`fleetops power report` gives IT kW per rack, PDU, row and site against budgets, and how many more nodes fit. `power predict --cap 70%` gives which jobs a cap slows and by how much: memory-bound serving barely notices, compute-bound training does. `power fit` measures that response on your GPUs. `power plan` picks the caps that bring each group under budget at the least slowdown and queues them for approval. NVIDIA and AMD are both handled, and the live agent proposes caps when a group goes over budget. FleetScope models caps per pool and site budgets too (`fleetscope power`). See [docs/POWER.md](POWER.md).
+
+## Node admission and safe rollouts
+
+- **Admission:** `tools/admit-node.sh` runs on a new or repaired node: versions, topology, DCGM diagnostic, NCCL all-reduce, burn-in and the SDC canary. `fleetops admit check NODE` compares the results with the same SKU's admitted nodes and says admit, reject (with the evidence) or incomplete (with what to run). Admitting removes the node's admission taint once a person approves; rejecting keeps it out on its own.
+- **Rollouts:** `fleetops rollout plan` moves a driver, firmware, CUDA, NCCL or kernel version to a canary spread over racks, then waves, each approved. After each bake it compares the new version's nodes with the old ones on failures, hard faults, NCCL bandwidth, per-rank step compute in the same jobs and TTFT. A regression rolls the wave back and halts the rollout.
+
+See [docs/ADMISSION.md](ADMISSION.md).
+
 ## Serving: what fits, what it carries, deploy it
 
 - **What fits:** `fleetops serving fit --gpu H100 --nodes 2 [--rate 5]` lists every catalog model with the load it carries on that hardware within the TTFT and TPOT targets (production and flat out), output tokens/s, $ per million tokens and the layout. With `--rate`, the models that carry it come first, largest first.

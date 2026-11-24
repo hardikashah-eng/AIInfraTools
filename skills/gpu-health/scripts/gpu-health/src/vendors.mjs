@@ -26,7 +26,7 @@ export const VENDORS = {
       fields: {
         DCGM_FI_PROF_PIPE_TENSOR_ACTIVE: ['tensor', 1], DCGM_FI_PROF_SM_ACTIVE: ['sm', 1], DCGM_FI_PROF_DRAM_ACTIVE: ['dram', 1],
         DCGM_FI_DEV_FB_USED: ['memUsedGB', 1 / 1024], DCGM_FI_DEV_FB_TOTAL: ['memTotalGB', 1 / 1024],
-        DCGM_FI_DEV_SM_CLOCK: ['clockMHz', 1], DCGM_FI_DEV_MAX_SM_CLOCK: ['maxClockMHz', 1], DCGM_FI_DEV_GPU_TEMP: ['tempC', 1], DCGM_FI_DEV_POWER_USAGE: ['powerW', 1],
+        DCGM_FI_DEV_SM_CLOCK: ['clockMHz', 1], DCGM_FI_DEV_MAX_SM_CLOCK: ['maxClockMHz', 1], DCGM_FI_DEV_GPU_TEMP: ['tempC', 1], DCGM_FI_DEV_POWER_USAGE: ['powerW', 1], DCGM_FI_DEV_POWER_MGMT_LIMIT: ['powerLimitW', 1], DCGM_FI_DEV_ENFORCED_POWER_LIMIT: ['powerLimitW', 1],
         DCGM_FI_DEV_MEMORY_TEMP: ['memTempC', 1],
         DCGM_FI_DEV_CLOCKS_EVENT_REASONS: ['clockReasons', 1], DCGM_FI_DEV_CLOCK_THROTTLE_REASONS: ['clockReasons', 1], // bitmask, decoded in ingest
         DCGM_FI_DEV_ECC_SBE_AGG_TOTAL: ['eccSbeTotal', 1], DCGM_FI_DEV_ECC_DBE_AGG_TOTAL: ['eccDbeTotal', 1],
@@ -72,6 +72,9 @@ export const VENDORS = {
     executors: {
       'gpu-reset': [['ssh', '{node}', 'sudo', 'amd-smi', 'reset', '--gpureset', '--gpu', '{gpu}']],
       'config-reset': { webhook: 'Reset clocks and power limits to defaults with amd-smi on the node.' },
+      // power cap in watts (amd-smi set --power-cap; older ROCm: rocm-smi --setpoweroverdrive)
+      'power-cap': [['ssh', '{node}', 'sudo', 'amd-smi', 'set', '--gpu', '{gpu}', '--power-cap', '{watts}']],
+      'power-cap-node': [['ssh', '{node}', 'sudo', 'amd-smi', 'set', '--gpu', 'all', '--power-cap', '{watts}']],
     },
     unsupported: [],
   },

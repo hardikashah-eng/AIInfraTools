@@ -1,6 +1,6 @@
 ---
 name: fleetops
-description: Finds the root cause of GPU fleet incidents, runs them as incidents, mitigates live, measures training goodput, turns the user's traces into tuning changes, and sizes and deploys vLLM serving. It ingests DCGM, AMD and SambaNova exporters, vLLM, Prometheus, Loki, OTLP, kernel and NCCL logs, profiler traces, switch counters, Lustre and NFS stats, Slurm and Kubernetes. It detects job failures, latency regressions, training slowdowns, hangs and divergence, and ranks causes across 17 rules (hardware, bad change, shared switch or rack, version cohort, straggler, slow link to the switch port, fabric congestion, storage stalls to the target, collective hang, silent corruption, KV pressure, load, slow replica, workload, monitoring gaps). A live agent mitigates within approval guardrails. It advises checkpoint intervals, pool sizes and more, and measures whether changes worked. Use for why jobs fail, latency or training slowed, wasted GPU-hours, NaNs, tuning, live mitigation, or what models fit and deploying them.
+description: Finds the root cause of GPU fleet incidents, runs them as incidents, mitigates live, measures training goodput, turns the user's traces into tuning changes, and sizes and deploys vLLM serving. It ingests DCGM, AMD and SambaNova exporters, vLLM, Prometheus, Loki, OTLP, kernel and NCCL logs, profiler traces, switch counters, Lustre and NFS stats, Slurm and Kubernetes. It detects job failures, latency regressions, training slowdowns, hangs and divergence, and ranks causes across 17 rules (hardware, bad change, shared switch or rack, version cohort, straggler, slow link to the switch port, fabric congestion, storage stalls, collective hang, silent corruption, KV pressure, load, slow replica, workload, monitoring gaps). A live agent mitigates within approval guardrails. It advises checkpoint intervals, pool sizes, and measures whether changes worked. Use for why jobs fail, latency or training slowed, wasted GPU-hours, NaNs, tuning, live mitigation, power caps, rollouts, or what models fit and deploying them.
 ---
 
 # fleetops
@@ -38,6 +38,9 @@ seconds.
   (plan, notes, failed checks) before anyone applies. Add `--apply`, or run `install-serving.sh` without `--dry-run`,
   only when the user asks to deploy to a cluster they name. Never create the Hugging Face Secret or handle the token:
   the user does.
+- **Admission and rollouts stay gated.** Never approve `admit-node` or a `rollout-stage` on the user's behalf, and
+  never add `--live` unless the user asks for that node or rollout. `tools/admit-node.sh` loads every GPU: suggest it
+  only for nodes out of production.
 - **Tokens are secrets.** Show a token only once, to the user, and never put one in a file you share or a command you
   echo back.
 
@@ -156,6 +159,35 @@ Use this when asked which models fit on some GPUs, how much a model can serve, o
   disaggregation.
 - **Say:** the numbers are spec-sheet estimates unless calibrated (`fleetops calibrate`); a load test against the
   endpoint confirms them. Details: [references/SERVING.md](references/SERVING.md).
+
+## Power
+
+Use this when asked about power budgets, what fits under a rack's or site's power, or whether power caps would hurt.
+- `fleetops power report --budgets b.json --json` gives per group: p99 and peak IT kW, the budget, headroom, and
+  `moreNodes`.
+- `fleetops power predict --cap 70% --json` gives per job the predicted slowdown and kW saved. Lead with the jobs a
+  cap would slow most.
+- `fleetops power plan --budgets b.json --out plan.json` queues caps for approval, applied with
+  `fleetops optimize advance`. Never approve them for the user.
+- Say "uncalibrated" unless `fleetops power fit` found GPUs under different limits. Details:
+  [references/POWER.md](references/POWER.md).
+
+## Node admission and safe rollouts
+
+Use this when asked whether a node is ready to join or return, or how to roll out a driver, firmware, CUDA or NCCL
+version safely.
+- **Admission:**
+  - the user runs `scripts/fleetops/tools/admit-node.sh [--burn-in 6h] --out admit.jsonl` on the drained node;
+  - `fleetops data import admission admit.jsonl`;
+  - `fleetops admit check NODE --json` gives the verdict and, per check, pass, fail or missing, with the evidence
+    and the fix.
+
+  Lead with the verdict, then the failed checks. `admit pending` lists nodes waiting.
+- **Rollouts:** `fleetops rollout plan --field F --version V [--apply "…{node}…"] --out rollout.json` queues waves for
+  approval. `rollout advance` judges each baked wave against the old version and rolls a regression back.
+  `rollout check --field F --version V --json` compares a version already in the fleet with the rest. Report each
+  signal's ratio and p-value, and say when exposure is too low to judge.
+- Details: [references/ADMISSION.md](references/ADMISSION.md).
 
 ## Goodput and silent data corruption
 
