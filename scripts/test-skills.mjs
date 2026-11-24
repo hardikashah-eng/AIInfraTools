@@ -88,7 +88,7 @@ test('gpu-health: demo, analyze digest, approval needs a name, execute is a dry 
 
 test('fleetops: demo → diagnose names the planted cause, game day is a dry run and checks the allowlist, k8s dry run', () => {
   const d = isolate('fleetops'), cli = 'scripts/fleetops/tools/fleetops.mjs', ex = 'scripts/fleetops/examples';
-  assert.equal(json(d, [cli, 'demo', '--list', '--json']).scenarios.length, 17);
+  assert.equal(json(d, [cli, 'demo', '--list', '--json']).scenarios.length, 18);
   for (const sc of ['hardware: GPU fault seen in dmesg', 'slow-link', 'kv-pressure']) {
     const demo = json(d, [cli, 'demo', '--scenario', sc, '--store', `s-${sc.split(':')[0]}`, '--json']).demo;
     const diag = json(d, [...demo.next[1].replace(/^fleetops /, `${cli} `).split(' '), '--json']);
@@ -111,5 +111,12 @@ test('fleetops: demo → diagnose names the planted cause, game day is a dry run
   assert.equal(t.live, false); assert.equal(t.incidents[0].rule, 'slow-link');
   assert.ok(t.executed.every(e => e.outcome === 'dry-run'));
   const st = json(d, [cli, 'agent', 'status', '--store', 'live', '--json']).status;
+  // goodput on the training demo; silent corruption on its benchmark scenario
+  json(d, [cli, 'demo', '--training', '--store', 'train', '--json']);
+  const gp = json(d, [cli, 'goodput', '--days', '7', '--store', 'train', '--json']).goodput;
+  assert.equal(gp.jobs.find(j => j.job === 'sft-8b').top, 'data-stall');
+  json(d, [cli, 'demo', '--scenario', 'silent-corruption', '--store', 'sdc', '--json']);
+  const sd = json(d, [cli, 'sdc', '--from', '2026-01-15T00:00:00Z', '--to', '2026-01-16T00:00:00Z', '--store', 'sdc', '--json']).sdc;
+  assert.equal(sd.devices[0].verdict, 'confirmed'); assert.ok(sd.jobs[0].lastCleanCheckpoint);
   assert.ok(st.waiting.some(a => a.kind === 'swap-at-checkpoint'));
 });

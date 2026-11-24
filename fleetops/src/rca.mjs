@@ -14,6 +14,7 @@
 // serving replica holds the slow requests), slow-link (one node's NCCL bandwidth well below the others'), slow-stage (the request stage that grew: queue, prefill, decode).
 
 import { groups } from './adapters/topology.mjs';
+import { findSdc } from './sdc.mjs';
 import { DEVICE_CLASSES } from './adapters/logs.mjs';
 
 const H = 3600;
@@ -531,6 +532,26 @@ const RULES = {
       against: [],
       verify: [`Compare ${top.st} spans of slow and normal requests in the trace view (exemplars).`, top.st === 'queue' ? 'Check replica count and the scheduler\'s waiting queue.' : 'Check for a model, kernel or engine change at the onset, and GPU clocks on the engines.'],
       likelyCause: top.st === 'queue' ? 'capacity' : 'infra', targets: { pool: c.inc.pool, stage: top.st },
+    };
+  },
+
+  // A GPU computing wrong answers: replicas that disagree, a failed canary or replay, the first rank to go non-finite.
+  'silent-corruption'(c) {
+    if (!['training-divergence', 'training-slow', 'training-hang', 'job-failures'].includes(c.inc.symptom)) return null;
+    const r = findSdc(c.store, { from: c.from - 6 * H, to: c.to });
+    const d = r.devices.find(x => x.verdict !== 'watch' && (!c.inc.job || !x.jobs.length || x.jobs.includes(c.inc.job)));
+    if (!d) return null;
+    const j = r.jobs.find(x => x.job === (c.inc.job || d.jobs[0]) && x.devices.includes(d.key));
+    const others = r.devices.filter(x => x !== d && x.verdict !== 'watch');
+    return {
+      cause: 'silent-corruption', title: `Silent data corruption on ${d.key}${d.verdict === 'confirmed' ? ' (confirmed)' : ''}`,
+      score: clamp01((d.verdict === 'confirmed' ? 0.75 : 0.45) + 0.2 * d.score - (others.length >= 2 ? 0.25 : 0)),
+      evidence: d.evidence.slice(0, 4).map(e => ({ what: `${iso(e.t)} ${e.why}`, refs: [ref('sdc_check', e, { node: d.node, gpu: d.gpu, check: e.check })] })),
+      against: others.length >= 2 ? [`${others.length} other GPUs show evidence too: something shared (software, a numerics bug) is more likely than one bad GPU`] : [],
+      verify: [`Run the canary (tools/sdc-canary.py) on ${d.node}: every GPU, the same deterministic work, compared.`, `Replay a step from ${j && j.firstBad.step != null ? `step ${j.firstBad.step}` : 'the window'} on ${d.key} and on another GPU and compare the outputs.`,
+        j && j.lastCleanCheckpoint ? `Resume ${j.job} from the checkpoint at step ${j.lastCleanCheckpoint.step} (before the first sign), without ${d.node}.` : 'Find the last checkpoint saved before the first sign, and resume from it without that GPU.'],
+      likelyCause: 'device', component: d.node,
+      targets: { node: d.node, gpu: d.gpu, job: j ? j.job : c.inc.job, resumeStep: j && j.lastCleanCheckpoint ? j.lastCleanCheckpoint.step : null, firstBadStep: j ? j.firstBad.step : null, verdict: d.verdict },
     };
   },
 

@@ -26,6 +26,9 @@ import * as Opt from '../src/optimize.mjs';
 import * as Detect from '../src/detect.mjs';
 import * as Bench from '../src/bench.mjs';
 import * as Agent from '../src/agent.mjs';
+import * as Goodput from '../src/goodput.mjs';
+import * as Sdc from '../src/sdc.mjs';
+import { goodputMarkdown, goodputHtml } from '../src/goodput-report.mjs';
 import * as LiveView from '../src/live.mjs';
 import * as Inject from '../src/inject.mjs';
 import { loadConfig as ghConfig } from '../../gpu-health/src/config.mjs';
@@ -51,6 +54,7 @@ const HELP = `fleetops — shared data layer for AIInfraTools
   fleetops token list --tokens FILE
   fleetops data export gpu-health --out DIR [--from T] [--to T]   samples.jsonl, jobs.json, results.jsonl for gpu-health
   fleetops data export fleetscope-trace --out FILE [--pool P]     CSV for FleetScope's Trace replay node
+  fleetops demo --training [--days 7]                             a week of training jobs with planted badput (for goodput)
   fleetops demo [--scenario NAME] [--seed N] [--list] [--now]      a store with one planted cause (a benchmark scenario) to
                                                                  try detect, diagnose and incidents without a fleet;
                                                                  --now moves it so the incident ends now (for the agent)
@@ -74,7 +78,9 @@ Sources (SOURCE):
   otlp-traces      OTLP/JSON traces (resourceSpans)          [--derive] (also write per-request records)
   kineto           PyTorch profiler trace JSON (one rank)    [--job J] [--node N] [--rank R] [--t0 T]   per-rank steps
   nccl-inspector   NCCL Inspector profiler-plugin JSON       [--job J] (default: from the nccl-inspector-<jobid> directory)
-  step-log         JSON lines {t, rank, node, step, durS, commS?, dataS?, ckptS?, mfu?}   [--job J]
+  step-log         JSON lines {t, rank, node, step, durS, commS?, dataS?, ckptS?, mfu?, loss?, gradNorm?, n?}   [--job J]
+  sdc-checks       JSON lines of silent-data-corruption checks: tools/sdc-canary.py output, or your trainer's
+                   {t, check: param-checksum|replay|nan, node, gpu, job, step, rank, group, value, ok}
   sacct            sacct -P -X --format=JobID,JobName,State,ExitCode,Start,End,NodeList,AllocTRES
   changes          JSON lines of change events
   git-log          git log --date=unix --pretty=format:'@@%H|%ad|%an|%s' --name-only   [--repo NAME]
@@ -122,6 +128,16 @@ Real labels from a real fleet:
         pull each confirmed incident's window and score root-cause analysis on it (misses name the incident)
   fleetops gameday PLAN.json --allow FILE [--live] [--cooldown 900] [--prom URL --loki URL]
         run injections one after another on a TEST cluster (dry run unless --live), then score detection and diagnosis
+
+Goodput (where training GPU-hours went; checkpoint interval advice):
+  fleetops goodput [--from T] [--to T | --days 7] [--job J] [--targets targets.json] [--format md|html] [--out FILE]
+        allocated GPU-hours per job, team and day split into productive, slow steps, data stalls, checkpoint saves,
+        lost work, restarts, startup and idle; the fleet's interruption rate; the best checkpoint interval per job
+
+Silent data corruption (GPUs that compute wrong answers without an error):
+  fleetops sdc [--from T] [--to T | --days 7] [--format md]
+        replicas that disagree, failed canaries and replays, the first rank to go non-finite, gradient outliers →
+        suspect GPUs, and for each job the checkpoint to resume from; run tools/sdc-canary.py on nodes to confirm
 
 Live agent and dashboard (actions are dry runs unless --live AND the gpu-health policy has dryRun: false):
   fleetops agent [--interval 30] [--window 3600] [--state DIR] [--config gpu-health.json] [--agent-config agent.json]
@@ -204,6 +220,7 @@ function importSource(store, src, files, o) {
       case 'kineto': put('step', Traces.kineto(read(f), { job: o.job && o.job !== true ? o.job : path.basename(f).split(/[._]/)[0], node: o.node && o.node !== true ? o.node : undefined, rank: o.rank != null && o.rank !== true ? +o.rank : undefined, t0: o.t0 ? time(o.t0) : undefined })); break;
       case 'nccl-inspector': put('collective', Traces.ncclInspector(read(f), { job: o.job && o.job !== true ? o.job : (path.basename(path.dirname(path.resolve(f))).match(/nccl-inspector-(\S+)/) || [])[1], node: o.node && o.node !== true ? o.node : undefined })); break;
       case 'step-log': put('step', Traces.stepLog(read(f), { job: o.job && o.job !== true ? o.job : undefined })); break;
+      case 'sdc-checks': put('sdc_check', read(f).split(/\r?\n/).filter(l => l.trim()).map(l => JSON.parse(l)).map(c => Object.assign({ source: 'sdc-canary' }, c, { gpu: c.gpu != null ? String(c.gpu) : undefined }))); break;
       case 'otlp-traces': { const spans = Ingest.otlpTracesToSpans(JSON.parse(read(f))); put('span', spans); if (o.derive) put('request', Traces.requestsFromSpans(spans)); break; }
       case 'helm-history': put('change', Live.helmHistory(read(f), { release: o.release && o.release !== true ? o.release : path.basename(f, '.json'), namespace: o.namespace && o.namespace !== true ? o.namespace : 'default' })); break;
       case 'sacct': put('job', Live.slurmSacct(read(f))); break;
@@ -244,6 +261,18 @@ function importSource(store, src, files, o) {
 // A demo store: one benchmark scenario (a fleet with one planted cause and distractors) written to --store, so the
 // detect → diagnose → incident flow can be tried without a fleet. The answer is printed so the result can be checked.
 function demo(store, o) {
+  if (o.training) {
+    const days = o.days ? +o.days : 7, t0 = Math.floor(Date.now() / 1000 / 3600) * 3600 - days * 86400;
+    const recs = Goodput.synthTraining({ t0, days, seed: o.seed ? +o.seed : 7 }), written = {};
+    for (const [k, r] of Object.entries(recs)) if (r.length) written[k] = store.append(k, r, { dedupe: true }).written;
+    if (store.flush) store.flush();
+    const res = { store: store.dir, written, from: t0, to: t0 + days * 86400, planted: { 'pretrain-70b': 'checkpoints every 3 h on a fleet that interrupts it every ~6 h: lost work', 'sft-8b': 'a slow input pipeline: data stalls', 'rl-policy': 'one slow node for two days: slow steps' } };
+    if (J) { OUT.demo = res; return; }
+    say(`demo store ${store.dir}: ${days} days of training (${Object.entries(written).map(([k, n]) => `${k} ${n}`).join(', ')})`);
+    for (const [j, w] of Object.entries(res.planted)) say(`  ${j}: ${w}`);
+    say(`try:\n  fleetops goodput --days ${days} --store ${store.dir}\n  fleetops goodput --days ${days} --format html --out goodput.html --store ${store.dir}`);
+    return;
+  }
   const names = Bench.SCENARIO_NAMES;
   if (o.list) { if (J) { OUT.scenarios = names; return; } names.forEach(n => say(n)); return; }
   const want = o.scenario && o.scenario !== true ? String(o.scenario) : 'hardware: GPU fault seen in dmesg';
@@ -295,6 +324,8 @@ async function main() {
   if (area === 'pull') return pull(store, cmd, o);
   if (area === 'demo') return demo(store, o);
   if (area === 'agent') return agentCmd(store, cmd, o);
+  if (area === 'goodput') return goodputCmd(store, o);
+  if (area === 'sdc') return sdcCmd(store, o);
   if (area !== 'data') throw new Error(`unknown command "${area}"\n\n${HELP}`);
   if (cmd === 'import') {
     const [src, ...files] = rest;
@@ -739,6 +770,25 @@ function tokenCmd(cmd, o) {
 }
 
 // Streaming ingestion: remote_write and OTLP/HTTP (JSON) into the store.
+// ---------- goodput ----------
+function goodputCmd(store, o) {
+  const opt = k => (o[k] && o[k] !== true ? o[k] : undefined);
+  const to = time(opt('to')) ?? Math.floor(Date.now() / 1000), from = time(opt('from')) ?? to - (opt('days') ? +opt('days') : 7) * 86400;
+  const g = Goodput.goodput(store, { from, to, now: Math.min(to, Math.floor(Date.now() / 1000)), job: opt('job'), targets: opt('targets') ? JSON.parse(read(opt('targets'))) : {} });
+  const fmt = opt('format');
+  if (fmt === 'html' || fmt === 'md') { const text = fmt === 'html' ? goodputHtml(g) : goodputMarkdown(g); if (opt('out')) { fs.writeFileSync(opt('out'), text); say(`wrote ${opt('out')}`); if (J) OUT.wrote = opt('out'); } else process.stdout.write(text); return; }
+  if (J) { OUT.goodput = Object.assign({}, g, { jobs: g.jobs.map(({ attemptsList, ...j }) => j) }); return; }
+  process.stdout.write(goodputMarkdown(g));
+}
+
+function sdcCmd(store, o) {
+  const opt = k => (o[k] && o[k] !== true ? o[k] : undefined);
+  const to = time(opt('to')) ?? Math.floor(Date.now() / 1000), from = time(opt('from')) ?? to - (opt('days') ? +opt('days') : 7) * 86400;
+  const r = Sdc.findSdc(store, { from, to });
+  if (J) { OUT.sdc = r; return; }
+  process.stdout.write(Sdc.sdcMarkdown(r));
+}
+
 // ---------- live agent ----------
 function agentOpts(store, o) {
   const opt = k => (o[k] && o[k] !== true ? o[k] : undefined), json = f => JSON.parse(read(f));

@@ -205,6 +205,91 @@ be made live on its own.
 **Status:** built ([fleetops/docs/AGENT.md](fleetops/docs/AGENT.md)). Tested on the benchmark scenarios with a fake
 runner. It has not yet run against a real cluster.
 
+## Part 3: where the GPU time goes, and whether the answers are right
+
+The first two parts find and fix incidents. This part measures what the fleet delivers: how much of the GPU spend
+turns into training that is kept, whether that training is correct, and how to keep it that way through changes,
+power limits and cost reviews.
+
+### 12. Training goodput
+
+- **A ledger of every allocated GPU-second:**
+  - per job, team and day;
+  - split into productive steps and seven kinds of badput: slow steps, waiting on data, checkpoint saves, lost work,
+    restarts, startup, idle.
+- **Interruptions:** the fleet's interruption rate, measured.
+- **Checkpoint intervals:** each job's best interval (Young/Daly), with the GPU-hours it would save.
+- **Serving:** the share of requests that met their latency targets.
+
+**Done when:** a week of the fleet's step logs gives each job's goodput and biggest loss, and the checkpoint advice
+names its savings.
+
+**Status:** built ([fleetops/docs/GOODPUT.md](fleetops/docs/GOODPUT.md)). Tested on a demo week with planted badput,
+where each job's biggest loss is the one planted, and on Philly's job traces (attempt-level, an upper bound). It
+needs a real fleet's step logs.
+
+### 13. Silent data corruption
+
+- **Evidence that names a GPU:**
+  - data-parallel replicas whose parameter checksums disagree;
+  - failed canaries and replays;
+  - the first rank to go non-finite;
+  - gradient-norm outliers.
+- **Per job:** the first sign, and the last clean checkpoint to resume from.
+- **Wiring:**
+  - a `silent-corruption` root-cause rule and a benchmark scenario;
+  - gpu-health quarantine with fault class `sdc`;
+  - a live-agent playbook;
+  - a canary script for nodes.
+
+**Done when:** a GPU flagged on the fleet is confirmed by the canary or a replay, and the job resumes from the
+checkpoint named.
+
+**Status:** built ([fleetops/docs/SDC.md](fleetops/docs/SDC.md)). The detection logic is tested; the canary hasn't
+run on GPUs yet.
+
+### 14. Node admission and safe rollouts
+
+- **Admission:** a node must pass a gate before it joins the training pool or returns from repair:
+  - burn-in;
+  - the SDC canary;
+  - an NCCL bandwidth test against its neighbours;
+  - topology and version checks.
+- **Rollouts:** driver, firmware, CUDA and NCCL changes go to a canary cohort first, compared automatically with the
+  rest. A regression stops the rollout. This turns the version-cohort rule from after the fact into before it.
+
+**Done when:** a bad node or version is stopped before it reaches a production job.
+
+### 15. Power-aware capacity
+
+- **FleetScope:** power budgets per rack and site, power caps per pool, and throughput per megawatt; which jobs slow
+  down under a cap.
+- **Live agent:** applies power caps within the same approval guardrails.
+- **Vendor-neutral:** works on NVIDIA and AMD alike.
+
+**Done when:** a capacity plan is limited by power as well as GPUs, and a cap's effect on goodput is predicted before
+it is applied.
+
+### 16. Cost per useful work
+
+- **Joined data:**
+  - GPU-hour cost (from OpenCost where it runs, or prices in the config);
+  - goodput, failures and latency targets.
+- **Measures:**
+  - cost per kept training step and per in-target token;
+  - the cost of each incident;
+  - on-prem against neocloud for the same work.
+
+**Done when:** each team's bill shows what was useful and what was lost, and why.
+
+### 17. Fabric and storage stalls
+
+- **Fabric:** slow NCCL links traced to switch ports and congestion counters (UFM, SONiC, switch telemetry), not
+  only to the node.
+- **Storage:** data-loader and checkpoint-storage stalls traced to the filesystem or object store behind them.
+
+**Done when:** a slow-link or data-stall diagnosis names the switch port or storage target.
+
 ## Order and why
 
 1. **Data first.** Every later step needs the same inputs, and the change feed is the single most predictive signal for incidents.
@@ -216,6 +301,7 @@ runner. It has not yet run against a real cluster.
 7. **Scale before connecting a real fleet (7).**
 8. **Then depth and workflow (8–10):** per-request and per-rank detail, incident handling, and running as a service.
 9. **Acting last (11).** The agent reuses every piece before it: the store, detection, diagnosis, incidents, gpu-health's queue and locks. It starts as a shadow so its decisions are measured before any of them run.
+10. **Then what the fleet delivers (12–17).** Goodput and silent corruption first: both reuse data already collected, and neither has a strong open-source answer. Admission and rollouts next, since they prevent what 6–13 detect. Power and cost last: they need goodput to say what a watt or a dollar bought.
 
 ## Public data used for validation
 

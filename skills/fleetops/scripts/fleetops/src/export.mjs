@@ -2,6 +2,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { toGpuHealthFaults } from './adapters/logs.mjs';
+import { findSdc, toGpuHealthResults } from './sdc.mjs';
 
 const jsonl = rows => rows.map(r => JSON.stringify(r)).join('\n') + (rows.length ? '\n' : '');
 
@@ -25,6 +26,8 @@ export function toGpuHealth(store, { from, to } = {}) {
   });
   // device faults seen only in logs (dmesg XIDs, AER, AMD RAS) reach gpu-health as fault results
   results.push(...toGpuHealthFaults(store.query('log', { from, to })));
+  // silent data corruption found in the store reaches gpu-health as sdc results (it quarantines with fault class sdc)
+  results.push(...toGpuHealthResults(findSdc(store, { from, to })));
   return { samples, jobs: jobList, results };
 }
 export function writeGpuHealth(store, dir, opts) {
