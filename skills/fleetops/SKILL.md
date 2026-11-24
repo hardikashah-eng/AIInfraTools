@@ -1,6 +1,6 @@
 ---
 name: fleetops
-description: Finds the root cause of GPU fleet incidents, runs them as incidents, and can watch the fleet live and mitigate in real time. It ingests DCGM, AMD and SambaNova exporters, vLLM metrics, Prometheus and Loki, OTLP traces, kernel and NCCL logs, NCCL Inspector, PyTorch profiler traces, Slurm and Kubernetes. It detects job failures, latency regressions and training slowdowns and hangs, and ranks causes with evidence across 14 rules (hardware, bad change, shared switch or rack, version cohort, straggler, slow link, collective hang, KV pressure, load, slow replica or stage, storage, workload, monitoring gaps). A live agent mitigates within approval guardrails (cordon, drain a replica, scale out, swap a node at checkpoint, roll back) and verifies, with a live dashboard of GPU states, flakiness and incidents. It writes postmortems, measures its own accuracy and installs in one command. Use for why jobs fail, latency regressed, what broke a training run, live monitoring and auto-mitigation, postmortems, RCA accuracy.
+description: Finds the root cause of GPU fleet incidents, runs them as incidents, watches the fleet live and mitigates in real time, and measures training goodput. It ingests DCGM, AMD and SambaNova exporters, vLLM metrics, Prometheus and Loki, OTLP traces, kernel and NCCL logs, NCCL Inspector, PyTorch profiler traces, Slurm and Kubernetes. It detects job failures, latency regressions and training slowdowns, hangs and divergence, and ranks causes with evidence across 15 rules (hardware, bad change, shared switch or rack, version cohort, straggler, slow link, collective hang, silent data corruption, KV pressure, load, slow replica, storage, workload, monitoring gaps). A live agent mitigates within approval guardrails and verifies, with a live dashboard. It splits GPU-hours into goodput and badput, advises checkpoint intervals, finds GPUs that silently corrupt training, and writes postmortems. Use for why jobs fail, latency regressed, training broke, wasted GPU-hours, NaNs, or live auto-mitigation.
 ---
 
 # fleetops
@@ -41,7 +41,7 @@ seconds.
 
 1. **Get data.**
    - **No fleet at hand:** `fleetops demo --store demo [--scenario NAME]` writes a fleet with one planted cause and
-     prints the commands to try and the answer to check against. `demo --list` names the 17 scenarios.
+     prints the commands to try and the answer to check against. `demo --list` names the 18 scenarios.
    - **Files:** `fleetops data import SOURCE FILE… --store S`. Sources include `exporter` (DCGM, AMD, SambaNova text),
      `vllm`, `prom-range`, `kernel-log` (journalctl, dmesg, syslog), `app-log` (NCCL, PyTorch), `nccl-inspector`,
      `kineto`, `step-log`, `sacct`, `k8s-nodes`, `k8s-pods`, `k8s-events`, `helm-history`, `slurm-nodes`,
@@ -110,6 +110,25 @@ seconds.
      plan.json` checks the last stage's SLO guard (rolls back on breach) and runs the next approved stage, dry run
      unless `--live`. `optimize verify` compares before and after. See [references/OPTIMIZE.md](references/OPTIMIZE.md).
 
+## Goodput and silent data corruption
+
+- **Goodput** (where training GPU-hours went; asked as "are we wasting GPUs", "how often should we checkpoint"):
+  `fleetops goodput --days 7 [--job J] [--format html --out goodput.html] --json`. Lead with the fleet's goodput and
+  its biggest loss, then the jobs with the most badput and what to do. The categories:
+  - slow steps: look at stragglers and slow links;
+  - waiting on data: the input pipeline;
+  - lost work: checkpoint more often;
+  - restarts: faster load or warm spares.
+
+  Give the checkpoint advice with its numbers: save cost, interruption interval, now vs best, GPU-hours a week. When
+  the report says jobs have no step records, say the goodput is an upper bound. Without data, use
+  `fleetops demo --training` first. Method: [references/GOODPUT.md](references/GOODPUT.md).
+- **Silent data corruption** (asked as "loss spiked / NaN", "is a GPU corrupting training"): `fleetops sdc --json`.
+  Report each GPU's verdict and evidence. Confirmed means a failed canary or replay, or a checksum minority twice.
+  Report the checkpoint to resume from for each job, and that later checkpoints may be corrupted. Suggest
+  `scripts/fleetops/tools/sdc-canary.py` on the node to confirm; it needs GPUs and PyTorch. Inputs and limits:
+  [references/SDC.md](references/SDC.md).
+
 ## Live agent and dashboard
 
 Use this when asked to watch the fleet continuously, mitigate in real time, or show a live dashboard.
@@ -151,6 +170,7 @@ Use this when asked to watch the fleet continuously, mitigate in real time, or s
 | `load` | request rate or prompt length above baseline |
 | `replica-tail` | one serving replica is slow |
 | `slow-stage` | one stage (such as prefill) slowed on every replica |
+| `silent-corruption` | one GPU computing wrong answers: replicas that disagree, failed canary or replay, first NaN |
 | `monitoring-gap` | far fewer devices reporting than before: blame the monitoring first |
 
 ## Installing

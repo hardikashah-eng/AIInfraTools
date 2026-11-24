@@ -194,7 +194,7 @@ export function signals(ev, cfg) {
   if (ev.speed && ev.speed.index < h.speedIndexMin) out.push({ key: 'speed', class: 'slow', severity: 'soft', why: `${ev.speed.metric} at ${(ev.speed.index * 100).toFixed(0)}% of cohort median (n=${ev.speed.cohortSize})` });
   const sdc = ev.sdcEvents || [];
   if (sdc.length) {
-    const confirmed = sdc.some(e => e.type === 'replay-mismatch');
+    const confirmed = sdc.some(e => e.type === 'replay-mismatch' || e.type === 'canary-fail');
     const hard = confirmed || sdc.length >= h.sdcHard;
     const kinds = [...new Set(sdc.map(e => e.type || 'event'))].join(', ');
     if (hard || sdc.length >= h.sdcSoft) out.push({ key: 'sdc', class: 'sdc', severity: hard ? 'hard' : 'soft', why: `${sdc.length} silent-data-corruption event(s) in ${h.sdcWindowDays} days (${kinds})${confirmed ? ', confirmed by replay' : ''}`, t: Math.max(...sdc.map(e => e.t)) });

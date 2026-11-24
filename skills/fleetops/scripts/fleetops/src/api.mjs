@@ -5,12 +5,15 @@
 //   GET /api/series?kind=device&field=sm&from=T&to=T&step=60&agg=avg&node=…&gpu=…&pool=…&where=k=v   [{ t, time, value }] for Grafana
 //   GET /api/incidents[?status=S]   /api/incidents/ID   /api/incidents/ID/timeline (HTML)   /api/incidents/ID/postmortem (MD)
 //   GET /api/diagnose?symptom=S&from=T&to=T[&pool=P&job=J&nodes=a,b]
+//   GET /api/goodput?from=T&to=T[&job=J&format=html|md]    training goodput (unscoped or infra tokens)
 // Grafana: the Infinity data source (JSON, backend parser) reads /api/series and /api/incidents directly; see
 // deploy/grafana-dashboard.json.
 import { whereFrom } from './store.mjs';
 import { visible } from './security.mjs';
 import * as Inc from './incidents.mjs';
 import { diagnose } from './rca.mjs';
+import { goodput } from './goodput.mjs';
+import { goodputHtml, goodputMarkdown } from './goodput-report.mjs';
 
 const num = (v, d) => (v == null || v === '' ? d : Number(v));
 const time = v => (v == null || v === '' ? undefined : /^\d+(\.\d+)?$/.test(v) ? +v : Date.parse(v) / 1000);
@@ -63,6 +66,14 @@ export function handleApi(store, who, method, rawUrl) {
     if (mInc[2] === 'timeline') return { status: 200, type: 'text/html; charset=utf-8', body: Inc.timelineHtml(store, id), records: 1 };
     if (mInc[2] === 'postmortem') return { status: 200, type: 'text/markdown; charset=utf-8', body: Inc.postmortem(store, id), records: 1 };
     return json(s, 1);
+  }
+  if (p === '/api/goodput') {
+    if (tenant !== '*' && !tenant.infra) return { status: 403, type: 'text/plain', body: 'goodput needs an unscoped or infra token\n' };
+    const to = time(q.to) ?? Math.floor(Date.now() / 1000), from = time(q.from) ?? to - 7 * 86400;
+    const g = goodput(store, { from, to, now: Math.min(to, Math.floor(Date.now() / 1000)), job: q.job });
+    if (q.format === 'html') return { status: 200, type: 'text/html; charset=utf-8', body: goodputHtml(g), records: g.jobs.length };
+    if (q.format === 'md') return { status: 200, type: 'text/markdown; charset=utf-8', body: goodputMarkdown(g), records: g.jobs.length };
+    return json(Object.assign({}, g, { jobs: g.jobs.map(({ attemptsList, ...j }) => j) }), g.jobs.length);
   }
   if (p === '/api/diagnose') {
     if (!q.symptom || q.from == null || q.to == null) return { status: 400, type: 'text/plain', body: 'symptom, from and to are required\n' };

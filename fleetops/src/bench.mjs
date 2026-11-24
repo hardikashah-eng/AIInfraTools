@@ -175,6 +175,22 @@ const SCENARIOS = {
     if (r.chance(0.6)) f.s.append('device', [0, 1, 2, 3].map(i => ({ t: T0 + 300 + i * 600, node: bad.node, gpu: bad.gpu, vendor: 'nvidia', kind: 'gpu', clockMHz: r.int(700, 1200), maxClockMHz: 1980, tempC: r.int(85, 92), faults: [] })));
     return { incident: { symptom: 'training-slow', job: 'train-llm', from: T0, to: T0 + H }, cause: 'straggler', component: bad.node };
   },
+  'silent-corruption: one GPU corrupts its replica': f => {
+    // three or more data-parallel replicas: with two, a disagreement can't say which one is wrong
+    const { r } = f, nodes = r.sample(f.nodes, r.int(3, Math.min(5, f.nodes.length))), ranks = nodes.flatMap(x => ['0', '1', '2', '3'].map(g => ({ node: x, gpu: g })));
+    const bad = r.pick(ranks), badK = ranks.indexOf(bad), startStep = r.int(40, 70), steps = [], checks = [];
+    // 4-way tensor parallel inside a node, data parallel across nodes: each tensor-parallel rank's replicas must agree
+    for (let i = 0; i < 120; i++) {
+      const t = T0 - 2 * H + i * 90;
+      for (const [k, rk] of ranks.entries()) { const s = { t, job: 'train-llm', rank: k, node: rk.node, gpu: rk.gpu, step: i, durS: +(1.2 + r.u() * 0.02).toFixed(4), gradNorm: +(1 + r.u() * 0.1 + (k === badK && i >= startStep && r.chance(0.5) ? 40 : 0)).toFixed(3) }; if (i % 25 === 24 && k === 0) s.ckptS = 30; steps.push(s); }
+      if (i % 10 === 0) for (const [k, rk] of ranks.entries()) checks.push({ t: t + 5, check: 'param-checksum', job: 'train-llm', step: i, rank: k, node: rk.node, gpu: rk.gpu, group: `tp${rk.gpu}`, value: k === badK && i >= startStep ? `bad${i}` : `ok${i}-${rk.gpu}` });
+    }
+    f.s.append('step', steps);
+    f.s.append('sdc_check', checks);
+    if (r.chance(0.5)) f.s.append('log', [{ t: T0 - 2 * H + (startStep + 15) * 90, node: bad.node, gpu: bad.gpu, job: 'train-llm', rank: badK, code: 'non_finite', class: 'app', severity: 'soft', msg: 'loss is nan', source: 'app-log' }]);
+    const first = T0 - 2 * H + Math.ceil(startStep / 10) * 10 * 90 + 5;
+    return { incident: { symptom: 'training-divergence', job: 'train-llm', from: first - 60, to: T0 - 2 * H + 120 * 90 }, cause: 'silent-corruption', component: bad.node };
+  },
   'collective-hang: one rank never joins': f => {
     const { r } = f, nodes = r.sample(f.nodes, r.int(2, Math.min(4, f.nodes.length))), ranks = nodes.flatMap(x => ['0', '1', '2', '3'].map(g => ({ node: x, gpu: g })));
     const badK = r.int(0, ranks.length - 1), stuckAt = T0 + 60, steps = [];

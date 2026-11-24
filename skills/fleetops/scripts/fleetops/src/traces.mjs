@@ -76,7 +76,7 @@ export function stepLog(text, { job } = {}) {
     let o; try { o = JSON.parse(line); } catch { continue; }
     const t = num(o.t ?? o.ts ?? o.time), durS = num(o.durS ?? o.step_time ?? o.duration);
     if (t == null || o.rank == null || o.step == null || durS == null) continue;
-    const rec = { t, job: o.job || job, rank: +o.rank, node: o.node || o.host, gpu: o.gpu != null ? String(o.gpu) : undefined, step: +o.step, durS, commS: num(o.commS ?? o.comm_time), dataS: num(o.dataS ?? o.data_time), ckptS: num(o.ckptS ?? o.ckpt_time), mfu: num(o.mfu), source: 'step-log' };
+    const rec = { t, job: o.job || job, rank: +o.rank, node: o.node || o.host, gpu: o.gpu != null ? String(o.gpu) : undefined, step: +o.step, durS, commS: num(o.commS ?? o.comm_time), dataS: num(o.dataS ?? o.data_time), ckptS: num(o.ckptS ?? o.ckpt_time), mfu: num(o.mfu), loss: num(o.loss), gradNorm: num(o.gradNorm ?? o.grad_norm), n: num(o.n ?? o.steps), source: 'step-log' };
     if (rec.commS != null) rec.computeS = Math.max(0, durS - rec.commS - (rec.dataS || 0));
     for (const k of Object.keys(rec)) if (rec[k] == null) delete rec[k];
     out.push(rec);

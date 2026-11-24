@@ -10,6 +10,8 @@
 //   - incidents with overlapping windows and the same symptom (and pool) fold into one; others that overlap are linked.
 
 const median = a => { const s = a.filter(Number.isFinite).sort((x, y) => x - y); return s.length ? s[Math.floor(s.length / 2)] : NaN; };
+import { findSdc } from './sdc.mjs';
+
 const iso = t => new Date(t * 1000).toISOString().replace('.000Z', 'Z');
 
 // Baseline for each bin start: median of the same time-of-day bin on up to `days` previous days (needs ≥ 2 of them),
@@ -142,6 +144,12 @@ export function groupIncidents(list, { gapS = 1800 } = {}) {
 // (z-score CUSUM). Hangs: NCCL / PyTorch watchdog timeouts, grouped by job (or by the nodes that logged them).
 export function detectTraining(store, { from, to, k = 0.5, h = 5, history = 100 } = {}) {
   const out = [];
+  // divergence: silent-data-corruption evidence or non-finite values in a job (see sdc.mjs)
+  const sd = findSdc(store, { from, to });
+  for (const j of sd.jobs) {
+    const last = Math.max(...sd.devices.filter(d => j.devices.includes(d.key)).flatMap(d => d.evidence.filter(e => e.job === j.job).map(e => e.t)));
+    out.push({ symptom: 'training-divergence', job: j.job, from: j.firstBad.t - 60, to: Math.max(last, j.firstBad.t) + 60, alarmAt: j.firstBad.t, method: 'sdc', id: `training-divergence:${j.job}@${iso(j.firstBad.t - 60)}` });
+  }
   const steps = store.query('step', { from: from != null ? from - 6 * 3600 : undefined, to });
   for (const job of [...new Set(steps.map(s => s.job))]) {
     const byStep = new Map();

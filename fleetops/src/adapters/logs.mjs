@@ -106,6 +106,10 @@ const APP = [
   { re: /NCCL WARN Cuda failure '([^']+)'/, f: m => ({ code: 'nccl_cuda_failure', class: /ECC|uncorrectable/i.test(m[1]) ? 'ecc' : 'app', severity: 'hard', detail: m[1] }) },
   { re: /(?:NCCL error|ncclInternalError|ncclSystemError|unhandled system error)/i, f: () => ({ code: 'nccl_system_error', class: 'network', severity: 'soft' }) },
   { re: /CUDA error: uncorrectable ECC error/i, f: () => ({ code: 'cuda_ecc_uncorrectable', class: 'ecc', severity: 'hard' }) },
+  // mixed-precision loss scaling skips steps whose gradients overflowed: normal, not corruption
+  { re: /(?:overflow|skipping (?:step|update|batch)|loss scale|grad(?:ient)? scaler)/i, f: () => ({ code: 'loss_scale_overflow', class: 'app', severity: 'ignore' }) },
+  // non-finite loss or gradients (PyTorch anomaly detection, Megatron / DeepSpeed loss checks, trainer logs)
+  { re: /(?:(?:loss|grad(?:ient)?s?(?: norm)?)\b[^\n]{0,24}?\b(?:is |= ?|: ?)(?:nan|inf)\b|Function '\w+' returned nan values|found (?:nan|inf) in|non-finite (?:loss|grad))/i, f: () => ({ code: 'non_finite', class: 'app', severity: 'soft' }) },
   { re: /CUDA error: an illegal memory access/i, f: () => ({ code: 'cuda_illegal_access', class: 'app', severity: 'soft' }) },
   { re: /(?:torch\.(?:cuda\.)?OutOfMemoryError|CUDA out of memory)/, f: () => ({ code: 'cuda_oom', class: 'app', severity: 'soft' }) },
   { re: /NCCL INFO NCCL version (\S+)/, f: m => ({ code: 'nccl_version', class: 'info', severity: 'info', version: m[1].replace(/\+.*/, '') }) },
@@ -116,7 +120,7 @@ export function ncclLog(text, { node, job, t: t0, keepInfo = true } = {}) {
     if (!line.trim()) continue;
     const lt = lineTime(line);
     const rest = lt.rest;
-    const hm = rest.match(/^([\w.-]+):(\d+):(\d+) \[(\d+)\]/), rm = rest.match(/\[[Rr]ank (\d+)\]/);
+    const hm = rest.match(/^([\w.-]+):(\d+):(\d+) \[(\d+)\]/), rm = rest.match(/\[[Rr]ank ?(\d+)\]/);
     for (const p of APP) {
       const m = rest.match(p.re);
       if (!m) continue;

@@ -128,7 +128,7 @@ test('demo: every scenario written to a store is diagnosed as its planted cause 
   const dir = tmp();
   const { stdout: l } = await run(process.execPath, [cli, 'demo', '--list', '--json', '--store', path.join(dir, 'x')]);
   const names = JSON.parse(l).scenarios;
-  assert.equal(names.length, 17);
+  assert.equal(names.length, 18);
   for (const [i, name] of names.entries()) {
     const { stdout } = await run(process.execPath, [cli, 'demo', '--scenario', name, '--store', path.join(dir, `s${i}`), '--json']);
     const demo = JSON.parse(stdout).demo;

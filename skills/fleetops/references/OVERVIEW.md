@@ -71,6 +71,24 @@ Spans (OTLP, or forwarded clock-corrected by hybrid-tracing) become per-request 
 
 `fleetops serve` also answers a read API (`/api/query`, `/api/series` for Grafana, `/api/incidents`, `/api/diagnose`). Tokens have roles (ingest, read, admin) and tenant scopes (namespaces, pools, clusters, infra); only their hashes are stored. Every read is audited. Prompts, completions and secrets are redacted at ingest. `--on-prem` refuses outbound calls to unlisted hosts. Optimizer guards can query Prometheus at check time. Exporter formats are pinned by contract tests. A Dockerfile, a Kubernetes manifest and a Grafana dashboard are in `Dockerfile` and `deploy/`. See [docs/SERVICE.md](SERVICE.md).
 
+## Training goodput
+
+`fleetops goodput` splits every training allocation, per job, team and day:
+- **productive:** kept steps at the job's own best pace;
+- **badput:** slow steps, waiting on data, checkpoint saves, lost work (steps after the last checkpoint of an attempt that failed, and the hang before it), restarts, startup and idle.
+
+It measures the fleet's interruption rate and gives each job its best checkpoint interval (Young/Daly), with the GPU-hours a week the change would save. Serving pools get the share of requests that met their latency targets. On Philly's week of job traces, 21% of 318K training GPU-hours were in attempts that failed. That figure is an upper bound: the traces have no checkpoint data. See [docs/GOODPUT.md](GOODPUT.md).
+
+## Silent data corruption
+
+`fleetops sdc` finds GPUs that compute wrong answers without an error. Its evidence:
+- data-parallel replicas whose parameter checksums disagree with their peers;
+- failed canaries (`tools/sdc-canary.py`: the same deterministic work on every GPU, compared) and replays;
+- the first rank to go non-finite;
+- gradient-norm outliers.
+
+For each affected job it names the last checkpoint saved before the first sign, which is where to resume. A `silent-corruption` rule, a benchmark scenario, gpu-health quarantine (fault class `sdc`) and a live-agent playbook come with it. See [docs/SDC.md](SDC.md).
+
 ## Live agent and dashboard
 
 `fleetops serve --agent` checks the fleet every 30 seconds as data streams in. It finds job failures, latency regressions, slow training steps and hangs, diagnoses each one, and mitigates it within the gpu-health policy:
@@ -90,7 +108,7 @@ The same process serves `/live`: GPU states and flakiness, incidents and what th
 
 ## Try it without a fleet
 
-`fleetops demo --store demo [--scenario slow-link]` writes a fleet with one planted cause (any of the 17 benchmark scenarios; `--list` names them) and prints the detect, diagnose and incident commands to run, and the answer to check against. Add `--now` to move it so the incident is happening now, then `fleetops serve --agent --store demo` and open http://127.0.0.1:9400/live.
+`fleetops demo --store demo [--scenario slow-link]` writes a fleet with one planted cause (any of the 18 benchmark scenarios; `--list` names them) and prints the detect, diagnose and incident commands to run, and the answer to check against. Add `--now` to move it so the incident is happening now, then `fleetops serve --agent --store demo` and open http://127.0.0.1:9400/live.
 
 fleetops is also an [Agent Skill](../skills/fleetops/SKILL.md), so a model can run it for you.
 
@@ -133,6 +151,10 @@ src/calibrate.mjs        FleetScope pool and Inference Sizer fits, held-out chec
 src/rca.mjs              incident detection, causal rules, ranked hypotheses with evidence, evaluation
 src/detect.mjs           seasonal baselines, Poisson and z-score CUSUM, incident grouping
 src/bench.mjs            labeled scenarios, accuracy per cause, injected/postmortem scoring, fitted weights
+src/goodput.mjs          training goodput: allocations split into goodput and badput, interruption rate, checkpoint advice
+src/goodput-report.mjs   the goodput report (Markdown, HTML)
+src/sdc.mjs              silent-data-corruption evidence → suspect GPUs, first sign and checkpoint to resume from per job
+tools/sdc-canary.py      deterministic work on every GPU of a node, compared (PyTorch)
 src/agent.mjs            the live agent: detect → diagnose → playbook → guardrails → act → verify → page
 src/live.mjs             the /live dashboard and its API (state, approvals, pause)
 src/inject.mjs           fault injection for a test cluster: allowlist, dry-run, undo, labels

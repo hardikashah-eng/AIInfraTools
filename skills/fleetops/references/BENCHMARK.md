@@ -42,7 +42,7 @@ Three kinds of label, one format: `{ store, incident, cause (rule id), component
 
 | Source | Where labels come from | What it shows |
 |---|---|---|
-| synthetic | `generate()`: randomized fleets of 12–24 nodes (leaves of 4, racks of 6 or 8, 3–6 owners) with one planted cause and 0–2 distractors; 16 scenario kinds covering all 13 rules | Each rule finds its cause through noise. Not accuracy on a real fleet. |
+| synthetic | `generate()`: randomized fleets of 12–24 nodes (leaves of 4, racks of 6 or 8, 3–6 owners) with one planted cause and 0–2 distractors; 18 scenario kinds covering all 15 rules | Each rule finds its cause through noise. Not accuracy on a real fleet. |
 | injected | `injection` records written by `fleetops inject` on a test cluster | Detection delay and diagnosis on real faults through the real collectors |
 | postmortem | JSON lines `{ incident, cause, component? }` against a store rebuilt for each window | Accuracy on your fleet's real failures |
 
@@ -59,7 +59,10 @@ Three kinds of label, one format: `{ store, incident, cause (rule id), component
 - straggler: one slow GPU in a training job (clock drop sometimes);
 - collective-hang: one rank never joins (silent, or behind on the collective sequence);
 - replica-tail: one serving replica slow;
-- slow-stage: prefill slows on every replica.
+- slow-stage: prefill slows on every replica;
+- slow-link: one node's NCCL bandwidth drops while its compute is normal;
+- silent-corruption: one GPU's data-parallel replica stops matching its peers' parameter checksums from a random step
+  (3–5 replicas; local gradient-norm outliers and a NaN log sometimes).
 
 **Distractors:** an unrelated change, a harmless soft log line, a hard fault 10–20 hours earlier, another tenant
 failing a little on one node, version skew on one node, plus background failures at a random rate.

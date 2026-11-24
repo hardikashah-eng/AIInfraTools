@@ -14,6 +14,7 @@ import { loadConfig } from '../../gpu-health/src/config.mjs';
 import { Store as Queue } from '../../gpu-health/src/actions.mjs';
 import { flakinessFromState, flakinessDigest, flakinessHtml } from '../../gpu-health/src/flakiness.mjs';
 import * as Inc from './incidents.mjs';
+import { goodput } from './goodput.mjs';
 import { agentState, decisions, paused, setPaused, AGENT_DEFAULTS } from './agent.mjs';
 import { can } from './security.mjs';
 
@@ -63,6 +64,9 @@ export function liveView(store, stateDir, { now = Math.floor(Date.now() / 1000),
     return { pool, ttft: binned(rs, 'ttftP99', from, now, 120), tpot: binned(rs, 'tpotP99', from, now, 120), kv: binned(rs, 'kvUsage', from, now, 120), targets: { ttftP99: tg.ttftP99 ?? null, tpotP99: tg.tpotP99 ?? null } };
   }).filter(p => p.ttft.length || p.tpot.length).slice(0, 12);
   const autoHour = (st.auto || []).filter(x => x.t > now - 3600);
+  // training goodput over the last day (the full report is /api/goodput?format=html)
+  let gp = null;
+  try { const g = goodput(store, { from: now - 86400, to: now, now, serving: false }); if (g.fleet.totalGpuHours > 0) gp = { goodput: g.fleet.goodput, gpuHours: g.fleet.totalGpuHours, biggest: g.fleet.biggest[0] && g.fleet.biggest[0].gpuHours > 0 ? g.fleet.biggest[0].category : null, upperBound: g.fleet.attemptResolution > 0 }; } catch { gp = null; }
   return {
     now, span: { from, to: now },
     agent: { paused: paused(stateDir), pauseInfo: readJson(path.join(stateDir, 'PAUSE')), lastTick: st.lastTick || null, ticks: st.ticks || 0, live: !!(st.lastReport && st.lastReport.live), intervalS: acfg.intervalS,
@@ -70,7 +74,7 @@ export function liveView(store, stateDir, { now = Math.floor(Date.now() / 1000),
     fleet: { gpus, states: an ? an.summary.states : {}, breaker: !!(an && an.health.breaker), at: an ? an.generatedAt : null },
     flakiness: flaky ? { totals: flaky.totals, devices: flaky.devices.map(d => ({ key: d.key, verdict: d.verdict, exits: d.exits, bounces: d.bounces, jobFailures: d.jobFailures, next: d.next, lastWhy: d.lastWhy })), hotCohorts: flaky.hotCohorts, window: flaky.window } : null,
     incidents, actions: { open: open.map(slim), ran: ran.map(e => ({ t: e.t, id: e.id, kind: e.kind, target: e.target, event: e.event, by: e.by, commands: e.commands, why: e.why, text: e.text })) },
-    decisions: decisions(stateDir, 60), training, inference,
+    decisions: decisions(stateDir, 60), training, inference, goodput: gp,
   };
 }
 
@@ -169,10 +173,10 @@ var d=data,a=d.agent,g=d.fleet.gpus,out=g.filter(function(x){return x.state!=='s
 var stale=a.lastTick&&Date.now()/1000-a.lastTick>Math.max(120,a.intervalS*4);
 var status=a.paused?['var(--mut)','paused by '+esc((a.pauseInfo||{}).by||'someone')]:stale||!a.lastTick?['var(--critical)','not running']:a.live?['var(--good)','live: acting']:['var(--warning)','dry run: proposing only'];
 var h='<div class="top"><h1>fleetops live</h1><span class="pill"><span class="dot" style="background:'+status[0]+'"></span>Agent '+status[1]+'</span><span class="sub">last check '+ago(a.lastTick)+' · refreshes every 5 s</span><span style="flex:1"></span>'
-+(a.paused?'<button onclick="fo.pause(false)">Resume agent</button>':'<button onclick="fo.pause(true)">Pause agent</button>')+'<button onclick="fo.open(\\'/api/flakiness?format=html\\')">Flakiness report</button></div>'+(err?'<p class="err">'+esc(err)+'</p>':'');
++(a.paused?'<button onclick="fo.pause(false)">Resume agent</button>':'<button onclick="fo.pause(true)">Pause agent</button>')+'<button onclick="fo.open(\\'/api/flakiness?format=html\\')">Flakiness report</button><button onclick="fo.open(\\'/api/goodput?format=html\\')">Goodput report</button></div>'+(err?'<p class="err">'+esc(err)+'</p>':'');
 if(d.fleet.breaker)h+='<div class="card" style="border-color:var(--critical)"><b>⚠ Monitoring gap.</b> Many GPUs stopped reporting at once; the agent is frozen and takes no device actions until telemetry is back.</div>';
 var fk=d.flakiness?d.flakiness.totals:null;
-h+='<div class="tiles">'+tile(g.length?(g.length-out)+' / '+g.length:'–','GPUs serving')+tile(opened.length,'open incidents')+tile(waiting.length,'actions waiting for approval')+tile(a.autoLastHour+' / '+a.autoLimit,'autonomous actions in the last hour')+tile(fk?fk.flaky+fk.rmaCandidates:'–','flaky GPUs'+(fk?' · '+fk.rmaCandidates+' RMA candidate(s)':''))+'</div>';
+h+='<div class="tiles">'+tile(g.length?(g.length-out)+' / '+g.length:'–','GPUs serving')+tile(opened.length,'open incidents')+tile(waiting.length,'actions waiting for approval')+tile(a.autoLastHour+' / '+a.autoLimit,'autonomous actions in the last hour')+tile(fk?fk.flaky+fk.rmaCandidates:'–','flaky GPUs'+(fk?' · '+fk.rmaCandidates+' RMA candidate(s)':''))+tile(d.goodput?Math.round(d.goodput.goodput*100)+'%'+(d.goodput.upperBound?' (at most)':''):'–','training goodput, last 24 h'+(d.goodput&&d.goodput.biggest?' · most lost to '+d.goodput.biggest:''))+'</div>';
 h+='<div class="grid2"><div>';
 // incidents
 h+='<div class="card"><h2>Incidents</h2>'+(d.incidents.length?d.incidents.map(incident).join(''):'<p class="mut small">No incidents in the last day.</p>')+'</div>';

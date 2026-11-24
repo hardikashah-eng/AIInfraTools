@@ -26,6 +26,7 @@ import { persistable } from '../../gpu-health/src/health.mjs';
 import { toGpuHealth } from './export.mjs';
 import * as Detect from './detect.mjs';
 import { diagnose } from './rca.mjs';
+import { findSdc } from './sdc.mjs';
 import * as Inc from './incidents.mjs';
 
 export const AGENT_DEFAULTS = {
@@ -109,6 +110,14 @@ export const PLAYBOOK = {
   workload(t, ctx) {
     const who = t.owner || t.namespace;
     return who ? [{ kind: 'notify-owner', job: who, target: `workload:${who}`, params: {}, reason: `${ctx.h.title}: the GPUs are not the cause; read the jobs' exit codes and pause their retries`, severity: 'medium' }] : [];
+  },
+  'silent-corruption'(t, ctx) {
+    if (!t.node) return [];
+    const k = `${t.node}/${t.gpu ?? '0'}`, from = t.resumeStep != null ? ` from the checkpoint at step ${t.resumeStep} (saved before the first sign${t.firstBadStep != null ? ` at step ${t.firstBadStep}` : ''})` : ' from the last checkpoint saved before the first sign';
+    return [{ kind: 'quarantine', node: t.node, gpu: t.gpu ?? '0', target: k, params: {}, reason: `${ctx.h.title}`, severity: 'high' },
+      { kind: 'run-diag', node: t.node, gpu: t.gpu ?? '0', target: k, params: { level: 4 }, reason: `confirm silent data corruption on ${k} (canary, level-4 diag)`, severity: 'high' },
+      ...(t.job ? [{ kind: 'notify-owner', job: t.job, class: 'training', target: `sdc:${t.job}`, params: {}, reason: `${ctx.h.title}: checkpoints saved after the first sign may hold corrupted weights; resume${from}, without ${t.node}`, severity: 'high' },
+        { kind: 'restart-without-node', job: t.job, class: 'training', node: t.node, target: `${t.job}@${t.node}`, params: { namespace: ctx.ns(t.job) }, reason: `${ctx.h.title}: restart ${t.job}${from}, without ${t.node}`, severity: 'high' }] : [])];
   },
   infrastructure: () => [],                 // storage, scheduler, network: a person, paged
   'monitoring-gap': (t, ctx) => [{ kind: 'exporter-check', target: 'fleet', params: {}, reason: ctx.h.title, severity: 'high' }],
@@ -215,6 +224,12 @@ export function stillThere(store, inc, since, now, acfg) {
   if (inc.symptom === 'training-slow') {
     const v = med(store.query('step', { from: since, to: now, where: x => !inc.job || x.job === inc.job }).map(x => x.durS));
     return Number.isFinite(v) && Number.isFinite(inc.baseline) ? v > 1.15 * inc.baseline : null;
+  }
+  if (inc.symptom === 'training-divergence') {
+    // new corruption evidence for the job after the action, or steps running clean again
+    const r = findSdc(store, { from: since, to: now });
+    if (r.jobs.some(j => j.job === inc.job)) return true;
+    return store.query('step', { from: since, to: now, where: x => !inc.job || x.job === inc.job, limit: 1 }).length ? false : null;
   }
   if (inc.symptom === 'training-hang') {
     if (store.query('log', { from: since, to: now, where: l => l.code === 'nccl_timeout' && (!inc.job || l.job === inc.job) }).length) return true;

@@ -27,6 +27,7 @@ node tools/fleetops.mjs rca eval --labels incidents.jsonl                       
 | `infrastructure` | many owners and many nodes failing at once while devices look healthy | storage, network, scheduler, registry |
 | `kv-pressure` | KV-cache use ≥ 85% during a latency regression, with preemptions and queue growth | capacity per replica |
 | `load` | request rate ≥ 1.2× its baseline, or longer prompts | capacity |
+| `silent-corruption` | a data-parallel replica that disagrees with its peers' parameter checksums, a failed canary or replay, the first rank to go non-finite ([SDC.md](SDC.md)) | one GPU computing wrong answers |
 | `monitoring-gap` | far fewer devices reporting than the day before | the monitoring |
 
 **Output.** Hypotheses are ranked by score.
