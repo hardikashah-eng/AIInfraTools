@@ -891,7 +891,7 @@ async function powerCmd(store, cmd, o) {
     const rows = js.map(j => Object.assign({}, j, { draws: undefined, devices: undefined }, cap ? { prediction: Power.predict(j, capW(j), opts) } : {}));
     if (cmd === 'predict') rows.sort((a, b) => a.prediction.slowdown - b.prediction.slowdown);
     if (J) { OUT.jobs = rows; return; }
-    for (const j of rows) say(`${j.job.padEnd(22)} ${String(j.gpus).padStart(4)} GPU  draw ${kw(j.drawP50)}/${kw(j.drawP95)} W (p50/p95) of ${kw(j.limitW)}  compute-bound ${Math.round(j.computeBound * 100)}%  at limit ${Math.round(j.atLimitShare * 100)}%${j.stepsPerKWh ? `  ${kw(j.stepsPerKWh)} steps/kWh` : ''}${j.prediction ? `\n${''.padEnd(24)}cap ${Math.round(j.prediction.capW)} W → ${(j.prediction.slowdown * 100).toFixed(1)}% slower, −${kw(j.prediction.savedKw)} kW IT` : ''}`);
+    for (const j of rows) say(`${j.job.padEnd(22)} ${String(j.gpus).padStart(4)} GPU  draw ${kw(j.drawP50)}/${kw(j.drawP95)} W (p50/p95) of ${kw(j.limitW)}  compute-bound ${Math.round(j.computeBound * 100)}%  at limit ${Math.round(j.atLimitShare * 100)}%${j.stepsPerKWh ? `  ${kw(j.stepsPerKWh)} steps/kWh` : ''}${j.prediction ? `\n${''.padEnd(24)}cap ${Math.round(j.prediction.capW)} W → ${(j.prediction.slowdown * 100).toFixed(1)}% slower, −${kw(j.prediction.savedKw)} kW IT${j.prediction.note ? ` (${j.prediction.note})` : ''}` : ''}`);
     return;
   }
   if (cmd === 'fit') { const f = Power.fit(store, { from: time(opt('from')), to }); if (J) { OUT.fit = f; return; } return say(f.alphaCompute == null ? f.note : `${f.note}\nuse it: --fit-alpha ${f.alphaCompute.toFixed(2)} (or options.alphaCompute)`); }
