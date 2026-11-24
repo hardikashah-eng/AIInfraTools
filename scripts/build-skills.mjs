@@ -19,6 +19,12 @@ const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const require = createRequire(import.meta.url);
 const GENERATED = ['scripts', 'references', 'assets'];
 
+// README as OVERVIEW.md plus every docs/*.md under its own name, so a new doc needs no edit here.
+function docRefs(tool) {
+  const dir = path.join(ROOT, tool, 'docs');
+  return Object.assign({ 'README.md': 'OVERVIEW.md' }, ...fs.readdirSync(dir).filter(f => f.endsWith('.md')).sort().map(f => ({ [`docs/${f}`]: f })));
+}
+
 const SKILLS = {
   'inference-sizer': { tool: 'inference-sizer', code: ['src', 'tools', 'package.json'], refs: { 'README.md': 'OVERVIEW.md', 'docs/METHOD.md': 'METHOD.md', 'docs/SPEC-SHEETS.md': 'SPEC-SHEETS.md' }, assets: { 'specs/example.json': 'example.json' } },
   'fleetscope': { tool: 'fleetscope', code: ['src', 'tools', 'package.json'], refs: { 'docs/ASK.md': 'ASK.md', 'docs/TRACES.md': 'TRACES.md', 'docs/CI.md': 'CI.md', 'docs/CALIBRATION.md': 'CALIBRATION.md' }, assets: { 'scenarios/hybrid-chat': 'scenarios/hybrid-chat' }, generate: { 'references/NODE-TYPES.md': fleetNodeTypes } },
@@ -26,7 +32,8 @@ const SKILLS = {
   'fleetops': { tool: 'fleetops', code: ['src', 'tools', 'deploy', 'install', 'examples', 'Dockerfile', 'package.json'],
     // fleetops imports these tools' code through ../../<tool>/src, so they sit next to it under scripts/
     with: { 'gpu-health': ['src', 'tools', 'package.json'], 'fleetscope': ['src', 'package.json'], 'inference-sizer': ['src', 'package.json'] },
-    refs: { 'README.md': 'OVERVIEW.md', 'docs/INSTALL.md': 'INSTALL.md', 'docs/RCA.md': 'RCA.md', 'docs/INCIDENTS.md': 'INCIDENTS.md', 'docs/BENCHMARK.md': 'BENCHMARK.md', 'docs/DATA-LAYER.md': 'DATA-LAYER.md', 'docs/SERVICE.md': 'SERVICE.md', 'docs/TRACING.md': 'TRACING.md', 'docs/CALIBRATION.md': 'CALIBRATION.md', 'docs/OPTIMIZE.md': 'OPTIMIZE.md', 'docs/SCALE.md': 'SCALE.md', 'docs/SIGNALS.md': 'SIGNALS.md', 'docs/AGENT.md': 'AGENT.md', 'docs/GOODPUT.md': 'GOODPUT.md', 'docs/SDC.md': 'SDC.md', 'docs/TUNE.md': 'TUNE.md', 'docs/SERVING.md': 'SERVING.md', 'docs/FABRIC-STORAGE.md': 'FABRIC-STORAGE.md' }, assets: {} },
+    refs: docRefs('fleetops'), assets: {} },
+  'gpu-ledger': { tool: 'gpu-ledger', code: ['src', 'tools', 'examples', 'package.json'], with: { 'inference-sizer': ['src', 'package.json'] }, refs: { 'README.md': 'OVERVIEW.md', 'docs/METHOD.md': 'METHOD.md' }, assets: { 'examples/ledger.example.json': 'ledger.example.json', 'examples/people.example.csv': 'people.example.csv' } },
   'gpu-health': { tool: 'gpu-health', code: ['src', 'tools', 'examples', 'deploy', 'package.json'], refs: { 'README.md': 'OVERVIEW.md', 'docs/CONFIG.md': 'CONFIG.md', 'docs/RISK-PREDICTION.md': 'RISK-PREDICTION.md', 'docs/VENDORS.md': 'VENDORS.md', 'docs/FLAKINESS.md': 'FLAKINESS.md' }, assets: {} },
 };
 
