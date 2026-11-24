@@ -1,0 +1,8 @@
+2026-11-23T10:00:01+0000 gpu-a01 kernel: NVRM: GPU at PCI:0000:3b:00: GPU-9f8e7d6c-0000-1111-2222-333344446666
+2026-11-23T10:02:11+0000 gpu-a01 kernel: NVRM: Xid (PCI:0000:3b:00): 48, pid=8812, name=python3, Ch 00000008, An uncorrectable double bit error (DBE) has been detected on GPU in the framebuffer at partition 6, subpartition 0.
+2026-11-23T10:02:11+0000 gpu-a01 kernel: NVRM: Xid (PCI:0000:3b:00): 63, pid=8812, name=python3, Ch 00000008, Row Remapper: New row (0x0000000000bc2a40) marked for remapping, reset gpu to activate.
+2026-11-23T10:04:30+0000 gpu-a01 kernel: nvidia 0000:18:00.0: AER: PCIe Bus Error: severity=Corrected, type=Physical Layer, (Receiver ID)
+2026-11-23T10:05:00+0000 gpu-a01 kernel: mlx5_core 0000:5e:00.0: mlx5_port_module_event:1187:(pid 0): Port module event: module 0, Cable plugged
+2026-11-23T10:06:42+0000 gpu-a01 kernel: nfs: server storage01 not responding, still trying
+2026-11-23T10:07:00+0000 gpu-a01 kernel: nfs: server storage01 OK
+2026-11-23T10:09:15+0000 gpu-a01 kernel: Out of memory: Killed process 9921 (python3) total-vm:812345678kB, anon-rss:701234567kB
