@@ -26,14 +26,14 @@
 
   // Approximate public spec-sheet figures (dense TFLOPS, HBM GB, HBM TB/s). Prices are placeholders, $/GPU-hour.
   const GPUS = {
-    A100: { label: 'A100 80GB', hbm: 80, bw: 2.0, bf16: 312, fp8: 312, onprem: 0.9, rent: 1.6 },
-    L40S: { label: 'L40S 48GB', hbm: 48, bw: 0.864, bf16: 362, fp8: 733, onprem: 0.7, rent: 1.1 },
-    H100: { label: 'H100 80GB', hbm: 80, bw: 3.35, bf16: 989, fp8: 1979, onprem: 1.4, rent: 2.4 },
-    H200: { label: 'H200 141GB', hbm: 141, bw: 4.8, bf16: 989, fp8: 1979, onprem: 2.0, rent: 3.5 },
-    MI300X: { label: 'MI300X 192GB', hbm: 192, bw: 5.3, bf16: 1307, fp8: 2615, onprem: 1.5, rent: 2.6 },
-    B200: { label: 'B200 180GB', hbm: 180, bw: 8.0, bf16: 2250, fp8: 4500, onprem: 3.2, rent: 5.5 },
-    B300: { label: 'B300 262GB', hbm: 262, bw: 8.0, bf16: 2250, fp8: 4500, onprem: 4.0, rent: 7.0 },
-    GB200: { label: 'GB200 186GB (NVL72)', hbm: 186, bw: 8.0, bf16: 2500, fp8: 5000, onprem: 3.6, rent: 6.0 }
+    A100: { label: 'A100 80GB', hbm: 80, bw: 2.0, bf16: 312, fp8: 312, onprem: 0.9, rent: 1.6, tdpW: 400 },
+    L40S: { label: 'L40S 48GB', hbm: 48, bw: 0.864, bf16: 362, fp8: 733, onprem: 0.7, rent: 1.1, tdpW: 350 },
+    H100: { label: 'H100 80GB', hbm: 80, bw: 3.35, bf16: 989, fp8: 1979, onprem: 1.4, rent: 2.4, tdpW: 700 },
+    H200: { label: 'H200 141GB', hbm: 141, bw: 4.8, bf16: 989, fp8: 1979, onprem: 2.0, rent: 3.5, tdpW: 700 },
+    MI300X: { label: 'MI300X 192GB', hbm: 192, bw: 5.3, bf16: 1307, fp8: 2615, onprem: 1.5, rent: 2.6, tdpW: 750 },
+    B200: { label: 'B200 180GB', hbm: 180, bw: 8.0, bf16: 2250, fp8: 4500, onprem: 3.2, rent: 5.5, tdpW: 1000 },
+    B300: { label: 'B300 262GB', hbm: 262, bw: 8.0, bf16: 2250, fp8: 4500, onprem: 4.0, rent: 7.0, tdpW: 1100 },
+    GB200: { label: 'GB200 186GB (NVL72)', hbm: 186, bw: 8.0, bf16: 2500, fp8: 5000, onprem: 3.6, rent: 6.0, tdpW: 1200 }
   };
   // Approximate architecture figures. kvDim = per-token, per-layer K+V width (2 x kv_heads x head_dim, or MLA latent).
   const MODELS = {
@@ -70,6 +70,39 @@
       a2a = 2 * 2 * hidden * m.layers / (Math.max(1, tp) * link) * (tp > 1 ? 1 : 0);
     }
     return { gpu: gpuKey, tp, prefill, a, b0: b0 + a2a, a2a, c, kvCap, kvBytesPerToken, wBytes, multiNode: tp > 8 };
+  }
+
+  // Power. tdpW is the board power on the spec sheet (approximate). A cap below it lowers clocks: compute-bound work
+  // (prefill, the per-sequence decode compute) slows as cap^ALPHA_COMPUTE, memory-bound work (reading weights and the
+  // KV cache) as cap^ALPHA_MEMORY, because HBM bandwidth barely depends on core clocks. fleetops power fit measures the
+  // exponents on a fleet from clocks and power under caps; these are the defaults.
+  const POWER = { ALPHA_COMPUTE: 0.35, ALPHA_MEMORY: 0.08, busyDraw: 0.85, idleDraw: 0.12, gpuShare: 0.7, pue: 1.3, minCap: 30 };
+  function capped(P, pct, alpha) {
+    if (!pct || pct >= 100) return P;
+    const x = Math.max(POWER.minCap, pct) / 100, ac = (alpha && alpha.compute) ?? POWER.ALPHA_COMPUTE, am = (alpha && alpha.memory) ?? POWER.ALPHA_MEMORY;
+    const fc = Math.pow(x, ac), fm = Math.pow(x, am);
+    return Object.assign({}, P, { prefill: P.prefill * fc, a: P.a / fm, b0: P.b0 / fc, c: P.c / fm, cap: { pct: Math.max(POWER.minCap, pct), compute: fc, memory: fm } });
+  }
+  // Draw per GPU: busy GPUs near busyDraw × board power (or the cap, if lower), idle ones at idleDraw. The node adds
+  // CPUs, NICs and fans (GPUs are gpuShare of IT power); the facility adds cooling (PUE). Budgets are IT kW per site.
+  function powerBreakdown(R, opts) {
+    const o = Object.assign({}, POWER, (R.spec && R.spec.power) || {}, opts || {}), budgets = o.sites || {}, pools = {}, sites = {};
+    const n = R.frames.length || 1;
+    for (const p of R.pools) {
+      const G = GPUS[p.gpu] || { tdpW: 700 }, cap = p.P && p.P.cap ? p.P.cap.pct / 100 : 1, busyW = G.tdpW * Math.min(o.busyDraw, cap), idleW = G.tdpW * o.idleDraw;
+      const kw = [], tok = []; for (const fr of R.frames) { const f = fr.pools[p.id]; if (!f) { kw.push(0); tok.push(0); continue; } kw.push((f.busyGpu * busyW + Math.max(0, f.gpus - f.busyGpu) * idleW) / o.gpuShare / 1000); tok.push(f.tok || 0); }
+      const kWh = kw.reduce((a, b) => a + b, 0) / 3600, toks = tok.reduce((a, b) => a + b, 0);
+      pools[p.id] = { name: p.name, site: p.site, gpu: p.gpu, capPct: Math.round(cap * 100), itKwAvg: kWh * 3600 / n, itKwPeak: Math.max(0, ...kw), itKWh: kWh, facilityKWh: kWh * o.pue, tokens: toks, tokensPerKWh: kWh ? toks / (kWh * o.pue) : null, kw };
+      const s = sites[p.site] || (sites[p.site] = { site: p.site, kw: new Array(R.frames.length).fill(0), budgetKw: (budgets[p.site] || {}).budgetKw ?? null });
+      kw.forEach((v, i) => { s.kw[i] += v; });
+    }
+    for (const s of Object.values(sites)) {
+      s.itKwPeak = Math.max(0, ...s.kw); s.itKwAvg = s.kw.reduce((a, b) => a + b, 0) / n; s.facilityKwPeak = s.itKwPeak * o.pue;
+      s.overBudgetS = s.budgetKw != null ? s.kw.filter(v => v > s.budgetKw).length : 0; s.headroomKw = s.budgetKw != null ? s.budgetKw - s.itKwPeak : null; delete s.kw;
+    }
+    for (const p of Object.values(pools)) delete p.kw;
+    const kWh = Object.values(pools).reduce((a, p) => a + p.facilityKWh, 0), toks = Object.values(pools).reduce((a, p) => a + p.tokens, 0);
+    return { pools, sites, facilityKWh: kWh, tokensPerMWh: kWh ? toks / (kWh / 1000) : null, assumptions: { busyDraw: o.busyDraw, idleDraw: o.idleDraw, gpuShare: o.gpuShare, pue: o.pue, alphaCompute: o.alphaCompute ?? POWER.ALPHA_COMPUTE, alphaMemory: o.alphaMemory ?? POWER.ALPHA_MEMORY } };
   }
 
   // Calibration: measured multipliers on the spec-sheet profile. prefill scales prefill throughput;
@@ -669,7 +702,7 @@
     const sloN = g.nodes.find(n => n.type === 'slo');
     if (!modelN) errors.push({ msg: 'Add a Model node: every pool serves that model.' });
     const spec = { seed: 7, model: modelN ? Object.assign({}, modelN.cfg) : null, slo: sloN ? { ttft: sloN.cfg.ttft, tpot: sloN.cfg.tpotMs / 1000, thinkingStreamed: !!sloN.cfg.thinkingStreamed } : { ttft: 2, tpot: 0.06, thinkingStreamed: false },
-      sources: [], routers: [], pools: [], links: [], train: null, horizon: 0, paths: {},
+      sources: [], routers: [], pools: [], links: [], train: null, horizon: 0, paths: {}, power: g.power || null,
       policy: sloN ? { confidential: sloN.cfg.confidentialIn || 'private', internal: sloN.cfg.internalIn || 'any', encrypt: sloN.cfg.requireEncryption !== false } : Object.assign({}, DEFAULT_POLICY),
       owners: {} };
     for (const n of g.nodes) if (n.cfg && (n.cfg.owner || n.cfg.oncall)) spec.owners[n.id] = { owner: (n.cfg.owner || '').trim(), oncall: (n.cfg.oncall || '').trim() };
@@ -688,7 +721,7 @@
       const p = { id: n.id, name: c.name, site: c.site, siteKind: c.siteKind, role: c.role, gpu: c.gpu, tp: +c.tp || 0,
         min: c.autoscale ? c.min : c.instances, max: c.autoscale ? Math.max(c.min, c.max, 1) : c.instances,
         auto: !!c.autoscale, coldStart: c.coldStart, upWait: c.upWait, downUtil: c.downUtil / 100, maxBatch: c.maxBatch, fabricGbps: c.fabricGbps, decode: [],
-        zone: zoneOf(c), offloadGB: +c.offloadGB || 0, offloadGBs: +c.offloadGBs || 50, loraAdapters: +c.loraAdapters || 0, loraSlots: Math.max(1, +c.loraSlots || 8), calib: (c.calibPrefill && c.calibPrefill !== 1) || (c.calibDecode && c.calibDecode !== 1) ? { prefill: c.calibPrefill || 1, decode: c.calibDecode || 1 } : null };
+        zone: zoneOf(c), offloadGB: +c.offloadGB || 0, offloadGBs: +c.offloadGBs || 50, loraAdapters: +c.loraAdapters || 0, loraSlots: Math.max(1, +c.loraSlots || 8), powerCapPct: +c.powerCapPct || 100, calib: (c.calibPrefill && c.calibPrefill !== 1) || (c.calibDecode && c.calibDecode !== 1) ? { prefill: c.calibPrefill || 1, decode: c.calibDecode || 1 } : null };
       if (c.role === 'prefill') {
         for (const e of outs(n.id)) for (const r of reach(e)) {
           const d = byId[r.pool];
@@ -767,7 +800,7 @@
     }
     for (const sp of spec.pools) {
       const p = Object.assign({}, sp);
-      p.P = calibrated(prof(p.gpu, p.tp), p.calib);
+      p.P = capped(calibrated(prof(p.gpu, p.tp), p.calib), p.powerCapPct, spec.power && { compute: spec.power.alphaCompute, memory: spec.power.alphaMemory });
       p.price = p.siteKind === 'neo' ? GPUS[p.gpu].rent : GPUS[p.gpu].onprem;
       Object.assign(p, { inst: [], q: new Q(), qTokens: 0, lastUp: -1e9, utilHist: [], nextId: 0, tokSec: 0, spillFrom: [], down: 0, capLoss: 0 });
       pools.push(p); byId[p.id] = p;
@@ -1399,7 +1432,7 @@
     };
   }
 
-  const api = { GPUS, MODELS, TRACES, NODE_RULES, CAUSE, profile, calibrated, genTrace, scaleTrace, compileGraph, simulate, normStress, findBottleneck,
+  const api = { GPUS, MODELS, TRACES, NODE_RULES, CAUSE, POWER, profile, calibrated, capped, powerBreakdown, genTrace, scaleTrace, compileGraph, simulate, normStress, findBottleneck,
     headroomIter, findHeadroom, healthOf, HEALTH_LABEL, costBreakdown, latencyBreakdown, blastIter, blastRadius, securityBreakdown, zoneAllowed, ZONE_LABEL, DEFAULT_POLICY, scaleFleet, sizeFleetIter, sizeFleet, adviseIter, adviseModels, compareRecorded, planSessions, lintSpec, makeRng };
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
   else root.FleetEngine = api;

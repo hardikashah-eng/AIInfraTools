@@ -279,6 +279,15 @@ run on GPUs yet.
 **Done when:** a capacity plan is limited by power as well as GPUs, and a cap's effect on goodput is predicted before
 it is applied.
 
+**Status:** built ([fleetops/docs/POWER.md](fleetops/docs/POWER.md)).
+- **Measured:** power against budgets per rack, PDU and site, with headroom in nodes.
+- **Predicted per job:** the slowdown under a cap, from its measured draw and how compute-bound it is.
+- **Planned:** caps at the least slowdown, approved and guarded. The live agent proposes caps.
+- **FleetScope:** caps per pool, site budgets and tokens per MWh.
+- **Synthetic, with a known answer:** the fitted cap response came out at 0.41 against a planted 0.40. The plan
+  capped memory-bound serving to 60% (2.5% slower) before training (80%, 4.7%).
+- **Still needed:** caps applied on a real fleet and measured with `power verify`, and node-level power meters.
+
 ### 16. Cost per useful work
 
 - **Joined data:**

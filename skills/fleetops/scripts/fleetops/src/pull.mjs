@@ -21,7 +21,7 @@ export async function promRange(base, query, { from, to, step = 60, fetcher, hea
   return ((j.data || {}).result || []).map(r => ({ labels: r.metric || {}, samples: (r.values || []).map(([t, v]) => ({ t: +t, v: +v })) }));
 }
 
-export const DEVICE_QUERY = '{__name__=~"DCGM_FI_DEV_GPU_TEMP|DCGM_FI_DEV_POWER_USAGE|DCGM_FI_DEV_SM_CLOCK|DCGM_FI_DEV_FB_USED|DCGM_FI_PROF_SM_ACTIVE|DCGM_FI_PROF_PIPE_TENSOR_ACTIVE|DCGM_FI_PROF_DRAM_ACTIVE|DCGM_FI_DEV_XID_ERRORS|DCGM_FI_DEV_ECC_DBE_AGG_TOTAL|DCGM_FI_DEV_ECC_SBE_AGG_TOTAL|DCGM_FI_DEV_CLOCK_THROTTLE_REASONS|DCGM_FI_DEV_CLOCKS_EVENT_REASONS|DCGM_FI_DEV_NVLINK_CRC_FLIT_ERROR_COUNT_TOTAL|DCGM_FI_DEV_PCIE_LINK_WIDTH|gpu_gfx_activity|gpu_umc_activity|gpu_used_vram|gpu_junction_temperature|gpu_power_usage|gpu_ecc_uncorrect_total"}';
+export const DEVICE_QUERY = '{__name__=~"DCGM_FI_DEV_GPU_TEMP|DCGM_FI_DEV_POWER_USAGE|DCGM_FI_DEV_POWER_MGMT_LIMIT|DCGM_FI_DEV_SM_CLOCK|DCGM_FI_DEV_FB_USED|DCGM_FI_PROF_SM_ACTIVE|DCGM_FI_PROF_PIPE_TENSOR_ACTIVE|DCGM_FI_PROF_DRAM_ACTIVE|DCGM_FI_DEV_XID_ERRORS|DCGM_FI_DEV_ECC_DBE_AGG_TOTAL|DCGM_FI_DEV_ECC_SBE_AGG_TOTAL|DCGM_FI_DEV_CLOCK_THROTTLE_REASONS|DCGM_FI_DEV_CLOCKS_EVENT_REASONS|DCGM_FI_DEV_NVLINK_CRC_FLIT_ERROR_COUNT_TOTAL|DCGM_FI_DEV_PCIE_LINK_WIDTH|gpu_gfx_activity|gpu_umc_activity|gpu_used_vram|gpu_junction_temperature|gpu_power_usage|gpu_ecc_uncorrect_total"}';
 export const SERVING_QUERIES = {
   ttftP99: 'histogram_quantile(0.99, sum by (le, model_name) (rate(vllm:time_to_first_token_seconds_bucket[5m])))',
   tpotP99: 'histogram_quantile(0.99, sum by (le, model_name) (rate(vllm:time_per_output_token_seconds_bucket[5m])))',
