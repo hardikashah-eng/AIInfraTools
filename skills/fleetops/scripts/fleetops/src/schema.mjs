@@ -24,6 +24,9 @@
 //   step records may add loss, gradNorm (the rank's local gradient norm) and n (steps covered, for every-N-steps logs)
 //   collective one NCCL operation (NCCL Inspector): { op, job?, node, rank?, gpu?, comm, nranks, sn?, bytes?, msgSize?, execS, busbw, algobw? }
 //   inventory records may carry versions: { driver, cuda, vbios, inforom, firmware, kernel, os, runtime, kubelet, image }
+//   check      a node check before admission (tools/admit-node.sh): { node, check: dcgm-diag|nccl-allreduce|burn-in|pcie|gpu-count, ok?, value?, unit?, detail? }
+//   admission  a node's admission verdict: { node, verdict: admit|reject|incomplete, failed, missing, by? }
+//   rollout    a step of a version rollout: { id, event: applied|verified|rolled-back|halted, stage, field, version, nodes }
 // Later PRs add calibration, drift, incident and optimization records.
 
 export const KINDS = {
@@ -48,6 +51,9 @@ export const KINDS = {
   incident_event: ['id', 'event'],
   collective: ['op'],
   sdc_check: ['check', 'node'],
+  check: ['node', 'check'],
+  admission: ['node', 'verdict'],
+  rollout: ['id', 'event'],
 };
 
 export const JOB_STATUS = new Set(['ok', 'failed', 'killed', 'cancelled', 'timeout', 'retried']);

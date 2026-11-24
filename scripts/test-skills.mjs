@@ -139,6 +139,11 @@ test('fleetops: demo → diagnose names the planted cause, game day is a dry run
   run(d, 'node', [cli, 'power', 'demo', '--store', 'pw']);
   const pwPlan = json(d, [cli, 'power', 'plan', '--budgets', 'pw/power-budgets.json', '--from', '1795132800', '--to', '1795154400', '--out', 'pw/plan.json', '--store', 'pw', '--json']).plan;
   assert.ok(pwPlan.groups[0].met);
+  // admission and rollouts: the bad-driver demo halts on the comparison; the node script parses
+  run(d, 'node', [cli, 'rollout', 'demo', '--store', 'ro']);
+  const cmp = json(d, [cli, 'rollout', 'check', '--field', 'driver', '--version', '560.35.03', '--from', '1794700800', '--to', '1794787200', '--store', 'ro', '--json'], { code: 4 }).comparison;
+  assert.equal(cmp.ok, false);
+  run(d, 'bash', ['-n', 'scripts/fleetops/tools/admit-node.sh']);
   // serving: fit, capacity, a deploy dry run, and the installer's dry run renders manifests
   const fit = json(d, [cli, 'serving', 'fit', '--gpu', 'H100', '--nodes', '2', '--rate', '5', '--store', 'sv', '--json']).fit;
   assert.ok(fit.rows[0].meetsRate);

@@ -11,7 +11,8 @@ import * as Traces from '../src/traces.mjs';
 import * as Inc from '../src/incidents.mjs';
 import * as Sec from '../src/security.mjs';
 import * as Pull from '../src/pull.mjs';
-import { postWebhook } from '../../gpu-health/src/executors.mjs';
+import { postWebhook, run as runAction } from '../../gpu-health/src/executors.mjs';
+import { Store as GhStore } from '../../gpu-health/src/actions.mjs';
 import { readLines } from '../src/lines.mjs';
 import * as Philly from '../src/adapters/philly.mjs';
 import * as Pub from '../src/adapters/public.mjs';
@@ -32,6 +33,8 @@ import * as Bundle from '../src/bundle.mjs';
 import * as Tune from '../src/tune.mjs';
 import * as Serving from '../src/serving.mjs';
 import * as Power from '../src/power.mjs';
+import * as Adm from '../src/admission.mjs';
+import * as RO from '../src/rollout.mjs';
 import { goodputMarkdown, goodputHtml } from '../src/goodput-report.mjs';
 import * as LiveView from '../src/live.mjs';
 import * as Inject from '../src/inject.mjs';
@@ -92,6 +95,7 @@ Sources (SOURCE):
                    osl, ttft?, e2e?): token counts and latencies, never prompts   [--pool P] [--start T]
   auto             recognize each file by its content (exporter scrapes, vLLM metrics, nvidia-smi, kubectl JSON,
                    sacct, kernel and NCCL logs, step logs, Kineto, OTLP, NCCL Inspector, request logs, …)
+  admission        tools/admit-node.sh output: versions, topology, DCGM diag, NCCL bandwidth, burn-in and SDC canary of a node
   sdc-checks       JSON lines of silent-data-corruption checks: tools/sdc-canary.py output, or your trainer's
                    {t, check: param-checksum|replay|nan, node, gpu, job, step, rank, group, value, ok}
   sacct            sacct -P -X --format=JobID,JobName,State,ExitCode,Start,End,NodeList,AllocTRES
@@ -169,6 +173,20 @@ Power (budgets per rack, PDU and site; which jobs a cap slows; caps planned and 
         fleetops optimize advance --plan plan.json (applies, bakes, rolls back on a guard breach)
   fleetops power verify --plan plan.json                        measured kW saved and step slowdown against the prediction
   fleetops power demo                                           two racks, one over budget
+
+Node admission and safe rollouts (a bad node or version stopped before it reaches a production job):
+  tools/admit-node.sh [--burn-in 6h] --out admit.jsonl          on the node: versions, topology, DCGM diag, NCCL, SDC canary
+  fleetops data import admission admit.jsonl
+  fleetops admit pending                                         new nodes, nodes back from quarantine or repair
+  fleetops admit check NODE [--policy p.json] [--record]         pass / fail / missing per check → admit, reject or incomplete
+  fleetops admit apply NODE [--live]                             admit-node (needs approval) or reject-node (automatic), dry run unless --live
+  fleetops rollout plan --field driver --version V [--canary 2] [--waves 25%,100%] [--bake 6h] [--nodes REGEX] [--sku S]
+        [--apply "ansible-playbook driver.yml -l {node} -e v={version}"] [--rollback "…"] --out rollout.json
+        canary across racks, then waves, each queued for approval
+  fleetops rollout advance --plan rollout.json [--live]           after each bake: new version vs old on failures, hard faults,
+        NCCL bandwidth, step compute in the same jobs, TTFT; a regression rolls the wave back and halts
+  fleetops rollout check --field driver --version V [--from T --to T]    the same comparison, ad hoc
+  fleetops rollout status --plan rollout.json  ·  fleetops rollout demo [--good]
 
 Serving (Inference Sizer both ways, and a one-command vLLM deployment on Kubernetes):
   fleetops serving models | gpus                               the catalog (ids, sizes, Hugging Face repos; GPU types)
@@ -269,6 +287,13 @@ function importSource(store, src, files, o) {
       case 'kineto': put('step', Traces.kineto(read(f), { job: o.job && o.job !== true ? o.job : path.basename(f).split(/[._]/)[0], node: o.node && o.node !== true ? o.node : undefined, rank: o.rank != null && o.rank !== true ? +o.rank : undefined, t0: o.t0 ? time(o.t0) : undefined })); break;
       case 'nccl-inspector': put('collective', Traces.ncclInspector(read(f), { job: o.job && o.job !== true ? o.job : (path.basename(path.dirname(path.resolve(f))).match(/nccl-inspector-(\S+)/) || [])[1], node: o.node && o.node !== true ? o.node : undefined })); break;
       case 'step-log': put('step', Traces.stepLog(read(f), { job: o.job && o.job !== true ? o.job : undefined })); break;
+      case 'admission': {
+        // tools/admit-node.sh output: { record: inventory|check|topology|sdc_check, … }
+        const by = {};
+        for (const l of read(f).split(/\r?\n/).filter(x => x.trim())) { const { record, ...r } = JSON.parse(l); if (!['inventory', 'check', 'topology', 'sdc_check'].includes(record)) throw new Error(`admission file: unexpected record ${record}`); (by[record] = by[record] || []).push(Object.assign({ source: 'admit-node' }, r, r.gpu != null ? { gpu: String(r.gpu) } : {})); }
+        for (const [k, rs] of Object.entries(by)) put(k, rs);
+        break;
+      }
       case 'sdc-checks': put('sdc_check', read(f).split(/\r?\n/).filter(l => l.trim()).map(l => JSON.parse(l)).map(c => Object.assign({ source: 'sdc-canary' }, c, { gpu: c.gpu != null ? String(c.gpu) : undefined }))); break;
       case 'otlp-traces': { const spans = Ingest.otlpTracesToSpans(JSON.parse(read(f))); put('span', spans); if (o.derive) put('request', Traces.requestsFromSpans(spans)); break; }
       case 'helm-history': put('change', Live.helmHistory(read(f), { release: o.release && o.release !== true ? o.release : path.basename(f, '.json'), namespace: o.namespace && o.namespace !== true ? o.namespace : 'default' })); break;
@@ -436,6 +461,8 @@ async function main() {
   if (area === 'calibrate') return calibrate(store, cmd, o);
   if (area === 'rca') return rca(store, cmd, o);
   if (area === 'optimize') return optimize(store, cmd, o);
+  if (area === 'admit') return admitCmd(store, cmd, o);
+  if (area === 'rollout') return rolloutCmd(store, cmd, o);
   if (area === 'inject') return inject(store, cmd, o);
   if (area === 'incidents') return incidents(store, cmd, rest, o);
   if (area === 'backtest') return backtest(store, o);
@@ -871,6 +898,93 @@ async function powerCmd(store, cmd, o) {
     return;
   }
   throw new Error('fleetops power report | jobs | predict | fit | plan | verify | demo');
+}
+
+async function admitCmd(store, cmd, o) {
+  const opt = k => (o[k] && o[k] !== true ? o[k] : undefined), now = o.now ? +o.now : Math.floor(Date.now() / 1000);
+  const policy = opt('policy') ? JSON.parse(read(opt('policy'))) : {}, state = opt('state') || path.join(store.dir, 'rollouts', 'state'), cfg = ghConfig(opt('config') ? JSON.parse(read(opt('config'))) : undefined);
+  if (cmd === 'pending') {
+    const p = Adm.pending(store, { now, policy }); if (J) { OUT.pending = p; return; }
+    if (!p.length) return say('no nodes waiting for admission');
+    for (const x of p) say(`${x.node}${x.sku ? ` (${x.sku})` : ''}: ${x.reasons.join('; ')}${x.last ? ` — last verdict ${x.last.verdict}` : ''}`);
+    return say(`\nfleetops admit check NODE   (run tools/admit-node.sh on the node and import its output first)`);
+  }
+  const node = o._[2]; if (!node) throw new Error('fleetops admit check|apply NODE');
+  const v = Adm.evaluate(store, node, { now, policy });
+  if (cmd === 'check') {
+    if (o.record) store.append('admission', [{ t: now, node, verdict: v.verdict, failed: v.failed, missing: v.missing, sku: v.sku, source: 'fleetops-admit' }]);
+    if (v.verdict === 'reject') process.exitCode = 3; else if (v.verdict === 'incomplete') process.exitCode = 2;
+    if (J) { OUT.admission = v; return; }
+    say(`${node}${v.sku ? ` (${v.sku})` : ''}: ${v.verdict.toUpperCase()}`);
+    for (const c of v.checks) say(`  ${c.status === 'pass' ? 'pass' : c.status === 'fail' ? 'FAIL' : 'miss'}  ${c.name.padEnd(11)} ${c.evidence}${c.fix ? `\n        → ${c.fix}` : ''}`);
+    return;
+  }
+  if (cmd === 'apply') {
+    // admitting releases the node and needs a person's approval in gpu-health's queue; rejecting keeps it out
+    const a = Adm.gateAction(v, now); if (!a) { if (J) { OUT.admission = v; return; } return say(`${node}: incomplete (${v.missing.join(', ')}); nothing to apply`); }
+    a.mode = (cfg.policy.actions || {})[a.kind] || (a.kind === 'admit-node' ? 'approve' : 'auto');
+    const st = new GhStore(state), prior = st.data.actions.find(x => x.kind === a.kind && x.node === node && ['proposed', 'approved'].includes(x.status));
+    const act = prior || Object.assign(a, { status: a.mode === 'auto' ? 'approved' : 'proposed' });
+    if (!prior) { st.data.actions.push(act); st.audit(act, 'created', { status: act.status, mode: act.mode, reason: act.reason }); }
+    store.append('admission', [{ t: now, node, verdict: v.verdict, failed: v.failed, missing: v.missing, sku: v.sku, source: 'fleetops-admit' }]);
+    let r = null;
+    if (act.status === 'approved') {
+      r = await runAction(act, cfg, { dryRun: !(o.live && cfg.policy.dryRun === false) });
+      Object.assign(act, { status: r.dryRun ? 'approved' : r.ok ? 'executed' : 'failed', updatedAt: now }); st.audit(act, r.dryRun ? 'dry-run' : r.ok ? 'executed' : 'failed', { commands: r.commands, text: r.text });
+    }
+    st.save();
+    if (J) { OUT.admission = v; OUT.action = act; OUT.result = r; return; }
+    say(`${node}: ${v.verdict}`);
+    if (!r) return say(`  ${act.kind} waits for approval: gpu-health actions approve ${act.id} --by NAME --state ${state}, then run this again`);
+    say(`  ${act.kind} ${r.dryRun ? 'dry run' : r.ok ? 'done' : 'failed'}: ${(r.commands || []).map(c => c.join(' ')).join(' && ') || r.text}`);
+    if (r.dryRun) say('  (add --live, with policy.dryRun false in the gpu-health config, to run it)');
+    return;
+  }
+  throw new Error('fleetops admit pending | check NODE [--record] | apply NODE [--live]');
+}
+
+async function rolloutCmd(store, cmd, o) {
+  const opt = k => (o[k] && o[k] !== true ? o[k] : undefined), now = o.now ? +o.now : Math.floor(Date.now() / 1000), json = k => (opt(k) ? JSON.parse(read(opt(k))) : undefined);
+  const state = opt('state') || path.join(store.dir, 'rollouts', 'state'), cfg = ghConfig(json('config'));
+  const hours = s => (s == null ? undefined : /h$/.test(s) ? parseFloat(s) * 3600 : /m$/.test(s) ? parseFloat(s) * 60 : +s);
+  if (cmd === 'demo') {
+    const d = RO.synth({ bad: !o.good }); for (const [k, rs] of Object.entries(d.records)) store.append(k, rs);
+    if (J) { OUT.demo = { canary: d.canary, canaryAt: d.canaryAt, end: d.end, old: d.old, new: d.neu, bad: !o.good }; return; }
+    return say(`demo fleet in ${store.dir}: 24 H100 nodes on driver ${d.old}; ${d.canary.join(' and ')} moved to ${d.neu} on ${new Date(d.canaryAt * 1000).toISOString().slice(0, 16)}${o.good ? '' : ' (a bad driver)'}\ntry: fleetops rollout check --field driver --version ${d.neu} --from ${d.canaryAt} --to ${d.end} --store ${store.dir}`);
+  }
+  if (cmd === 'check') {
+    if (!opt('field') || !opt('version')) throw new Error('--field driver --version V [--from T] [--to T]');
+    const to = time(opt('to')) ?? now, g = RO.compare(store, { field: opt('field'), version: opt('version'), since: time(opt('from')) ?? to - 7 * 86400, now: to, policy: json('policy') });
+    if (J) { OUT.comparison = g; if (g.ok === false) process.exitCode = 4; return; }
+    say(`${opt('field')} ${opt('version')} on ${(g.treated || []).length} node(s) vs ${g.control ?? 0} on other versions: ${g.ok === false ? 'REGRESSION' : g.ok ? 'no regression' : 'not enough data yet'}`);
+    for (const m of g.metrics) say(`  ${m.regression ? 'WORSE' : 'ok   '} ${m.name}: ×${m.ratio.toFixed(2)}${m.p != null ? ` (p ${m.p < 1e-4 ? '<1e-4' : m.p.toFixed(4)})` : ''}  ${m.detail}`);
+    if (g.ok == null) say(`  ${g.note}`);
+    if (g.ok === false) process.exitCode = 4;
+    return;
+  }
+  if (cmd === 'plan') {
+    if (!opt('out')) throw new Error('--out rollout.json');
+    const tmpl = k => (opt(k) ? [opt(k).split(' ').filter(Boolean)] : undefined);   // "ansible-playbook driver.yml -l {node} -e v={version}"
+    const p = RO.plan(store, { field: opt('field'), version: opt('version'), nodes: opt('nodes'), sku: opt('sku'), canary: opt('canary') ?? 2, waves: opt('waves') ? opt('waves').split(',') : undefined, bakeS: hours(opt('bake')), apply: tmpl('apply'), rollback: tmpl('rollback'), id: opt('id'), now, policy: json('policy') });
+    p.state = state; const ids = RO.enqueue(p, state, now); fs.writeFileSync(opt('out'), JSON.stringify(p, null, 1));
+    if (J) { OUT.plan = p; OUT.queued = ids; return; }
+    say(`${p.id}: ${p.field} ${p.from} → ${p.version} on ${p.stages.reduce((a, s) => a + s.nodes.length, 0)} node(s), ${p.stages.length} wave(s), each queued for approval in ${state}:`);
+    for (const s of p.stages) say(`  ${s.n}. ${s.title}: ${s.nodes.slice(0, 6).join(', ')}${s.nodes.length > 6 ? ` … +${s.nodes.length - 6}` : ''}  (bake ${(s.bakeS / 3600).toFixed(1)} h)`);
+    return say(`then: gpu-health actions approve ${ids[0]} --by NAME --state ${state}; fleetops rollout advance --plan ${opt('out')}`);
+  }
+  const planFile = opt('plan'); if (!planFile) throw new Error('fleetops rollout demo | check | plan | advance --plan FILE | status --plan FILE');
+  const p = JSON.parse(read(planFile));
+  if (cmd === 'advance') {
+    const poster = (url, text) => { Sec.checkEgress(url); return postWebhook(url, text); };
+    const r = await RO.advance(p, { store, stateDir: opt('state') || p.state || state, cfg, live: !!o.live, now, poster });
+    fs.writeFileSync(planFile, JSON.stringify(p, null, 1));
+    if (J) { OUT.plan = p; OUT.log = r.log; return; }
+    for (const l of r.log) say(l); say(`${p.id}: ${p.status}`);
+    if (p.status === 'halted') process.exitCode = 4;
+    return;
+  }
+  if (cmd === 'status') { if (J) { OUT.plan = p; return; } say(`${p.id}: ${p.status}${p.haltReason ? ` — ${p.haltReason}` : ''}`); for (const s of p.stages) say(`  ${s.n}. ${s.status.padEnd(11)} ${s.title}${s.guardResult ? `  [${s.guardResult.note}]` : ''}`); return; }
+  throw new Error(`unknown: rollout ${cmd}`);
 }
 
 async function optimize(store, cmd, o) {
