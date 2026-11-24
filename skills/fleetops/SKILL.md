@@ -38,6 +38,9 @@ seconds.
   (plan, notes, failed checks) before anyone applies. Add `--apply`, or run `install-serving.sh` without `--dry-run`,
   only when the user asks to deploy to a cluster they name. Never create the Hugging Face Secret or handle the token:
   the user does.
+- **Admission and rollouts stay gated.** Never approve `admit-node` or a `rollout-stage` on the user's behalf, and
+  never add `--live` unless the user asks for that node or rollout. `tools/admit-node.sh` loads every GPU: suggest it
+  only for nodes out of production.
 - **Tokens are secrets.** Show a token only once, to the user, and never put one in a file you share or a command you
   echo back.
 
@@ -156,6 +159,23 @@ Use this when asked which models fit on some GPUs, how much a model can serve, o
   disaggregation.
 - **Say:** the numbers are spec-sheet estimates unless calibrated (`fleetops calibrate`); a load test against the
   endpoint confirms them. Details: [references/SERVING.md](references/SERVING.md).
+
+## Node admission and safe rollouts
+
+Use this when asked whether a node is ready to join or return, or how to roll out a driver, firmware, CUDA or NCCL
+version safely.
+- **Admission:**
+  - the user runs `scripts/fleetops/tools/admit-node.sh [--burn-in 6h] --out admit.jsonl` on the drained node;
+  - `fleetops data import admission admit.jsonl`;
+  - `fleetops admit check NODE --json` gives the verdict and, per check, pass, fail or missing, with the evidence
+    and the fix.
+
+  Lead with the verdict, then the failed checks. `admit pending` lists nodes waiting.
+- **Rollouts:** `fleetops rollout plan --field F --version V [--apply "…{node}…"] --out rollout.json` queues waves for
+  approval. `rollout advance` judges each baked wave against the old version and rolls a regression back.
+  `rollout check --field F --version V --json` compares a version already in the fleet with the rest. Report each
+  signal's ratio and p-value, and say when exposure is too low to judge.
+- Details: [references/ADMISSION.md](references/ADMISSION.md).
 
 ## Goodput and silent data corruption
 
