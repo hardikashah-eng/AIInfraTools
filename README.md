@@ -40,3 +40,13 @@ On Claude Code 2.1.275 or later, this one step does both: `/plugin install aiinf
 All skills need Node.js 20+ and nothing else.
 
 **Changing a tool.** The skill folders carry copies of the tools' code (`scripts/`), docs (`references/`) and examples (`assets/`), so each folder works on its own. After editing a tool, run `node scripts/build-skills.mjs`. CI fails while the copies are out of date. `node --test scripts/test-skills.mjs` runs each skill's documented commands from an isolated copy.
+
+## Workload Intelligence
+
+FleetOps now includes a [workload profiler](fleetops/docs/WORKLOADS.md) with six synthetic application profiles (coding agents, chat, report generation, RAG search, deep research and autocomplete). It can inspect existing request logs or FleetOps request records, report workload fingerprints and export privacy-conscious session replay CSVs compatible with FleetScope.
+
+```bash
+node fleetops/tools/workload-profile.mjs list
+node fleetops/tools/workload-profile.mjs synth --type coding-agent --sessions 100 --out agent.csv
+node fleetops/tools/workload-profile.mjs inspect --input gateway.jsonl --type coding-agent --out profile.json --csv replay.csv
+```
