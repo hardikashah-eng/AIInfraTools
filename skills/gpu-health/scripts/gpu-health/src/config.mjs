@@ -37,6 +37,11 @@ export const DEFAULTS = {
   // also where to override one: fault code -> { class, severity: hard (quarantine now) | soft (suspect) | ignore }.
   faults: {
     gpu_lost: { class: 'bus', severity: 'hard' }, device_lost: { class: 'bus', severity: 'hard' },
+    // Codes fleetops reads from kernel logs (any vendor). A corrected PCIe error alone is normal; a degraded link
+    // shows up in the PCIe width/gen signals instead.
+    pcie_aer_uncorrected: { class: 'pcie', severity: 'hard' }, pcie_aer_corrected: { class: 'pcie', severity: 'ignore' },
+    nvlink_error: { class: 'link', severity: 'hard' }, cuda_ecc_uncorrectable: { class: 'ecc', severity: 'hard' },
+    amd_gpu_reset: { class: 'firmware', severity: 'soft' },
   },
   vendors: VENDORS,
   // Remediation ladder by fault class: the cheapest step first. Each step is an action kind (see executors).

@@ -1,0 +1,4 @@
+{"items":[
+ {"metadata":{"name":"gpu-a01","labels":{"nvidia.com/gpu.product":"NVIDIA-H100-80GB-HBM3","topology.kubernetes.io/zone":"dc1","topology.kubernetes.io/rack":"R12","nvidia.com/cuda.driver.major":"550","nvidia.com/cuda.driver.minor":"54","nvidia.com/cuda.driver.rev":"15","nvidia.com/cuda.runtime.major":"12","nvidia.com/cuda.runtime.minor":"4"}},"status":{"capacity":{"nvidia.com/gpu":"8"},"nodeInfo":{"kernelVersion":"5.15.0-91-generic","osImage":"Ubuntu 22.04.4 LTS","containerRuntimeVersion":"containerd://1.7.12","kubeletVersion":"v1.29.3"}}},
+ {"metadata":{"name":"gpu-a02","labels":{"nvidia.com/gpu.product":"NVIDIA-H100-80GB-HBM3","topology.kubernetes.io/zone":"dc1","topology.kubernetes.io/rack":"R12","nvidia.com/cuda.driver-version.full":"535.161.08"}},"status":{"capacity":{"nvidia.com/gpu":"8"},"nodeInfo":{"kernelVersion":"5.15.0-91-generic","osImage":"Ubuntu 22.04.4 LTS","containerRuntimeVersion":"containerd://1.7.12","kubeletVersion":"v1.29.3"}}}
+]}

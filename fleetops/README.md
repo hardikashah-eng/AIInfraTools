@@ -33,6 +33,16 @@ The store is a directory with one folder per record kind and one file per UTC da
 
 The full field list is in [docs/DATA-LAYER.md](docs/DATA-LAYER.md).
 
+## Signals for diagnosis
+
+Beyond metrics and job outcomes, the store holds:
+- **logs:** XIDs, PCIe AER, NVLink, AMD RAS, IB link state, NFS/Lustre, OOM; NCCL and PyTorch errors;
+- **topology:** NVLink, host → leaf → spine, racks and PDUs;
+- **versions:** driver, firmware, kernel, image, NCCL; a version change becomes a change record automatically;
+- **more change feeds:** Kubernetes events, Helm history.
+
+Root-cause analysis uses them to point at a GPU seen failing only in dmesg, a bad leaf switch, a driver cohort or a storage outage. `fleetops data node NODE` shows one node's versions, what it shares, its log faults and its changes. See [docs/SIGNALS.md](docs/SIGNALS.md).
+
 ## Calibration
 
 `fleetops calibrate` fits FleetScope pools and the Inference Sizer to the measurements in the store, keeps each fit as a profile the tools read (`calibrate apply` for FleetScope graphs, `--calibration` for the sizer), checks each fit against held-out measurements, and raises drift records when new data leaves the acceptance bar. See [docs/CALIBRATION.md](docs/CALIBRATION.md), including results on MLPerf Inference v5.0: the sizer's spec-sheet defaults asked for 16 GPUs where the measured H100 and H200 systems used 8, and the calibrated profiles predict 8.
@@ -68,6 +78,8 @@ src/schema.mjs           record kinds and validation
 src/adapters/live.mjs    exporters, vLLM, Prometheus, Kubernetes, Slurm, change feeds, gpu-health history
 src/adapters/philly.mjs  Microsoft Philly traces
 src/adapters/public.mjs  Azure LLM traces, MLPerf summaries, AcmeTrace
+src/adapters/logs.mjs    kernel and NCCL/PyTorch logs → log records (XID classes from gpu-health)
+src/adapters/topology.mjs nvidia-smi -q / topo -m, ibnetdiscover, racks, shared-component groups, version changes
 src/adapters/time.mjs    timestamps with zones and US Pacific daylight saving
 src/export.mjs           store → gpu-health inputs, FleetScope trace CSV
 src/calibrate.mjs        FleetScope pool and Inference Sizer fits, held-out checks, drift, profiles

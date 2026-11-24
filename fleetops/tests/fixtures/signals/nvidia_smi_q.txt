@@ -1,0 +1,38 @@
+
+==============NVSMI LOG==============
+
+Timestamp                                 : Mon Nov 23 10:00:00 2026
+Driver Version                            : 550.54.15
+CUDA Version                              : 12.4
+
+Attached GPUs                             : 2
+GPU 00000000:18:00.0
+    Product Name                          : NVIDIA H100 80GB HBM3
+    Product Brand                         : NVIDIA
+    Display Mode                          : Disabled
+    Serial Number                         : 1650823012345
+    GPU UUID                              : GPU-2c3e1a5b-0000-1111-2222-333344445555
+    Minor Number                          : 0
+    VBIOS Version                         : 96.00.74.00.0D
+    MultiGPU Board                        : No
+    GPU Part Number                       : 2330-885-A1
+    Inforom Version
+        Image Version                     : G520.0200.00.05
+        OEM Object                        : 2.1
+        ECC Object                        : 7.16
+    PCI
+        Bus                               : 0x18
+        Bus Id                            : 00000000:18:00.0
+GPU 00000000:3B:00.0
+    Product Name                          : NVIDIA H100 80GB HBM3
+    Serial Number                         : 1650823012399
+    GPU UUID                              : GPU-9f8e7d6c-0000-1111-2222-333344446666
+    Minor Number                          : 1
+    VBIOS Version                         : 96.00.61.00.01
+    GPU Part Number                       : 2330-885-A1
+    Inforom Version
+        Image Version                     : G520.0200.00.05
+        OEM Object                        : 2.1
+    PCI
+        Bus                               : 0x3B
+        Bus Id                            : 00000000:3B:00.0

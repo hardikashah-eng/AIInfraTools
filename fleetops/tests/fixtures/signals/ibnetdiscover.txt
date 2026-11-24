@@ -1,0 +1,34 @@
+#
+# Topology file: generated on Mon Nov 23 10:00:00 2026
+#
+vendid=0x2c9
+devid=0xd2f0
+sysimgguid=0xb83fd20300f20001
+switchguid=0xb83fd20300f20001(b83fd20300f20001)
+Switch	64 "S-b83fd20300f20001"		# "leaf-01" enhanced port 0 lid 1 lmc 0
+[1]	"H-946dae0300a10001"[1](946dae0300a10001) 		# "gpu-a01 mlx5_0" lid 11 4xNDR
+[2]	"H-946dae0300a10002"[1](946dae0300a10002) 		# "gpu-a02 mlx5_0" lid 12 4xNDR
+[63]	"S-b83fd20300f2f001"[1]		# "spine-01" lid 3 4xNDR
+
+vendid=0x2c9
+devid=0xd2f0
+sysimgguid=0xb83fd20300f20002
+switchguid=0xb83fd20300f20002(b83fd20300f20002)
+Switch	64 "S-b83fd20300f20002"		# "leaf-02" enhanced port 0 lid 2 lmc 0
+[1]	"H-946dae0300a10003"[1](946dae0300a10003) 		# "gpu-a03 mlx5_0" lid 13 4xNDR
+[63]	"S-b83fd20300f2f001"[2]		# "spine-01" lid 3 4xNDR
+
+vendid=0x2c9
+devid=0xd2f0
+sysimgguid=0xb83fd20300f2f001
+switchguid=0xb83fd20300f2f001(b83fd20300f2f001)
+Switch	64 "S-b83fd20300f2f001"		# "spine-01" enhanced port 0 lid 3 lmc 0
+[1]	"S-b83fd20300f20001"[63]		# "leaf-01" lid 1 4xNDR
+[2]	"S-b83fd20300f20002"[63]		# "leaf-02" lid 2 4xNDR
+
+vendid=0x2c9
+devid=0x1021
+sysimgguid=0x946dae0300a10001
+caguid=0x946dae0300a10001
+Ca	1 "H-946dae0300a10001"		# "gpu-a01 mlx5_0"
+[1](946dae0300a10001) 	"S-b83fd20300f20001"[1]		# lid 11 lmc 0 "leaf-01" lid 1 4xNDR

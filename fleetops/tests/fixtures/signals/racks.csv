@@ -1,0 +1,4 @@
+node,rack,row,pdu,site
+gpu-a01,R12,B,P3,dc1
+gpu-a02,R12,B,P3,dc1
+gpu-a03,R13,B,P4,dc1

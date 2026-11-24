@@ -1,6 +1,7 @@
 // Projections of the data layer into each tool's existing inputs, so the tools run unchanged on shared data.
 import fs from 'node:fs';
 import path from 'node:path';
+import { toGpuHealthFaults } from './adapters/logs.mjs';
 
 const jsonl = rows => rows.map(r => JSON.stringify(r)).join('\n') + (rows.length ? '\n' : '');
 
@@ -22,6 +23,8 @@ export function toGpuHealth(store, { from, to } = {}) {
     const d = (j.devices || [])[0];
     return Object.assign({ t: j.t, kind: 'job-end', job: j.job, status: j.status === 'ok' ? 'ok' : 'failed', cause: j.cause || 'unknown' }, d ? { node: d.node, gpu: String(d.gpu) } : {}, j.lostGpuHours != null ? { lostGpuHours: j.lostGpuHours } : {});
   });
+  // device faults seen only in logs (dmesg XIDs, AER, AMD RAS) reach gpu-health as fault results
+  results.push(...toGpuHealthFaults(store.query('log', { from, to })));
   return { samples, jobs: jobList, results };
 }
 export function writeGpuHealth(store, dir, opts) {

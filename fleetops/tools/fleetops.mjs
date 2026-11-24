@@ -9,6 +9,8 @@ import * as Philly from '../src/adapters/philly.mjs';
 import * as Pub from '../src/adapters/public.mjs';
 import * as Live from '../src/adapters/live.mjs';
 import { toEpoch } from '../src/adapters/time.mjs';
+import * as Logs from '../src/adapters/logs.mjs';
+import * as Topo from '../src/adapters/topology.mjs';
 import { writeGpuHealth, toFleetScopeTrace } from '../src/export.mjs';
 import * as Calib from '../src/calibrate.mjs';
 import * as RCA from '../src/rca.mjs';
@@ -22,6 +24,7 @@ const HELP = `fleetops — shared data layer for AIInfraTools
   fleetops data import SOURCE FILE... [--store DIR] [options]     load records into the store
   fleetops data summary [--store DIR]                             records per kind, time range and sources
   fleetops data query KIND [--from T] [--to T] [--where k=v]... [--limit N]
+  fleetops data node NODE [--from T] [--to T]                    versions, shared switch/rack/PDU, log faults, changes
   fleetops data export gpu-health --out DIR [--from T] [--to T]   samples.jsonl, jobs.json, results.jsonl for gpu-health
   fleetops data export fleetscope-trace --out FILE [--pool P]     CSV for FleetScope's Trace replay node
 
@@ -29,9 +32,18 @@ Sources (SOURCE):
   exporter         DCGM / AMD / SambaNova exporter text      [--vendor V] [--t EPOCH] [--site S]
   vllm             vLLM /metrics snapshot                   --pool P [--before FILE | --window S] [--model M] [--gpu G] [--t EPOCH]
   prom-range       Prometheus query_range JSON              --field ttftP99|tpotP99|rate|kvUsage|… [--pool P]
-  k8s-nodes        kubectl get nodes -o json
+  k8s-nodes        kubectl get nodes -o json                 inventory with versions; rack and zone edges
   k8s-pods         kubectl get pods -A -o json
-  slurm-nodes      scontrol show node -o
+  slurm-nodes      scontrol show node -o                     (kernel version from OS=)
+  nvidia-smi-q     nvidia-smi -q                             [--node N] (default: file name)  versions, serials, PCI → GPU map
+  nvidia-topo      nvidia-smi topo -m                        [--node N]  NVLink and NIC affinity
+  ibnetdiscover    ibnetdiscover                             host → leaf → spine
+  racks            CSV: node,rack,row,pdu,site
+  kernel-log       journalctl -k -o short-iso | dmesg -T | dmesg | syslog   [--node N] [--boot T] [--year Y] [--utc-offset H]
+                   XID, NVLink, PCIe AER, AMD RAS, MCE, IB link, NFS/Lustre, OOM (GPU index from nvidia-smi-q imports)
+  app-log          NCCL / PyTorch job output                 [--node N] [--job J] [--t T]
+  k8s-events       kubectl get events -A -o json             cordon/reboot/scale changes; NotReady/OOM/mount/evict logs
+  helm-history     helm history REL -n NS -o json            [--release R] [--namespace NS]
   sacct            sacct -P -X --format=JobID,JobName,State,ExitCode,Start,End,NodeList,AllocTRES
   changes          JSON lines of change events
   git-log          git log --date=unix --pretty=format:'@@%H|%ad|%an|%s' --name-only   [--repo NAME]
@@ -86,18 +98,43 @@ const read = f => fs.readFileSync(f, 'utf8');
 const time = v => (v == null || v === true ? undefined : toEpoch(/^\d{4}-\d{2}-\d{2}$/.test(v) ? v + 'T00:00:00Z' : v));
 const fmt = t => (Number.isFinite(t) ? new Date(t * 1000).toISOString().replace('.000', '') : '–');
 
+// PCI address → GPU index per node, from the latest nvidia-smi -q inventory in the store (for kernel logs).
+function pciMap(store) {
+  const m = {};
+  for (const r of store.scan('inventory', { where: r => Array.isArray(r.gpus) })) { m[r.node] = m[r.node] || {}; for (const g of r.gpus) if (g.pci) m[r.node][g.pci] = g.gpu; }
+  return m;
+}
 function importSource(store, src, files, o) {
   const from = time(o.from), to = time(o.to), res = [];
   const put = (kind, recs) => { const r = store.append(kind, recs, { dedupe: true }); res.push(r); return r; };
+  const tOf = f => (o.t ? time(o.t) : Math.floor(fs.statSync(f).mtimeMs / 1000));
+  const nodeOf = f => (o.node && o.node !== true ? o.node : path.basename(f).replace(/\.(txt|log|out)$/, ''));
+  // inventory with versions: a version that differs from the node's previous snapshot becomes a change record
+  let lastByNode = null;
+  const putInventory = recs => {
+    if (!lastByNode) { lastByNode = new Map(); for (const r of store.scan('inventory', { where: r => r.versions })) { const p = lastByNode.get(r.node); if (!p || p.t < r.t) lastByNode.set(r.node, r); } }
+    const changes = [];
+    for (const r of recs.slice().sort((a, b) => a.t - b.t)) { if (r.versions) { changes.push(...Topo.versionChanges(lastByNode.get(r.node), r)); const p = lastByNode.get(r.node); if (!p || p.t < r.t) lastByNode.set(r.node, r); } }
+    put('inventory', recs);
+    if (changes.length) put('change', changes);
+  };
   const each = f => (fs.statSync(f).isDirectory() ? [f] : [f]);
   for (const f of files.flatMap(each)) {
     switch (src) {
       case 'exporter': put('device', Live.exporterScrape(read(f), { vendor: o.vendor !== true ? o.vendor : undefined, t: o.t ? +o.t : Math.floor(fs.statSync(f).mtimeMs / 1000), site: o.site })); break;
       case 'vllm': put('serving', [Live.vllmSnapshot(read(f), { before: o.before ? read(o.before) : undefined, windowS: o.window ? +o.window : undefined, t: o.t ? +o.t : Math.floor(fs.statSync(f).mtimeMs / 1000), pool: o.pool || 'default', model: o.model, gpu: o.gpu })]); break;
       case 'prom-range': if (!o.field) throw new Error('prom-range needs --field'); put('serving', Live.promRange(read(f), { field: o.field, pool: o.pool })); break;
-      case 'k8s-nodes': put('inventory', Live.k8sNodes(read(f))); break;
+      case 'k8s-nodes': putInventory(Live.k8sNodes(read(f), { t: tOf(f) })); put('topology', Live.k8sNodeTopology(read(f), { t: tOf(f) })); break;
       case 'k8s-pods': put('placement', Live.k8sPods(read(f))); break;
-      case 'slurm-nodes': put('inventory', Live.slurmNodes(read(f))); break;
+      case 'slurm-nodes': putInventory(Live.slurmNodes(read(f), { t: tOf(f) })); break;
+      case 'nvidia-smi-q': putInventory([Topo.nvidiaSmiQ(read(f), { node: nodeOf(f), t: tOf(f) }).inventory]); break;
+      case 'nvidia-topo': put('topology', Topo.nvidiaTopo(read(f), { node: nodeOf(f), t: tOf(f) })); break;
+      case 'ibnetdiscover': put('topology', Topo.ibnetdiscover(read(f), { t: tOf(f) })); break;
+      case 'racks': put('topology', Topo.racks(read(f), { t: tOf(f) })); break;
+      case 'kernel-log': put('log', Logs.kernelLog(read(f), { node: o.node && o.node !== true ? o.node : undefined, boot: time(o.boot), year: o.year ? +o.year : undefined, utcOffset: o['utc-offset'] ? +o['utc-offset'] : 0, pciMap: pciMap(store) })); break;
+      case 'app-log': put('log', Logs.ncclLog(read(f), { node: o.node && o.node !== true ? o.node : undefined, job: o.job && o.job !== true ? o.job : undefined, t: o.t ? time(o.t) : tOf(f) })); break;
+      case 'k8s-events': { const e = Live.k8sEvents(read(f)); put('change', e.changes); put('log', e.logs); break; }
+      case 'helm-history': put('change', Live.helmHistory(read(f), { release: o.release && o.release !== true ? o.release : path.basename(f, '.json'), namespace: o.namespace && o.namespace !== true ? o.namespace : 'default' })); break;
       case 'sacct': put('job', Live.slurmSacct(read(f))); break;
       case 'changes': put('change', Live.changesJsonl(read(f))); break;
       case 'git-log': put('change', Live.gitLog(read(f), { repo: o.repo || path.basename(f) })); break;
@@ -164,6 +201,26 @@ async function main() {
     const rows = store.query(kind, { from: time(o.from), to: time(o.to), where: whereFrom(o.where), limit: o.limit ? +o.limit : 1000 });
     if (J) { OUT.records = rows; return; }
     for (const r of rows) console.log(JSON.stringify(r));
+    return;
+  }
+  if (cmd === 'node') {
+    // one node, everything the store knows: versions, what it shares, recent log faults and changes
+    const node = rest[0]; if (!node) throw new Error('data node NODE [--from T] [--to T]');
+    const to = time(o.to), from = time(o.from) ?? (to ?? Math.floor(Date.now() / 1000)) - 7 * 86400;
+    const inv = store.query('inventory', { to, where: r => r.node === node }).sort((a, b) => a.t - b.t);
+    const g = Topo.groups(store.query('topology', { to })).byNode[node] || {};
+    const nvl = store.query('topology', { to, where: e => e.kind === 'nvlink' && e.node === node });
+    const logs = store.query('log', { from, to, where: l => l.node === node && l.severity !== 'info' });
+    const changes = store.query('change', { from, to, where: c => c.target === node });
+    const out = { node, inventory: inv.at(-1) || null, versions: Object.assign({}, ...inv.map(r => r.versions || {})), shares: g, nvlinkPairs: nvl.length, logs, changes };
+    if (J) { OUT.node = out; return; }
+    const last = inv.at(-1);
+    say(`${node}${last ? `  ${last.devices}× ${last.sku || last.vendor}` : '  (not in the inventory)'}`);
+    say(`  versions  ${Object.entries(out.versions).map(([k, v]) => `${k} ${v}`).join(', ') || '–'}${last && last.mixedVersions ? `  (mixed across GPUs: ${last.mixedVersions.join(', ')})` : ''}`);
+    say(`  shares    ${[...(g.leaf || []), g.rack, g.pdu, g.row, g.site].filter(Boolean).join(', ') || '–'}${nvl.length ? `; ${nvl.length} NVLink pairs` : ''}`);
+    say(`  changes   ${changes.length ? `(${changes.length})` : '–'}`); for (const c of changes) say(`    ${fmt(c.t)}  ${c.kind}: ${c.summary || c.id}${c.since != null ? ` (between ${fmt(c.since)} and then)` : ''}`);
+    say(`  log faults ${logs.length ? `(${logs.length})` : '–'}`);
+    for (const l of logs.slice(-15)) say(`    ${fmt(l.t)}  ${l.gpu != null ? 'gpu' + l.gpu + ' ' : ''}${l.code} [${l.class}/${l.severity}] ${l.msg.slice(0, 90)}`);
     return;
   }
   if (cmd === 'export') {
