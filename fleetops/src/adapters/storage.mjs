@@ -6,8 +6,8 @@
 // Lustre and NFS keep totals: give the previous snapshot with --before and the records are what happened between.
 
 // ---------- Lustre job_stats ----------
-function parseJobStats(text) {
-  const out = []; let target = null, cur = null;
+function parseJobStats(text, target0 = null) {
+  const out = []; let target = target0, cur = null;
   for (const line of String(text).split(/\r?\n/)) {
     const tg = line.match(/^(?:obdfilter|mdt)\.([\w-]+?)\.job_stats=/); if (tg) { target = tg[1].replace(/^.*-(OST|MDT)/, '$1'); continue; }
     const j = line.match(/^-\s*job_id:\s*(\S+)/); if (j) { cur = { target, job: j[1], ops: {} }; out.push(cur); continue; }
@@ -18,9 +18,14 @@ function parseJobStats(text) {
   }
   return out;
 }
-const OPKIND = { read_bytes: 'read', write_bytes: 'write', read: 'read', write: 'write', open: 'meta', close: 'meta', getattr: 'meta', setattr: 'meta', mknod: 'meta', unlink: 'meta', statfs: 'meta', sync: 'write', punch: 'write' };
-export function lustreJobstats(text, { before, fs: fsName = 'lustre', t = Math.floor(Date.now() / 1000) } = {}) {
-  const now = parseJobStats(text), prev = new Map((before ? parseJobStats(before) : []).map(e => [`${e.target}|${e.job}`, e]));
+const OPKIND = { read_bytes: 'read', write_bytes: 'write', read: 'read', write: 'write', open: 'meta', close: 'meta', getattr: 'meta', setattr: 'meta', mknod: 'meta', unlink: 'meta', statfs: 'meta', sync: 'meta', punch: 'meta' };
+// the OST or MDT from a path such as /proc/fs/lustre/obdfilter/lustrefs-OST0000/job_stats
+export const lustreTargetOf = p => { const m = String(p || '').match(/(?:^|[-/])((?:OST|MDT)[0-9a-f]{4})(?:[/_.]|$)/i); return m ? m[1].toUpperCase() : null; };
+// A file read straight from /proc/fs/lustre has no "obdfilter.<target>.job_stats=" line: give `target` (the import
+// takes it from the path).
+export function lustreJobstats(text, { before, fs: fsName = 'lustre', target = null, t = Math.floor(Date.now() / 1000) } = {}) {
+  const now = parseJobStats(text, target), prev = new Map((before ? parseJobStats(before, target) : []).map(e => [`${e.target}|${e.job}`, e]));
+  if (now.some(e => !e.target)) throw new Error('Lustre job_stats without a target: use lctl get_param obdfilter.*.job_stats, or name the file after the OST/MDT (or --target)');
   const out = [];
   for (const e of now) {
     const p = prev.get(`${e.target}|${e.job}`), win = p && e.t && p.t ? e.t - p.t : null, by = {};

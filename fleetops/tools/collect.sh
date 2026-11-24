@@ -11,8 +11,8 @@
 # Per node (by default): nvidia-smi -q and topo -m (or rocm-smi), the kernel log since --since, and the DCGM exporter
 # at http://localhost:9400/metrics if it answers. --k8s adds nodes, pods and events cluster-wide; --slurm adds sacct
 # and scontrol show node. vLLM /metrics are scraped twice, a minute apart, so rates can be computed. NFS mountstats
-# (per-export latency) and ethtool -S of the RDMA NICs (pause frames, discards, link errors) are taken at the start and
-# the end. --fabric adds ibnetdiscover and ibqueryerrors (switch ports with error counters), from a host that sees the fabric.
+# (per-export latency), ethtool -S of the RDMA NICs (pause frames, discards, link errors) and the InfiniBand/RoCE port
+# counters in sysfs (errors, xmit wait, CNPs and ECN marks) are taken at the start and the end. --fabric adds ibnetdiscover and ibqueryerrors (switch ports with error counters), from a host that sees the fabric.
 #
 # What it does not collect: prompts, completions, environment variables, credentials. Request logs you pass with
 # --requests are reduced to token counts and latencies when imported. Kernel and application logs are copied as they
@@ -64,9 +64,26 @@ SINCE_ISO="$(date -u -d "@$(( $(date +%s) - $(secs "$SINCE") ))" +%Y-%m-%dT%H:%M
 echo "collecting into $OUT (node $NODE, since $SINCE)"
 mkdir -p "$OUT/node"
 # counters taken now and again at the end, so the bundle holds what happened in between
+# (FLEETOPS_SYSFS and FLEETOPS_MOUNTSTATS point elsewhere, for tests)
+SYS="${FLEETOPS_SYSFS:-/sys}" MSTATS="${FLEETOPS_MOUNTSTATS:-/proc/self/mountstats}"
 T0S=$(date +%s)
-if grep -q 'fstype nfs' /proc/self/mountstats 2>/dev/null; then cp /proc/self/mountstats "$OUT/node/mountstats-before.txt"; fi
-NICS=(); for d in /sys/class/infiniband/*/device/net/*; do [ -e "$d" ] && NICS+=("$(basename "$d")"); done
+if grep -q 'fstype nfs' "$MSTATS" 2>/dev/null; then cp "$MSTATS" "$OUT/node/mountstats-before.txt"; fi
+NICS=(); for d in "$SYS"/class/infiniband/*/device/net/*; do [ -e "$d" ] && NICS+=("$(basename "$d")"); done
+IBDEVS=(); for d in "$SYS"/class/infiniband/*/ports/*; do [ -d "$d/counters" ] || [ -d "$d/hw_counters" ] && IBDEVS+=("$d"); done
+# counters NAME WHEN T: ethtool -S of every RDMA NIC and every IB port's sysfs counters, stamped with T
+counters() {
+  local w="$1" t="$2" n p f
+  for n in "${NICS[@]+"${NICS[@]}"}"; do
+    [[ "$n" =~ ^[A-Za-z0-9._-]+$ ]] || continue
+    have ethtool && ethtool -S "$n" > "$OUT/node/ethtool-$n-$w.txt" 2>/dev/null && add "node/ethtool-$n-$w.txt" ethtool "{\"node\":\"$NODE\",\"iface\":\"$n\",\"t\":\"$t\"}"
+  done
+  for p in "${IBDEVS[@]+"${IBDEVS[@]}"}"; do
+    f="node/ib-$(basename "$(dirname "$(dirname "$p")")")-$(basename "$p")-$w.txt"
+    grep -H . "$p"/counters/* "$p"/hw_counters/* > "$OUT/$f" 2>/dev/null || true
+    add "$f" ib-sysfs "{\"node\":\"$NODE\",\"t\":\"$t\"}"
+  done
+}
+counters start "$NOW"
 if [ "$GPU" = 1 ]; then
   if have nvidia-smi; then
     nvidia-smi -q > "$OUT/node/nvidia-smi-q.txt" 2>/dev/null || true; add node/nvidia-smi-q.txt nvidia-smi-q "{\"node\":\"$NODE\",\"t\":\"$NOW\"}"
@@ -122,11 +139,8 @@ fi
 # the end of the counter window (at least 30 s after the start)
 W=$(( $(date +%s) - T0S )); [ "$W" -lt 30 ] && { sleep $((30 - W)); W=30; }
 TE="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
-if [ -f "$OUT/node/mountstats-before.txt" ]; then cp /proc/self/mountstats "$OUT/node/mountstats.txt"; add node/mountstats.txt mountstats "{\"node\":\"$NODE\",\"before\":\"node/mountstats-before.txt\",\"window\":$W,\"t\":\"$TE\"}"; fi
-for n in "${NICS[@]+"${NICS[@]}"}"; do
-  [[ "$n" =~ ^[A-Za-z0-9._-]+$ ]] || continue
-  have ethtool && ethtool -S "$n" > "$OUT/node/ethtool-$n.txt" 2>/dev/null && add "node/ethtool-$n.txt" ethtool "{\"node\":\"$NODE\",\"iface\":\"$n\",\"t\":\"$TE\"}"
-done
+if [ -f "$OUT/node/mountstats-before.txt" ]; then cp "$MSTATS" "$OUT/node/mountstats.txt"; add node/mountstats.txt mountstats "{\"node\":\"$NODE\",\"before\":\"node/mountstats-before.txt\",\"window\":$W,\"t\":\"$TE\"}"; fi
+counters end "$TE"
 
 { printf '{"version":1,"collectedAt":"%s","host":"%s","since":"%s","files":[' "$NOW" "$NODE" "$SINCE"
   sep=""; for e in "${ENTRIES[@]+"${ENTRIES[@]}"}"; do printf '%s%s' "$sep" "$e"; sep=","; done

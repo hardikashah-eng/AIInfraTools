@@ -1,0 +1,4 @@
+| `sysfs-infiniband-counters.txt` | `/sys/class/infiniband/*/ports/*/{counters,hw_counters}/*` from hosts with mlx4, mlx5 and hfi1 adapters, as `grep -H .` prints them | [prometheus/procfs](https://github.com/prometheus/procfs) `testdata/fixtures.ttar` | Apache-2.0 |
+| `nfs-mountstats.txt` | `/proc/<pid>/mountstats` with an NFSv4 mount (`statvers=1.1`, 8-field per-op lines, a wrapped 64-bit queue time on ACCESS) | same | Apache-2.0 |
+| `lustre/lustrefs-OST0000/job_stats`, `lustre/lustrefs-MDT0000/job_stats` | `/proc/fs/lustre/{obdfilter,mdt}/*/job_stats` from a Lustre 2.10 server (bytes and counts, no latency) | [HewlettPackard/lustre_exporter](https://github.com/HewlettPackard/lustre_exporter) | Apache-2.0 |
+| `mlx5-ethtool-counter-names.txt` | The counter names the mlx5 driver documents for `ethtool -S` | Linux `Documentation/networking/device_drivers/ethernet/mellanox/mlx5/counters.rst` | GPL-2.0 (names only) |
