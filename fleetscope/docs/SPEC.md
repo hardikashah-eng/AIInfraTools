@@ -65,7 +65,7 @@ There are four inputs, all plain files under version control: a trace, a fleet s
 | GPU profile | gpu_type, model, engine, prefill_tok_s, decode step time = a + b × batch, kv_capacity_tokens, kv_bytes_per_token, source (aiconfigurator / measured / calibrated) | Profile store |
 | Policy | router (least queue / on-prem first with burst threshold / cost first), autoscaler targets and delays, admission limits | Scenario file |
 
-The prototype stores scenarios as graph JSON (nodes with knobs, plus wires); **Copy graph JSON** exports it.
+FleetScope stores scenarios as graph JSON (nodes with knobs, plus wires); **Copy graph JSON** exports it.
 
 ## Simulation engine
 
@@ -90,7 +90,7 @@ step = a + b0 · B + c · Σ context tokens        tokens/s per instance = B / s
 | Tier | Model | Use |
 | --- | --- | --- |
 | 0 | Analytical: M/G/c queueing per pool | Sweep hundreds of fleet options in seconds to shortlist |
-| 1 | Time-stepped fleet simulation (above) | Default for the player; what the prototype runs |
+| 1 | Time-stepped fleet simulation (above) | Default for the player; what FleetScope runs |
 | 2 | Per-engine plug-ins: AIConfigurator or Vidur for profiles, Dynamo DynoSim Replay for request-level checks | Confirm a shortlisted option for one serving stack |
 | 3 | Network-level: SimAI / ASTRA-sim | Training placement and collective traffic (phase 3) |
 
@@ -235,7 +235,7 @@ Details: [ASK.md](ASK.md).
 
 ## Build phases
 
-1. **Prototype (done):** a browser-only node editor and player on the tier-1 engine, with agent, chat, trace and training nodes, seven templates and baseline compare. Profiles come from spec sheets, not measurements.
+1. **Node editor and player (done):** a browser-only node editor and player on the tier-1 engine, with agent, chat, trace and training nodes, seven templates and baseline compare. Profiles come from spec sheets, not measurements.
 1b. **Stress and advisor (done):** what-if overlays, scenario suite, breaking-point search, bottleneck attribution, model advisor with reasoning levels.
 2. **Pilot:** load one real week of production traces (vLLM tracing spans and gateway logs: importer and recorded-vs-simulated TTFT done, see [TRACES.md](TRACES.md)); closed-loop replay of recorded sessions; YAML scenarios; profiles seeded from AIConfigurator, then calibrated against one recorded hour; engine moved into a web worker; run store and shareable run links.
 3. **Training and placement:** training jobs from Slurm/K8s history; SimAI hooks for collective traffic; placement policies.
