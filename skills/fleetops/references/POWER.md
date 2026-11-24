@@ -80,6 +80,28 @@ reach the budget within the limits says STILL OVER, and by how much. `--protect 
 **The live agent.** With `power: { budgets, windowS: 900, maxSlowdown, protect }` in the agent config, a group over
 budget gets `power-cap-node` actions proposed for approval each tick, never applied on its own.
 
+## Validation on real data
+
+`tests/power-real.test.mjs` checks the model against Zeus's power-limit sweeps (You et al., NSDI '23): six training
+workloads, at several batch sizes and optimizers, run at every power limit on A40, V100, P100 and RTX 6000 GPUs
+(1,609 runs; the run at the top limit is the baseline). With the default α, not fitted to these GPUs:
+
+| GPU | Caps from 60% to 100% of the limit | Median error | p10 to p90 error |
+| --- | --- | --- | --- |
+| A40 (300 W) | 200 runs | −0.4 points | −4.4 to +4.1 |
+| V100 (250 W) | 272 runs | −1.7 | −6.0 to +2.6 |
+| P100 (250 W) | 180 runs | −0.8 | −5.9 to +3.2 |
+| RTX 6000 (260 W) | 205 runs | −0.9 | −5.2 to +3.1 |
+
+Errors are predicted minus measured slowdown, in percentage points. The model runs about a point low, and the spread
+is about the noise between repeated epochs. **Below 60% of the limit it fails:** on the A40 the measured slowdown is
+more than twice the prediction (clocks reach their floor). `predict` flags such caps, and the planner's levels stop
+at 60%.
+
+The same file runs the CLI with no mocks on one of those workloads (BERT-base on SQuAD, V100, 250 → 175 W): predicted
+8.7% slower, measured 13.6%. It also applies a planned cap through a stand-in `ssh`. The cap runs only after
+approval, with `--live` and `policy.dryRun: false`.
+
 ## FleetScope
 
 ```bash

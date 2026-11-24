@@ -10,7 +10,7 @@ import { loadConfig as ghLoad } from '../../gpu-health/src/config.mjs';
 import { executorFor } from '../../gpu-health/src/vendors.mjs';
 import { fill } from '../../gpu-health/src/executors.mjs';
 
-export const POWER_DEFAULTS = { binS: 300, gpuShare: 0.7, alphaCompute: 0.35, alphaMemory: 0.08, busy: 0.3, atLimit: 0.95, levels: [0.9, 0.8, 0.7, 0.6], maxSlowdown: 0.05, pue: 1.3 };
+export const POWER_DEFAULTS = { binS: 300, gpuShare: 0.7, alphaCompute: 0.35, alphaMemory: 0.08, busy: 0.3, atLimit: 0.95, levels: [0.9, 0.8, 0.7, 0.6], minCapPct: 0.6, maxSlowdown: 0.05, pue: 1.3 };
 // board power (W) by GPU model, approximate spec-sheet figures, when the limit isn't exported
 const TDP = [[/GB200/i, 1200], [/B300/i, 1100], [/B200/i, 1000], [/H200/i, 700], [/H100.*PCIe/i, 350], [/H100|H800/i, 700], [/H20\b/i, 400], [/A100.*PCIe/i, 300], [/A100|A800/i, 400],
   [/L40S/i, 350], [/L4\b/i, 72], [/A10\b/i, 150], [/T4\b/i, 70], [/MI325X/i, 1000], [/MI300X/i, 750], [/MI250/i, 560], [/V100/i, 300]];
@@ -93,7 +93,11 @@ export function predict(j, capW, { alphaCompute = POWER_DEFAULTS.alphaCompute, a
   let stretch = 0, saved = 0;
   for (const d of j.draws) { stretch += d > capW ? Math.pow(d / capW, a) - 1 : 0; saved += Math.max(0, d - capW); }
   const n = Math.max(1, j.draws.length);
-  return { capW, capPct: capW / j.limitW, slowdown: stretch / n * j.busyShare, savedKw: saved / n * j.gpus * j.busyShare / gpuShare / 1000, alpha: a };
+  // Below ~60% of the limit clocks hit their floor and work slows far more than (D/C)^α: on real power-limit sweeps
+  // (Zeus, 4 GPU types) the model is within a few points from 60% to 100% and badly low below that.
+  const out = { capW, capPct: capW / j.limitW, slowdown: stretch / n * j.busyShare, savedKw: saved / n * j.gpus * j.busyShare / gpuShare / 1000, alpha: a };
+  if (j.limitW && capW < POWER_DEFAULTS.minCapPct * j.limitW) Object.assign(out, { outOfRange: true, note: `a cap under ${POWER_DEFAULTS.minCapPct * 100}% of the ${j.limitW} W limit: the slowdown is likely much larger than predicted` });
+  return out;
 }
 
 // ---------- fit α from clocks under different limits ----------
