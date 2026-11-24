@@ -54,7 +54,8 @@ export const JOB_STATUS = new Set(['ok', 'failed', 'killed', 'cancelled', 'timeo
 export const CAUSES = new Set(['device', 'app', 'infra', 'unknown']);
 export const LOG_CLASSES = new Set(['ecc', 'bus', 'link', 'firmware', 'pcie', 'network', 'storage', 'host-memory', 'cpu', 'node', 'app', 'info']);
 export const SEVERITIES = new Set(['hard', 'soft', 'ignore', 'info']);
-export const CHANGE_KINDS = new Set(['deploy', 'driver', 'firmware', 'config', 'scale', 'model', 'policy', 'hardware', 'other']);
+// tune: a recommendation from fleetops tune, recorded as applied (it can be the cause of what follows, like any change)
+export const CHANGE_KINDS = new Set(['deploy', 'driver', 'firmware', 'config', 'scale', 'model', 'policy', 'hardware', 'tune', 'other']);
 
 // Problems with one record, or [] when it is fine.
 export function validate(kind, r) {

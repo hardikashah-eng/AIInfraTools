@@ -6,6 +6,7 @@
 //   GET /api/incidents[?status=S]   /api/incidents/ID   /api/incidents/ID/timeline (HTML)   /api/incidents/ID/postmortem (MD)
 //   GET /api/diagnose?symptom=S&from=T&to=T[&pool=P&job=J&nodes=a,b]
 //   GET /api/goodput?from=T&to=T[&job=J&format=html|md]    training goodput (unscoped or infra tokens)
+//   GET /api/tune?from=T&to=T[&format=md]                    tuning recommendations (unscoped or infra tokens)
 // Grafana: the Infinity data source (JSON, backend parser) reads /api/series and /api/incidents directly; see
 // deploy/grafana-dashboard.json.
 import { whereFrom } from './store.mjs';
@@ -14,6 +15,7 @@ import * as Inc from './incidents.mjs';
 import { diagnose } from './rca.mjs';
 import { goodput } from './goodput.mjs';
 import { goodputHtml, goodputMarkdown } from './goodput-report.mjs';
+import { tune, tuneMarkdown } from './tune.mjs';
 
 const num = (v, d) => (v == null || v === '' ? d : Number(v));
 const time = v => (v == null || v === '' ? undefined : /^\d+(\.\d+)?$/.test(v) ? +v : Date.parse(v) / 1000);
@@ -66,6 +68,13 @@ export function handleApi(store, who, method, rawUrl) {
     if (mInc[2] === 'timeline') return { status: 200, type: 'text/html; charset=utf-8', body: Inc.timelineHtml(store, id), records: 1 };
     if (mInc[2] === 'postmortem') return { status: 200, type: 'text/markdown; charset=utf-8', body: Inc.postmortem(store, id), records: 1 };
     return json(s, 1);
+  }
+  if (p === '/api/tune') {
+    if (tenant !== '*' && !tenant.infra) return { status: 403, type: 'text/plain', body: 'tune needs an unscoped or infra token\n' };
+    const to = time(q.to) ?? Math.floor(Date.now() / 1000), from = time(q.from) ?? to - 7 * 86400;
+    const t = tune(store, { from, to, now: Math.min(to, Math.floor(Date.now() / 1000)) });
+    if (q.format === 'md') return { status: 200, type: 'text/markdown; charset=utf-8', body: tuneMarkdown(t), records: t.recommendations.length };
+    return json(t, t.recommendations.length);
   }
   if (p === '/api/goodput') {
     if (tenant !== '*' && !tenant.infra) return { status: 403, type: 'text/plain', body: 'goodput needs an unscoped or infra token\n' };
