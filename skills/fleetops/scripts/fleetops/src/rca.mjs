@@ -176,7 +176,7 @@ const RULES = {
       verify: [`Read the exit codes and logs of a few of ${top.k}'s failed jobs: a shared error (bad input, config, code change) confirms it.`,
         `Check whether ${top.k} submitted a new job version or config just before ${iso(c.from)}.`,
         `If they share an error, contact the owner and pause their retries; the GPUs are not the cause.`],
-      likelyCause: 'app',
+      likelyCause: 'app', targets: { [dim]: top.k, nodes: [...nodes] },
     };
   },
 
@@ -216,6 +216,7 @@ const RULES = {
       against: [...(!sick.length && !faults.length && !logFaults.length ? ['no health events, fault codes or hardware log errors on these devices'] : []), ...(sharedBy ? [`these nodes all sit behind ${DIM_NAME[sharedBy.dim]} ${sharedBy.name}`] : []), ...(hot.length && totalNodes > 20 && hot.reduce((t, x) => t + x.share, 0) < 0.3 ? ['failures are spread over many nodes'] : [])],
       verify: ['Run a level-3 diag on the named nodes (gpu-health run-diag).', 'Check dmesg for XIDs and the exporter for ECC and link counters around the onset.', 'If jobs fail on these nodes but not elsewhere for the same owner, drain the nodes.'],
       likelyCause: 'device',
+      targets: { nodes: [...scopeNodes], gpus: [...new Set([...sick.map(h => h.key), ...faults.map(d => `${d.node}/${d.gpu}`), ...logFaults.filter(l => l.gpu != null).map(l => `${l.node}/${l.gpu}`)])] },
     };
   },
 
@@ -248,6 +249,7 @@ const RULES = {
       against: [],
       verify: [`Compare the symptom on targets the change did and did not reach (canary vs rest).`, `Roll back ${ch.id || 'the change'} on one target, or replay the pre-change config in FleetScope, and see whether the symptom clears.`],
       likelyCause: ch.kind === 'driver' || ch.kind === 'firmware' ? 'infra' : 'app',
+      targets: { change: { id: ch.id, kind: ch.kind, target: ch.target, summary: ch.summary, release: ch.release, namespace: ch.namespace, revision: ch.revision, from: ch.from } },
     };
   },
 
@@ -296,7 +298,7 @@ const RULES = {
         ...(Number.isFinite(pre) && pre > 0 ? [{ what: `${pre} preemptions per window` }] : []), ...(Number.isFinite(q) ? [{ what: `${q} requests running/queued per window` }] : [])],
       against: [],
       verify: ['Check vLLM preemption counters (vllm:num_preemptions_total) and queue depth over the window.', 'In FleetScope, replay the window with lower per-replica concurrency or one more decode replica and compare TTFT p99.'],
-      likelyCause: 'capacity',
+      likelyCause: 'capacity', targets: { pool: c.inc.pool },
     };
   },
 
@@ -313,7 +315,7 @@ const RULES = {
         ...(Number.isFinite(isl1) && Number.isFinite(isl0) && isl1 > 1.2 * isl0 ? [{ what: `prompts ${Math.round(isl1)} tokens on average vs ${Math.round(isl0)}` }] : [])],
       against: [],
       verify: ['Check the autoscaler: did replicas scale up, and how fast?', 'Run the FleetScope live twin with this rate to see whether the calibrated pool meets the SLO.'],
-      likelyCause: 'capacity',
+      likelyCause: 'capacity', targets: { pool: c.inc.pool, rateRatio: r1 / r0 },
     };
   },
 
@@ -350,7 +352,7 @@ const RULES = {
       against: [...(best.purity < 0.5 ? [`only ${Math.round(best.purity * 100)}% of the nodes behind it are affected`] : []), ...(dominated ? [`${dom[0]} has ${dom[1]} of the ${tot} failures behind it`] : [])],
       verify: dim === 'leaf' || dim === 'spine' ? [`Check ${name}'s port counters and logs (symbol errors, link flaps) around ${iso(c.from)}; run ibdiagnet on that fabric segment.`, `Move one affected job to nodes behind another switch: if it runs, the switch is the cause.`]
         : [`Check power and cooling for ${DIM_NAME[dim]} ${name} at ${iso(c.from)} (PDU and BMC/IPMI event logs).`, 'Drain the group if more nodes drop.'],
-      likelyCause: 'infra',
+      likelyCause: 'infra', targets: { group: best.id, dim, nodes: [...best.g.nodes].sort(), affected: [...aff].filter(n => best.g.nodes.has(n)).sort() },
     };
   },
 
@@ -382,7 +384,7 @@ const RULES = {
       ],
       against: [],
       verify: [`Roll one affected node back to the fleet's ${best.f} and rerun a failed job there.`, `Hold the ${best.f} ${best.v} rollout until that test passes.`],
-      likelyCause: 'infra',
+      likelyCause: 'infra', targets: { field: best.f, version: best.v, nodes: aff.filter(n => String(c.versions.get(n).v[best.f]) === String(best.v)).sort() },
     };
   },
 
@@ -417,7 +419,7 @@ const RULES = {
       cause: 'straggler', title: `Straggler: rank ${worst.rank} on ${worst.node}${worst.gpu != null ? ' GPU ' + worst.gpu : ''} of ${job}`, score: clamp01(0.45 + 0.3 * Math.min(1, ratio - 1) + (slowClock || hw.length ? 0.15 : 0) + (waiting ? 0.05 : 0)),
       evidence, against: [],
       verify: [`Check ${worst.node}${worst.gpu != null ? ' GPU ' + worst.gpu : ''}: clocks and throttle reasons (nvidia-smi -q -d PERFORMANCE), temperature, and run a level-2 diag.`, 'Restart the job without that GPU (or node); step time should return to the others\' pace.'],
-      likelyCause: 'device', component: worst.node,
+      likelyCause: 'device', component: worst.node, targets: { job, node: worst.node, gpu: worst.gpu != null ? String(worst.gpu) : undefined, rank: worst.rank },
     };
   },
 
@@ -448,7 +450,7 @@ const RULES = {
       ],
       against: [],
       verify: [culprit != null ? `Get a stack from rank ${culprit} on ${node} (py-spy dump, or cuda-gdb for a GPU hang) and check that GPU's health.` : 'Get stacks from every rank (py-spy dump) and compare the last collective each reached.', 'Rerun with NCCL_DEBUG=INFO and TORCH_NCCL_TRACE_BUFFER_SIZE set to capture the flight recorder.'],
-      likelyCause: hw.length ? 'device' : 'app', component: node || undefined,
+      likelyCause: hw.length ? 'device' : 'app', component: node || undefined, targets: { job, node: node || undefined, rank: culprit ?? undefined },
     };
   },
 
@@ -478,7 +480,7 @@ const RULES = {
         ...(leaf ? [{ what: `${worst.n} sits behind ${leaf.replace('switch:', 'leaf switch ')}` }] : [])],
       against: [],
       verify: [`Check ${worst.n}'s NICs and cables: ibstat / ethtool error counters, link speed and width, PCIe AER.`, `Run nccl-tests (all_reduce_perf) between ${worst.n} and a known-good node.`],
-      likelyCause: 'infra', component: worst.n,
+      likelyCause: 'infra', component: worst.n, targets: { job: c.inc.job || win[0]?.job, node: worst.n },
     };
   },
 
@@ -505,7 +507,7 @@ const RULES = {
         ...hw.slice(0, 2).map(l => ({ what: `${where(l)} logged ${l.code} at ${iso(l.t)}`, refs: [ref('log', l, { node: l.node, code: l.code })] }))],
       against: [],
       verify: [`Take ${best.rep} out of the load balancer: the pool's ${m} p99 should drop.`, `Open the slowest traces (refs) and compare their stages with the same stages on another replica.`],
-      likelyCause: hw.length ? 'device' : 'capacity', component: best.rep,
+      likelyCause: hw.length ? 'device' : 'capacity', component: best.rep, targets: { pool: c.inc.pool, replica: best.rep, node },
     };
   },
 
@@ -528,7 +530,7 @@ const RULES = {
         ...grow.filter(x => x !== top).map(x => ({ what: `${x.st}: ${x.a.toFixed(3)} → ${x.b.toFixed(3)} s` }))],
       against: [],
       verify: [`Compare ${top.st} spans of slow and normal requests in the trace view (exemplars).`, top.st === 'queue' ? 'Check replica count and the scheduler\'s waiting queue.' : 'Check for a model, kernel or engine change at the onset, and GPU clocks on the engines.'],
-      likelyCause: top.st === 'queue' ? 'capacity' : 'infra',
+      likelyCause: top.st === 'queue' ? 'capacity' : 'infra', targets: { pool: c.inc.pool, stage: top.st },
     };
   },
 

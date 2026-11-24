@@ -25,6 +25,8 @@ import * as RCA from '../src/rca.mjs';
 import * as Opt from '../src/optimize.mjs';
 import * as Detect from '../src/detect.mjs';
 import * as Bench from '../src/bench.mjs';
+import * as Agent from '../src/agent.mjs';
+import * as LiveView from '../src/live.mjs';
 import * as Inject from '../src/inject.mjs';
 import { loadConfig as ghConfig } from '../../gpu-health/src/config.mjs';
 import { createRequire } from 'node:module';
@@ -49,8 +51,9 @@ const HELP = `fleetops — shared data layer for AIInfraTools
   fleetops token list --tokens FILE
   fleetops data export gpu-health --out DIR [--from T] [--to T]   samples.jsonl, jobs.json, results.jsonl for gpu-health
   fleetops data export fleetscope-trace --out FILE [--pool P]     CSV for FleetScope's Trace replay node
-  fleetops demo [--scenario NAME] [--seed N] [--list]              a store with one planted cause (a benchmark scenario) to
-                                                                 try detect, diagnose and incidents without a fleet
+  fleetops demo [--scenario NAME] [--seed N] [--list] [--now]      a store with one planted cause (a benchmark scenario) to
+                                                                 try detect, diagnose and incidents without a fleet;
+                                                                 --now moves it so the incident ends now (for the agent)
 
 Sources (SOURCE):
   exporter         DCGM / AMD / SambaNova exporter text      [--vendor V] [--t EPOCH] [--site S]
@@ -119,6 +122,15 @@ Real labels from a real fleet:
         pull each confirmed incident's window and score root-cause analysis on it (misses name the incident)
   fleetops gameday PLAN.json --allow FILE [--live] [--cooldown 900] [--prom URL --loki URL]
         run injections one after another on a TEST cluster (dry run unless --live), then score detection and diagnosis
+
+Live agent and dashboard (actions are dry runs unless --live AND the gpu-health policy has dryRun: false):
+  fleetops agent [--interval 30] [--window 3600] [--state DIR] [--config gpu-health.json] [--agent-config agent.json]
+        [--targets targets.json] [--prom URL [--loki URL]] [--page-to pagerduty|opsgenie|webhook --page-key K --page-url U]
+        [--live] [--once]
+        watch training and inference, diagnose what goes wrong, mitigate within the policy, verify, page when it can't
+  fleetops agent status | log [--limit 50] | pause --by NAME | resume --by NAME | approve ID --by NAME | reject ID --by NAME
+  fleetops serve --agent [agent options]   ingest, run the agent in-process, and serve the dashboard at /live
+        (state defaults to <store>/agent; approving from the page needs a token with the approve role)
 
 Fault injection on a TEST cluster (dry-run unless --live; every target must be in the --allow file):
   fleetops inject list
@@ -238,8 +250,12 @@ function demo(store, o) {
   const name = names.find(n => n === want) || names.find(n => n.startsWith(want));
   if (!name) throw new Error(`no demo scenario starts with "${want}"; see fleetops demo --list`);
   const [lab] = Bench.generate({ perCause: 1, seed: o.seed ? +o.seed : 1, only: [name] });
+  // --now: shift every time so the incident ends a minute ago, for the live agent and dashboard
+  const shift = o.now ? Math.floor(Date.now() / 1000) - 60 - lab.incident.to : 0;
+  const mv = r => { if (!shift) return r; const x = Object.assign({}, r); for (const k of ['t', 'start', 'end', 'since', 'from', 'to', 'alarmAt']) if (typeof x[k] === 'number' && x[k] > 1e9) x[k] += shift; return x; };
+  if (shift) { lab.incident = mv(lab.incident); }
   const written = {};
-  for (const [kind, recs] of Object.entries(lab.store.data)) if (recs.length) written[kind] = store.append(kind, recs, { dedupe: true }).written;
+  for (const [kind, recs] of Object.entries(lab.store.data)) if (recs.length) written[kind] = store.append(kind, recs.map(mv), { dedupe: true }).written;
   if (store.flush) store.flush();
   const inc = lab.incident, iso = t => new Date(t * 1000).toISOString();
   const scope = [inc.pool && `--pool ${inc.pool}`, inc.job && `--job ${inc.job}`, inc.nodes && `--nodes ${[].concat(inc.nodes).join(',')}`].filter(Boolean).join(' ');
@@ -278,6 +294,7 @@ async function main() {
   if (area === 'gameday') return gameday(store, cmd, o);
   if (area === 'pull') return pull(store, cmd, o);
   if (area === 'demo') return demo(store, o);
+  if (area === 'agent') return agentCmd(store, cmd, o);
   if (area !== 'data') throw new Error(`unknown command "${area}"\n\n${HELP}`);
   if (cmd === 'import') {
     const [src, ...files] = rest;
@@ -722,16 +739,82 @@ function tokenCmd(cmd, o) {
 }
 
 // Streaming ingestion: remote_write and OTLP/HTTP (JSON) into the store.
+// ---------- live agent ----------
+function agentOpts(store, o) {
+  const opt = k => (o[k] && o[k] !== true ? o[k] : undefined), json = f => JSON.parse(read(f));
+  const agent = Object.assign({}, opt('agent-config') ? json(opt('agent-config')) : {});
+  if (opt('interval')) agent.intervalS = +opt('interval');
+  if (opt('window')) agent.windowS = dur(opt('window')) ?? +opt('window');
+  if (opt('targets')) agent.targets = json(opt('targets'));
+  if (opt('min-failures')) agent.minFailures = +opt('min-failures');
+  if (opt('page-to')) agent.page = { to: opt('page-to'), key: opt('page-key') || process.env.PAGERDUTY_ROUTING_KEY || process.env.OPSGENIE_API_KEY, url: opt('page-url'), minSeverity: opt('page-min-severity') || 'sev2' };
+  const stateDir = opt('state') || path.join(store.dir, 'agent');
+  const ghConfig = opt('config') ? json(opt('config')) : undefined;
+  // pull from the fleet's own monitoring before each tick, from where the last pull stopped
+  let pulledTo = null;
+  const before = opt('prom') || opt('loki') ? async now => {
+    const from = pulledTo ?? now - (agent.deviceWindowS || Agent.AGENT_DEFAULTS.deviceWindowS);
+    if (opt('prom')) await Pull.pullPrometheus(store, opt('prom'), { from, to: now, step: opt('step') ? +opt('step') : 30, headers: hdrs(o) });
+    if (opt('loki')) await Pull.pullLoki(store, opt('loki'), lokiQueries(o), { from, to: now, headers: hdrs(o) });
+    pulledTo = now;
+  } : null;
+  return { stateDir, ghConfig, agent, live: !!o.live, before };
+}
+function agentLine(r) {
+  const acts = r.executed.map(e => `${e.kind}:${e.outcome}`).join(', ');
+  return `${new Date(r.t * 1000).toISOString()} agent${r.paused ? ' (paused)' : ''}${r.devices ? ` · ${Object.entries(r.devices.states).map(([k, v]) => `${k} ${v}`).join(', ')}` : ''} · ${r.incidents.length} incident(s)${r.incidents.map(i => `\n  ${i.id}: ${i.rule || 'no cause'} (${i.confidence}) → ${i.decision}${i.actions.length ? ' [' + i.actions.map(a => `${a.kind} ${a.mode}`).join(', ') + ']' : ''}`).join('')}${acts ? `\n  ran: ${acts}` : ''}${r.verified.map(v => `\n  verified ${v.id}: ${v.outcome}`).join('')}`;
+}
+async function agentCmd(store, cmd, o) {
+  const ao = agentOpts(store, o), opt = k => (o[k] && o[k] !== true ? o[k] : undefined);
+  if (cmd === 'pause' || cmd === 'resume') { if (!opt('by')) throw new Error(`agent ${cmd} --by NAME`); Agent.setPaused(ao.stateDir, cmd === 'pause', opt('by')); if (J) OUT.paused = cmd === 'pause'; else say(`agent ${cmd === 'pause' ? 'paused' : 'resumed'} by ${opt('by')}`); return; }
+  if (cmd === 'status') {
+    const v = LiveView.liveView(store, ao.stateDir, { agent: ao.agent, ghConfig: ao.ghConfig });
+    if (J) { OUT.status = { agent: v.agent, fleet: v.fleet.states, incidents: v.incidents, waiting: v.actions.open.filter(a => a.status === 'proposed') }; return; }
+    say(`agent ${v.agent.paused ? 'PAUSED' : v.agent.lastTick ? `last ran ${new Date(v.agent.lastTick * 1000).toISOString()}` : 'has not run'}${v.agent.live ? ' (live)' : ' (dry run)'} · autonomous actions in the last hour ${v.agent.autoLastHour}/${v.agent.autoLimit}`);
+    say(`GPUs: ${Object.entries(v.fleet.states).map(([k, n]) => `${k} ${n}`).join(', ') || 'no telemetry'}`);
+    for (const i of v.incidents) say(`  ${i.severity} ${i.status.padEnd(12)} ${i.id}: ${i.title || 'no cause'} → ${i.decision || '–'}${i.verified ? ` (${i.verified.outcome})` : ''}`);
+    for (const a of v.actions.open.filter(a => a.status === 'proposed')) say(`  waiting: ${a.id}  ${a.reason.slice(0, 140)}`);
+    return;
+  }
+  if (cmd === 'log') { const d = Agent.decisions(ao.stateDir, o.limit ? +o.limit : 50); if (J) { OUT.log = d; return; } for (const e of d.reverse()) say(`${new Date(e.t * 1000).toISOString()} ${e.decision}${e.incident ? ' ' + e.incident : ''}${e.action ? ' ' + e.action : ''}${e.outcome ? ' → ' + e.outcome : ''}${e.title ? ': ' + e.title : ''}${e.note ? ': ' + e.note : ''}`); return; }
+  if (cmd === 'approve' || cmd === 'reject') {
+    const { Store: Q } = await import('../../gpu-health/src/actions.mjs');
+    const id = o._[2]; if (!id || !opt('by')) throw new Error(`agent ${cmd} ID --by NAME`);
+    const q = new Q(ao.stateDir), a = cmd === 'approve' ? q.approve(id, opt('by')) : q.reject(id, opt('by'), opt('reason') || '');
+    fs.appendFileSync(path.join(ao.stateDir, 'agent.jsonl'), JSON.stringify({ t: Math.floor(Date.now() / 1000), decision: cmd === 'approve' ? 'approved' : 'rejected', action: a.id, kind: a.kind, by: opt('by'), incident: a.incident }) + '\n');
+    if (J) OUT[cmd + 'd'] = a; else say(`${a.id} ${a.status} by ${opt('by')}; it runs on the agent's next tick`);
+    return;
+  }
+  if (cmd && cmd !== 'run') throw new Error(`unknown: agent ${cmd}`);
+  if (o.once) {
+    if (ao.before) await ao.before(Math.floor(Date.now() / 1000));
+    const r = await Agent.tick(store, Object.assign({}, ao, { now: o.now && o.now !== true ? time(o.now) : undefined }));
+    if (J) { OUT.tick = r; return; }
+    say(agentLine(r)); return;
+  }
+  if (o.live) console.log('note: --live runs actions only when the gpu-health policy has dryRun: false (--config)');
+  Agent.start(store, ao, { onTick: r => console.log(agentLine(r)), before: ao.before });
+  const stop = () => { if (store.close) store.close(); process.exit(0); };
+  process.on('SIGINT', stop); process.on('SIGTERM', stop);
+  await new Promise(() => {});
+}
+
 async function serve(store, o) {
   const port = o.port ? +o.port : 9400, host = o.host && o.host !== true ? o.host : '127.0.0.1';
   const tokens = o.tokens && o.tokens !== true ? Sec.loadTokens(o.tokens) : null;
   // listening beyond this machine without tokens would expose every tenant's data: refuse unless asked for explicitly
   if (!tokens && !['127.0.0.1', 'localhost', '::1'].includes(host) && !o['no-auth']) throw new Error(`--host ${host} needs --tokens FILE (or --no-auth to run open on a trusted network)`);
   const pipe = new Ingest.Pipeline(store, { maxQueue: o['max-queue'] ? +o['max-queue'] : 200000, flushMs: o['flush-ms'] ? +o['flush-ms'] : 1000 }).start();
-  const srv = Ingest.server(pipe, { site: o.site && o.site !== true ? o.site : undefined, tokens, audit: Sec.auditor(store.dir) });
+  let extra = null, page = null, agentRun = null;
+  if (o.agent) {
+    const ao = agentOpts(store, o);
+    extra = LiveView.liveRoutes({ store, stateDir: ao.stateDir, agent: ao.agent, ghConfig: ao.ghConfig, audit: Sec.auditor(store.dir) }); page = LiveView.LIVE_HTML;
+    agentRun = Agent.start(store, ao, { onTick: r => console.log(agentLine(r)), before: ao.before });
+  }
+  const srv = Ingest.server(pipe, { site: o.site && o.site !== true ? o.site : undefined, tokens, audit: Sec.auditor(store.dir), extra, page });
   await new Promise(r => srv.listen(port, host, r));
-  console.log(`fleetops on http://${host}:${port}  store ${store.dir}  ${tokens ? `${tokens.length} token(s)` : 'open (no tokens)'}${process.env.FLEETOPS_EGRESS_ALLOW != null ? `  egress: ${process.env.FLEETOPS_EGRESS_ALLOW || 'none'}` : ''}\n  POST /api/v1/write /v1/metrics /v1/logs /v1/traces   GET /api/summary /api/query /api/series /api/incidents /api/diagnose /metrics /healthz`);
-  const stop = () => { srv.close(); pipe.stop(); if (store.close) store.close(); process.exit(0); };
+  console.log(`fleetops on http://${host}:${port}  store ${store.dir}  ${tokens ? `${tokens.length} token(s)` : 'open (no tokens)'}${process.env.FLEETOPS_EGRESS_ALLOW != null ? `  egress: ${process.env.FLEETOPS_EGRESS_ALLOW || 'none'}` : ''}\n  POST /api/v1/write /v1/metrics /v1/logs /v1/traces   GET /api/summary /api/query /api/series /api/incidents /api/diagnose /metrics /healthz${o.agent ? `\n  agent every ${agentOpts(store, o).agent.intervalS ?? Agent.AGENT_DEFAULTS.intervalS} s${o.live ? ' (live: still needs policy.dryRun false)' : ' (dry run)'}; dashboard http://${host}:${port}/live` : ''}`);
+  const stop = () => { if (agentRun) agentRun.stop(); srv.close(); pipe.stop(); if (store.close) store.close(); process.exit(0); };
   process.on('SIGINT', stop); process.on('SIGTERM', stop);
   await new Promise(() => {});
 }

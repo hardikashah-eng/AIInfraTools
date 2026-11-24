@@ -5,7 +5,7 @@ services:
   fleetops:
     build: { context: ../.., dockerfile: fleetops/Dockerfile }
     image: ${FLEETOPS_IMAGE:-fleetops:local}
-    command: [serve, --host, 0.0.0.0, --port, "9400", --store, /data, --backend, parquet, --tokens, /etc/fleetops/tokens.jsonl]
+    command: [serve, --agent, --host, 0.0.0.0, --port, "9400", --store, /data, --backend, parquet, --tokens, /etc/fleetops/tokens.jsonl]
     ports: ["${FLEETOPS_PORT:-9400}:9400"]
     volumes:
       - fleetops-data:/data

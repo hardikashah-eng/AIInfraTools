@@ -183,6 +183,28 @@ Milestones 5–10 close those gaps, in the order they should be built.
 
 **Status:** built ([fleetops/docs/SERVICE.md](fleetops/docs/SERVICE.md)): read API and Grafana dashboard, tokens with roles and tenant scopes, audit, redaction at ingest, on-prem egress allowlist, Prometheus guards, exporter contract tests, a Dockerfile and a Kubernetes manifest. Checked in tests; not yet run on a real cluster.
 
+### 11. Live agent and dashboard
+
+- **An agent in the service:**
+  - watches training and inference as data streams in;
+  - diagnoses each incident and mitigates it from a playbook per cause, within the gpu-health policy;
+  - verifies the mitigation, and pages a person when it can't act or the mitigation didn't work.
+- **Guardrails:**
+  - confidence decides how far it goes;
+  - a monitoring gap freezes it;
+  - blast-radius caps and an hourly limit on autonomous changes;
+  - pause;
+  - approvals by named people;
+  - nothing runs unless both locks are open.
+- **A live dashboard:** GPU states and flakiness, incidents and the agent's decisions, training step times and serving
+  latency, approvals.
+
+**Done when:** in shadow mode the agent's decisions can be compared with on-call's for a week, and each action kind can
+be made live on its own.
+
+**Status:** built ([fleetops/docs/AGENT.md](fleetops/docs/AGENT.md)). Tested on the benchmark scenarios with a fake
+runner. It has not yet run against a real cluster.
+
 ## Order and why
 
 1. **Data first.** Every later step needs the same inputs, and the change feed is the single most predictive signal for incidents.
@@ -193,6 +215,7 @@ Milestones 5–10 close those gaps, in the order they should be built.
 6. **Measure before tuning (6).** Without a labeled benchmark, every rule change is a guess. Fault injection makes labels cheap.
 7. **Scale before connecting a real fleet (7).**
 8. **Then depth and workflow (8–10):** per-request and per-rank detail, incident handling, and running as a service.
+9. **Acting last (11).** The agent reuses every piece before it: the store, detection, diagnosis, incidents, gpu-health's queue and locks. It starts as a shadow so its decisions are measured before any of them run.
 
 ## Public data used for validation
 

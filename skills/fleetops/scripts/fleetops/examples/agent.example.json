@@ -1,0 +1,11 @@
+{
+  "intervalS": 30,
+  "windowS": 3600,
+  "minFailures": 5,
+  "verifyAfterS": 600,
+  "maxAutoActionsPerHour": 6,
+  "maxCordonShare": 0.1,
+  "targets": { "chat-70b": { "ttftP99": 1.0, "tpotP99": 0.05 } },
+  "pools": { "chat-70b": { "namespace": "serving" } },
+  "page": { "to": "pagerduty", "minSeverity": "sev2" }
+}

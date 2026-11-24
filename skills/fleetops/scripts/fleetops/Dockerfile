@@ -15,4 +15,4 @@ RUN mkdir -p /data && chown node:node /data   # a named volume mounted here star
 USER node
 EXPOSE 9400
 ENTRYPOINT ["node", "tools/fleetops.mjs"]
-CMD ["serve", "--host", "0.0.0.0", "--port", "9400", "--store", "/data", "--backend", "parquet", "--tokens", "/etc/fleetops/tokens.jsonl"]
+CMD ["serve", "--agent", "--host", "0.0.0.0", "--port", "9400", "--store", "/data", "--backend", "parquet", "--tokens", "/etc/fleetops/tokens.jsonl"]

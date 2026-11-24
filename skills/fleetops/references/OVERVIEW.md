@@ -71,9 +71,26 @@ Spans (OTLP, or forwarded clock-corrected by hybrid-tracing) become per-request 
 
 `fleetops serve` also answers a read API (`/api/query`, `/api/series` for Grafana, `/api/incidents`, `/api/diagnose`). Tokens have roles (ingest, read, admin) and tenant scopes (namespaces, pools, clusters, infra); only their hashes are stored. Every read is audited. Prompts, completions and secrets are redacted at ingest. `--on-prem` refuses outbound calls to unlisted hosts. Optimizer guards can query Prometheus at check time. Exporter formats are pinned by contract tests. A Dockerfile, a Kubernetes manifest and a Grafana dashboard are in `Dockerfile` and `deploy/`. See [docs/SERVICE.md](SERVICE.md).
 
+## Live agent and dashboard
+
+`fleetops serve --agent` checks the fleet every 30 seconds as data streams in. It finds job failures, latency regressions, slow training steps and hangs, diagnoses each one, and mitigates it within the gpu-health policy:
+- **training:** cordon a slow-link or hung node, reset a straggler's clocks, swap a node out at the next checkpoint;
+- **inference:** drain a slow replica, scale a pool out;
+- **changes:** roll back a bad Helm revision.
+
+Ten minutes later it checks whether the symptom cleared and pages a person when it didn't.
+
+Guardrails:
+- confidence decides how far it goes (medium only contains, low only pages);
+- a monitoring gap freezes it;
+- cordons and autonomous changes are capped, and a Pause button stops it;
+- nothing runs unless both locks are open.
+
+The same process serves `/live`: GPU states and flakiness, incidents and what the agent did, training step times, serving latency, and approve and reject buttons for what it proposed. Without `--live` it is a shadow: it decides and logs everything, runs nothing, and reports whether each incident cleared on its own. See [docs/AGENT.md](AGENT.md).
+
 ## Try it without a fleet
 
-`fleetops demo --store demo [--scenario slow-link]` writes a fleet with one planted cause (any of the 17 benchmark scenarios; `--list` names them) and prints the detect, diagnose and incident commands to run, and the answer to check against.
+`fleetops demo --store demo [--scenario slow-link]` writes a fleet with one planted cause (any of the 17 benchmark scenarios; `--list` names them) and prints the detect, diagnose and incident commands to run, and the answer to check against. Add `--now` to move it so the incident is happening now, then `fleetops serve --agent --store demo` and open http://127.0.0.1:9400/live.
 
 fleetops is also an [Agent Skill](../skills/fleetops/SKILL.md), so a model can run it for you.
 
@@ -116,6 +133,8 @@ src/calibrate.mjs        FleetScope pool and Inference Sizer fits, held-out chec
 src/rca.mjs              incident detection, causal rules, ranked hypotheses with evidence, evaluation
 src/detect.mjs           seasonal baselines, Poisson and z-score CUSUM, incident grouping
 src/bench.mjs            labeled scenarios, accuracy per cause, injected/postmortem scoring, fitted weights
+src/agent.mjs            the live agent: detect → diagnose → playbook → guardrails → act → verify → page
+src/live.mjs             the /live dashboard and its API (state, approvals, pause)
 src/inject.mjs           fault injection for a test cluster: allowlist, dry-run, undo, labels
 src/memstore.mjs         the store interface in memory (benchmark, tests)
 src/parquet-store.mjs    the store interface on Parquet + DuckDB (worker thread, synchronous facade)

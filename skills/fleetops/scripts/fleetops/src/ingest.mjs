@@ -184,14 +184,18 @@ export class Pipeline {
 
 // HTTP server over a pipeline: ingest endpoints, the read API (api.mjs), auth by token when `tokens` is given, every
 // API call audited.
-export function server(pipe, { site, maxBody = 32 << 20, tokens = null, audit = null, store = pipe.store } = {}) {
+// extra: optional (req, res, who, send) → true when it answered (the live dashboard's routes); page: HTML served at /live
+export function server(pipe, { site, maxBody = 32 << 20, tokens = null, audit = null, store = pipe.store, extra = null, page = null } = {}) {
   const read = req => new Promise((res, rej) => { const parts = []; let n = 0; req.on('data', d => { n += d.length; if (n > maxBody) { rej(Object.assign(new Error('body too large'), { code: 413 })); req.destroy(); } else parts.push(d); }); req.on('end', () => res(Buffer.concat(parts))); req.on('error', rej); });
   const send = (res, code, body = '', type = 'text/plain') => { res.writeHead(code, Object.assign({ 'content-type': type }, code === 429 ? { 'retry-after': '1' } : {})); res.end(body); };
   return http.createServer(async (req, res) => {
     try {
       if (req.method === 'GET' && req.url === '/healthz') return send(res, 200, 'ok\n');
+      // the page holds no data: its API calls carry the token
+      if (page && req.method === 'GET' && (req.url === '/live' || req.url === '/')) { res.writeHead(200, { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store', 'x-content-type-options': 'nosniff', 'x-frame-options': 'DENY' }); return res.end(page); }
       const who = authenticate(tokens, req.headers.authorization);
       if (!who) return send(res, 401, 'a valid bearer token is required\n');
+      if (extra && await extra(req, res, who, send)) return;
       if (req.method === 'GET' && req.url === '/metrics') return can(who, 'read') ? send(res, 200, pipe.metrics(), 'text/plain; version=0.0.4') : send(res, 403, 'needs the read role\n');
       if (req.method === 'GET' && req.url.startsWith('/api/')) {
         if (!can(who, 'read')) { if (audit) audit({ who: who.name, method: 'GET', path: req.url, status: 403 }); return send(res, 403, 'needs the read role\n'); }
