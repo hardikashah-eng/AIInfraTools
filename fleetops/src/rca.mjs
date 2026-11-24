@@ -78,8 +78,14 @@ function context(store, inc, { lookbackH = 24 } = {}) {
   c.placements = store.query('placement', { to }).filter(p => (p.end == null || p.end > before));
   c.changes = store.query('change', { from: before, to });
   c.health = store.query('health', { from: before, to });
-  c.devices = store.query('device', { from: from - 2 * H, to });
-  c.devicesBefore = store.query('device', { from: before, to: from - 2 * H });
+  // Device telemetry is the biggest kind by far (10,000 GPUs at 10 s is 86M samples a day), and the rules need only:
+  // faulty or offline samples near the incident, and which devices reported when. Those are narrow queries (pushed
+  // down to DuckDB on the Parquet backend); the day before comes from the hourly rollup when the store has one.
+  const bad = d => (d.faults || []).length > 0 || (d.offlineMinutes || 0) > 0;
+  c.devices = store.query('device', { from: from - 2 * H, to, where: bad, sql: 'bad' });
+  c.deviceSeen = store.distinct('device', ['node', 'gpu'], { from: from - 2 * H, to });
+  c.deviceNow = store.distinct('device', ['node', 'gpu'], { from, to });
+  c.deviceBefore = (store.coarse || store).distinct('device', ['node', 'gpu'], { from: before, to: from - 2 * H });
   c.serving = store.query('serving', { from: before, to });
   c.calibration = store.query('calibration', { to });
   // logs: the whole lookback (for baselines) and the incident window (2 h lead-in)
@@ -138,7 +144,7 @@ const RULES = {
     const nodes = new Set(f.filter(j => meta(j)[dim] === top.k).flatMap(nodesOf));
     const runMin = median(f.filter(j => meta(j)[dim] === top.k && j.start != null).map(j => (j.end ?? j.t) - j.start)) / 60;
     // what the devices under those jobs were doing: telemetry that stayed up and fault-free argues against hardware
-    const seen = new Set(c.devices.map(d => d.node)), watched = [...nodes].filter(n => seen.has(n));
+    const seen = new Set(c.deviceSeen.map(d => d.node)), watched = [...nodes].filter(n => seen.has(n));
     const bad = [...c.devices.filter(d => nodes.has(d.node) && ((d.offlineMinutes || 0) > 0 || (d.faults || []).length)), ...c.logsWin.filter(l => nodes.has(l.node) && isHardwareLog(l))];
     // the tenant's own job logs: application errors (CUDA OOM, illegal access) support "it's their workload"
     const appErr = c.logsWin.filter(l => l.class === 'app' && l.job && (c.jobMeta.get(String(l.job).split('#')[0]) || {})[dim] === top.k);
@@ -374,8 +380,7 @@ const RULES = {
   // Telemetry vanished: the symptom may be the monitoring, not the fleet.
   'monitoring-gap'(c) {
     // devices reporting during the incident vs before it (the 2 h lead-in would still count devices that went silent)
-    const per = d => new Set(d.map(x => x.node + '/' + x.gpu)).size;
-    const now = per(c.devices.filter(d => d.t > c.from)), before = per(c.devicesBefore);
+    const now = c.deviceNow.length, before = c.deviceBefore.length;
     if (!before || now >= 0.7 * before) return null;
     return {
       cause: 'monitoring-gap', title: `Telemetry from ${before - now} of ${before} devices stopped`, score: clamp01(0.3 + 0.6 * (1 - now / before)),

@@ -3,7 +3,10 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { DataStore, whereFrom } from '../src/store.mjs';
+import { DataStore, whereFrom, openStore, SCHEMA } from '../src/store.mjs';
+import * as Retention from '../src/retention.mjs';
+import { migrate } from '../src/migrate.mjs';
+import * as Ingest from '../src/ingest.mjs';
 import { readLines } from '../src/lines.mjs';
 import * as Philly from '../src/adapters/philly.mjs';
 import * as Pub from '../src/adapters/public.mjs';
@@ -28,6 +31,12 @@ const HELP = `fleetops — shared data layer for AIInfraTools
   fleetops data summary [--store DIR]                             records per kind, time range and sources
   fleetops data query KIND [--from T] [--to T] [--where k=v]... [--limit N]
   fleetops data node NODE [--from T] [--to T]                    versions, shared switch/rack/PDU, log faults, changes
+  fleetops data rollup [--steps 60,3600]                         minute and hour device rollups (rollup-60/, rollup-3600/)
+  fleetops data compact [--raw-days 7] [--apply]                 drop old raw device/request/span days after rolling up,
+                                                                 keeping incident windows at full resolution (keep/)
+  fleetops data migrate [--apply]                                bring the store to the current schema version
+  fleetops serve [--port 9400] [--host 127.0.0.1] [--site S] [--max-queue 200000] [--flush-ms 1000]
+        ingest Prometheus remote_write and OTLP/HTTP JSON (metrics, logs, traces) into the store
   fleetops data export gpu-health --out DIR [--from T] [--to T]   samples.jsonl, jobs.json, results.jsonl for gpu-health
   fleetops data export fleetscope-trace --out FILE [--pool P]     CSV for FleetScope's Trace replay node
 
@@ -93,7 +102,8 @@ Optimization with safe execution (rollback is automatic; applying a stage always
   fleetops optimize verify --plan plan.json [--days 7]     before/after GPU-hours and guard breaches → an optimization record
   Approve a stage with: gpu-health actions approve ID --by NAME --state DIR   (DIR defaults to <store>/rollouts/state)
 
-Times (T) are ISO dates or epoch seconds. Common: --store DIR (default ./fleet-data), --json.`;
+Times (T) are ISO dates or epoch seconds. Common: --store DIR (default ./fleet-data), --backend jsonl|parquet (new stores;
+parquet needs \`npm install --no-save @duckdb/node-api@2.0.1-r.1\` in fleetops/), --json.`;
 
 function args(argv) {
   const o = { _: [], where: [] };
@@ -187,7 +197,11 @@ async function main() {
   J = !!o.json;
   const [area, cmd, ...rest] = o._;
   if (!area || o.help || area === 'help') return console.log(HELP);
-  const store = new DataStore(o.store && o.store !== true ? o.store : 'fleet-data');
+  const store = await openStore(o.store && o.store !== true ? o.store : 'fleet-data', { backend: o.backend && o.backend !== true ? o.backend : undefined });
+  // the hourly rollup answers long lookbacks (root-cause "day before") when it exists
+  if (fs.existsSync(path.join(store.dir, 'rollup-3600', 'device'))) store.coarse = await Retention.rollupStore(store, 3600);
+  if (store.meta && store.meta.schema < SCHEMA && !(area === 'data' && cmd === 'migrate')) console.error(`note: store ${store.dir} is schema ${store.meta.schema}; run \`fleetops data migrate --apply\` to bring it to ${SCHEMA}`);
+  if (area === 'serve') return serve(store, o);
   if (area === 'calibrate') return calibrate(store, cmd, o);
   if (area === 'rca') return rca(store, cmd, o);
   if (area === 'optimize') return optimize(store, cmd, o);
@@ -214,6 +228,29 @@ async function main() {
     const rows = store.query(kind, { from: time(o.from), to: time(o.to), where: whereFrom(o.where), limit: o.limit ? +o.limit : 1000 });
     if (J) { OUT.records = rows; return; }
     for (const r of rows) console.log(JSON.stringify(r));
+    return;
+  }
+  if (cmd === 'rollup') {
+    const r = await Retention.rollup(store, { steps: o.steps && o.steps !== true ? String(o.steps).split(',').map(Number) : undefined });
+    if (J) { OUT.rollup = r; return; }
+    for (const x of r) say(`  ${x.day}  ${x.step} s: ${x.raw != null ? `${x.raw} samples → ` : ''}${x.rolled} records`);
+    if (!r.length) say('  nothing new to roll up');
+    return;
+  }
+  if (cmd === 'compact') {
+    const r = await Retention.compact(store, { rawDays: o['raw-days'] ? +o['raw-days'] : 7, apply: !!o.apply });
+    if (J) { OUT.compact = r; return; }
+    say(`raw high-volume days before ${r.cutoff}: ${r.plan.length}${r.applied ? '' : ' (dry run: --apply to roll up, keep incident windows and drop them)'}`);
+    for (const p of r.plan) say(`  ${p.kind.padEnd(7)} ${p.day}${p.keepWindows ? `  ${p.keepWindows} incident window(s)${p.kept != null ? `: ${p.kept} records kept` : ''}` : ''}${p.dropped ? '  dropped' : ''}`);
+    return;
+  }
+  if (cmd === 'migrate') {
+    const r = migrate(store, { apply: !!o.apply });
+    if (J) { OUT.migrate = r; return; }
+    if (r.from >= r.to) return say(`store is at schema ${r.to}: nothing to do`);
+    const changed = r.steps.filter(x => x.changed);
+    say(`schema ${r.from} → ${r.to}: ${changed.length} day file(s) with ${changed.reduce((t, x) => t + x.changed, 0)} records to change${r.applied ? ' — done' : ' (dry run: --apply to rewrite)'}`);
+    for (const x of changed.slice(0, 20)) say(`  v${x.to} ${x.kind} ${x.day}: ${x.changed} of ${x.records}  (${x.what})`);
     return;
   }
   if (cmd === 'node') {
@@ -471,6 +508,18 @@ async function optimize(store, cmd, o) {
     return;
   }
   throw new Error(`unknown: optimize ${cmd}\n\n${HELP}`);
+}
+
+// Streaming ingestion: remote_write and OTLP/HTTP (JSON) into the store.
+async function serve(store, o) {
+  const pipe = new Ingest.Pipeline(store, { maxQueue: o['max-queue'] ? +o['max-queue'] : 200000, flushMs: o['flush-ms'] ? +o['flush-ms'] : 1000 }).start();
+  const srv = Ingest.server(pipe, { site: o.site && o.site !== true ? o.site : undefined });
+  const port = o.port ? +o.port : 9400, host = o.host && o.host !== true ? o.host : '127.0.0.1';
+  await new Promise(r => srv.listen(port, host, r));
+  console.log(`fleetops ingest on http://${host}:${port}  store ${store.dir}\n  POST /api/v1/write (Prometheus remote_write)  /v1/metrics /v1/logs /v1/traces (OTLP JSON)  GET /metrics /healthz`);
+  const stop = () => { srv.close(); pipe.stop(); if (store.close) store.close(); process.exit(0); };
+  process.on('SIGINT', stop); process.on('SIGTERM', stop);
+  await new Promise(() => {});
 }
 
 const self = fileURLToPath(import.meta.url);

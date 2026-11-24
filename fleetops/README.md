@@ -55,6 +55,10 @@ Root-cause analysis uses them to point at a GPU seen failing only in dmesg, a ba
 
 `fleetops rca bench` scores root-cause analysis on labeled incidents: synthetic scenarios with distractors, faults injected on a test cluster (`fleetops inject`, dry-run unless `--live`, targets limited to an allowlist), and postmortems. It reports top-1/top-3 per cause and whether the right component was named, fits rule weights on real labels (`--fit`), and gates CI. Detection now uses seasonal baselines and CUSUM change-point detection, with grouping. The benchmark's first run found and fixed eight weaknesses in the rules (73% → 99% top-1 on scenarios not used for tuning). See [docs/BENCHMARK.md](docs/BENCHMARK.md), including three ways to test against production traces.
 
+## Production volume
+
+A Parquet backend queried with DuckDB (`--backend parquet`; optional dependency) sits behind the same store interface. `fleetops serve` ingests Prometheus remote_write and OTLP/HTTP JSON (metrics, logs, traces), with backpressure, idempotent dedupe and its own metrics. `data rollup` and `data compact` keep minute and hour rollups and incident windows at full resolution while old raw days are dropped. `data migrate` handles schema versions. Measured at 10,000 GPUs every 10 s (90M samples): ingest at 9× the rate needed on one thread, and a 24-hour root-cause query in 1.2 s (0.6 s with the hourly rollup). See [docs/SCALE.md](docs/SCALE.md).
+
 ## Optimization with safe execution
 
 `fleetops optimize` collects candidate changes from gpu-health (right-sizing, scale-in, reclaiming idle GPUs), rca (retry storms) and FleetScope (the cheapest pool sizes that still meet the SLO). It picks a set that meets a savings goal without double-counting or touching protected classes, and stages it in gpu-health's approval queue. Each stage needs its own approval, runs dry unless both locks are open, and is followed by an SLO guard. A regression rolls back to the last verified state automatically. Applying a change never is automatic. See [docs/OPTIMIZE.md](docs/OPTIMIZE.md).
@@ -92,6 +96,12 @@ src/detect.mjs           seasonal baselines, Poisson and z-score CUSUM, incident
 src/bench.mjs            labeled scenarios, accuracy per cause, injected/postmortem scoring, fitted weights
 src/inject.mjs           fault injection for a test cluster: allowlist, dry-run, undo, labels
 src/memstore.mjs         the store interface in memory (benchmark, tests)
+src/parquet-store.mjs    the store interface on Parquet + DuckDB (worker thread, synchronous facade)
+src/ingest.mjs           remote_write and OTLP receivers, bounded dedupe pipeline, fleetops serve
+src/proto.mjs            Snappy and the remote_write protobuf, no dependencies
+src/retention.mjs        rollups, retention with incident windows kept
+src/migrate.mjs          schema versions and migrations
+tools/bench-scale.mjs    ingest and 24 h root-cause benchmark
 src/optimize.mjs         candidates, selection, staged rollout through gpu-health's queue, guards, rollback, verify
 tools/fleetops.mjs       CLI
 tools/fetch-public-data.sh

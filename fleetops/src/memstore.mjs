@@ -31,6 +31,11 @@ export class MemStore {
     for (const r of this.scan(kind, opts)) { out.push(r); if (opts.limit && out.length >= opts.limit) break; }
     return out;
   }
+  distinct(kind, fields, opts = {}) {
+    const seen = new Map();
+    for (const r of this.scan(kind, opts)) { const k = fields.map(f => r[f]).join('\u0000'); if (!seen.has(k)) seen.set(k, Object.fromEntries(fields.map(f => [f, r[f] == null ? null : String(r[f])]))); }
+    return [...seen.values()];
+  }
   summary() {
     const out = {};
     for (const [kind, arr] of Object.entries(this.data)) {
