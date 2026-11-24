@@ -1,0 +1,30 @@
+# Runs gpu-ledger's tests and its demo end to end.
+name: GPU Ledger
+on:
+  pull_request:
+    paths:
+      - 'gpu-ledger/**'
+      - 'inference-sizer/src/**'
+      - '.github/workflows/gpu-ledger.yml'
+permissions:
+  contents: read
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Tests
+        working-directory: gpu-ledger
+        run: npm test
+      - name: Demo runs, finds the planted waste and writes FOCUS and HTML
+        working-directory: gpu-ledger
+        run: |
+          node tools/ledger.mjs demo --out /tmp/ld
+          node tools/ledger.mjs insights --usage /tmp/ld/usage.jsonl --config /tmp/ld/ledger.json | grep -q 'sweep-lr failed 9 times and never succeeded'
+          node tools/ledger.mjs focus --usage /tmp/ld/usage.jsonl --config /tmp/ld/ledger.json --out /tmp/ld/focus.csv
+          head -1 /tmp/ld/focus.csv | grep -q '^BilledCost,BillingAccountId'
+          node tools/ledger.mjs report --usage /tmp/ld/usage.jsonl --config /tmp/ld/ledger.json --format html --out /tmp/ld/ledger.html
+          test -s /tmp/ld/ledger.html
