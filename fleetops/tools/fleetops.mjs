@@ -15,6 +15,9 @@ import { writeGpuHealth, toFleetScopeTrace } from '../src/export.mjs';
 import * as Calib from '../src/calibrate.mjs';
 import * as RCA from '../src/rca.mjs';
 import * as Opt from '../src/optimize.mjs';
+import * as Detect from '../src/detect.mjs';
+import * as Bench from '../src/bench.mjs';
+import * as Inject from '../src/inject.mjs';
 import { loadConfig as ghConfig } from '../../gpu-health/src/config.mjs';
 import { createRequire } from 'node:module';
 const FSIN = createRequire(import.meta.url)('../../fleetscope/src/ingest.js');
@@ -65,10 +68,19 @@ Calibration (fits are stored as calibration records; profiles are JSON files the
   fleetops calibrate apply --graph G --profile P --out G2      write the multipliers into a FleetScope graph
 
 Root-cause analysis (diagnoses are stored as incident records):
-  fleetops rca detect [--from T] [--to T] [--min-failures 50] [--ratio 4] [--targets targets.json] [--diagnose] [--format md]
-        find job-failure spikes and serving latency regressions; --diagnose ranks causes for each
+  fleetops rca detect [--from T] [--to T] [--min-failures 20] [--targets targets.json] [--diagnose] [--format md]
+        find job-failure and latency incidents (seasonal baseline + CUSUM, grouped); --diagnose ranks causes for each
   fleetops rca diagnose --symptom job-failures|latency|device --from T --to T [--pool P] [--nodes n1,n2] [--format md]
   fleetops rca eval --labels FILE      top-1 / top-3 accuracy on labeled incidents (JSON lines: { incident, cause })
+  fleetops rca bench [--per-cause 10] [--seed 1] [--only PREFIX] [--injections] [--labels FILE] [--weights W] [--fit OUT]
+        [--min-top1 0.8] [--min-top3 0.95]
+        accuracy per cause on synthetic scenarios (default), injected faults and/or postmortem labels; --fit writes rule
+        weights fitted on the labels (held-out accuracy reported); exit 5 below the bar
+  detect/diagnose/bench take --weights W. detect: --method cusum (default) | threshold, --bin S, --group-gap S, --where k=v
+
+Fault injection on a TEST cluster (dry-run unless --live; every target must be in the --allow file):
+  fleetops inject list
+  fleetops inject FAULT --allow FILE [--for S] [--live] [--expect RULE] --param value …   writes an injection label
 
 Optimization with safe execution (rollback is automatic; applying a stage always needs approval):
   fleetops optimize candidates [--from T] [--to T] [--price 4] [--max-attempts 2] [--graph G [--trace-pool P [--trace-from T --trace-to T]] [--target 0.99]] [--out cands.json]
@@ -179,6 +191,7 @@ async function main() {
   if (area === 'calibrate') return calibrate(store, cmd, o);
   if (area === 'rca') return rca(store, cmd, o);
   if (area === 'optimize') return optimize(store, cmd, o);
+  if (area === 'inject') return inject(store, cmd, o);
   if (area !== 'data') throw new Error(`unknown command "${area}"\n\n${HELP}`);
   if (cmd === 'import') {
     const [src, ...files] = rest;
@@ -300,19 +313,26 @@ async function rca(store, cmd, o) {
       say(`     ${d.narrative}`);
     }
   };
+  const weights = o.weights && o.weights !== true ? JSON.parse(read(o.weights)) : undefined;
   if (cmd === 'detect') {
-    const from = time(o.from), to = time(o.to);
-    const incs = [...RCA.detectJobFailureSpikes(store, { from, to, minFailures: o['min-failures'] ? +o['min-failures'] : 50, ratio: o.ratio ? +o.ratio : 4 }),
-      ...RCA.detectServingRegressions(store, { from, to, targets: o.targets && o.targets !== true ? JSON.parse(read(o.targets)) : {} })];
-    if (!o.diagnose) { if (J) OUT.incidents = incs; else for (const i of incs) say(`${i.id}${i.failures ? `  ${i.failures} failures (baseline ${i.baselinePerHour}/h)` : `  peak ${i.peak.toFixed(3)} s > ${i.limit.toFixed(3)} s`}`); return; }
-    const ds = incs.map(i => RCA.diagnose(store, i));
+    const from = time(o.from), to = time(o.to), targets = o.targets && o.targets !== true ? JSON.parse(read(o.targets)) : {};
+    const where = whereFrom(o.where);
+    let incs;
+    if (o.method === 'threshold') incs = [...RCA.detectJobFailureSpikes(store, { from, to, minFailures: o['min-failures'] ? +o['min-failures'] : 50, ratio: o.ratio ? +o.ratio : 4 }), ...RCA.detectServingRegressions(store, { from, to, targets })];
+    else incs = Detect.groupIncidents([...Detect.detectJobFailures(store, { from, to, binS: o.bin ? +o.bin : 600, minFailures: o['min-failures'] ? +o['min-failures'] : 20, where }), ...Detect.detectServing(store, { from, to, targets })], { gapS: o['group-gap'] ? +o['group-gap'] : 1800 });
+    if (!o.diagnose) {
+      if (J) { OUT.incidents = incs; return; }
+      for (const i of incs) say(`${i.id}  ${i.failures != null ? `${i.failures} failures` : `${i.metric} peak ${i.peak.toFixed(3)}${i.limit ? ` > ${i.limit.toFixed(3)}` : i.baseline != null ? ` vs ${i.baseline.toFixed(3)}` : ''}`}${i.alarmAt ? `, alarm ${Math.round((i.alarmAt - i.from) / 60)} min after onset` : ''}, ${((i.to - i.from) / 3600).toFixed(1)} h${i.merged ? `, ${i.merged.length + 1} merged` : ''}${i.related ? `; related: ${i.related.join(', ')}` : ''}`);
+      return;
+    }
+    const ds = incs.map(i => RCA.diagnose(store, i, { weights }));
     store.append('incident', ds);
     return show(ds);
   }
   if (cmd === 'diagnose') {
     if (!o.symptom || !o.from || !o.to) throw new Error('--symptom job-failures|latency|device --from T --to T');
     const inc = { symptom: o.symptom, from: time(o.from), to: time(o.to), pool: o.pool !== true ? o.pool : undefined, nodes: o.nodes && o.nodes !== true ? String(o.nodes).split(',') : undefined, metric: o.metric };
-    const d = RCA.diagnose(store, inc);
+    const d = RCA.diagnose(store, inc, { weights });
     store.append('incident', [d]);
     return show([d]);
   }
@@ -325,7 +345,59 @@ async function rca(store, cmd, o) {
     for (const x of r.rows) say(`  ${x.id}: labeled ${x.cause}, ranked ${x.rank ?? 'not found'} (${x.got.join(', ')})`);
     return;
   }
+  if (cmd === 'bench') return bench(store, o, weights);
   throw new Error(`unknown: rca ${cmd}\n\n${HELP}`);
+}
+
+// The root-cause benchmark: synthetic scenarios (default), injected faults (--injections), postmortem labels (--labels).
+async function bench(store, o, weights) {
+  const pct = v => (v == null ? '–' : `${(v * 100).toFixed(1)}%`);
+  const rows = [], parts = [];
+  const useSynth = !o.injections && !o.labels || o.synthetic;
+  if (useSynth) { const r = Bench.run(Bench.generate({ perCause: o['per-cause'] ? +o['per-cause'] : 10, seed: o.seed ? +o.seed : 1, only: o.only && o.only !== true ? String(o.only).split(',') : undefined }), { weights }); rows.push(...r.rows); parts.push('synthetic'); }
+  let inj = null;
+  if (o.injections) { inj = Bench.evalInjections(store, { weights, from: time(o.from), to: time(o.to) }); rows.push(...inj.rows.filter(r => r.cause)); parts.push('injected'); }
+  if (o.labels && o.labels !== true) {
+    const labeled = read(o.labels).split(/\r?\n/).filter(l => l.trim()).map(l => JSON.parse(l)).map(l => Object.assign(l, { incident: Object.assign({}, l.incident, { from: time(l.incident.from), to: time(l.incident.to) }) }));
+    rows.push(...Bench.evalLabels(store, labeled, { weights })); parts.push('postmortem');
+  }
+  let sum = Bench.summarize(rows), fitted = null;
+  if (o.fit && o.fit !== true) {
+    // fit on half, report the other half; then fit on all for the file
+    const train = rows.filter((_, i) => i % 2 === 0), test = rows.filter((_, i) => i % 2 === 1);
+    const wHalf = Bench.fitWeights(train), testBefore = Bench.summarize(test), testAfter = Bench.applyWeights(test, wHalf);
+    const w = Bench.fitWeights(rows), perCause = {};
+    for (const r of rows) perCause[r.cause] = (perCause[r.cause] || 0) + 1;
+    const thin = Object.entries(perCause).filter(([, n]) => n < 5).map(([c]) => c);
+    fitted = { rules: w, fittedOn: { sources: parts, incidents: rows.length, perCause }, heldOut: { top1Before: testBefore.top1, top1After: testAfter.top1 },
+      warnings: [...(parts.every(p => p === 'synthetic') ? ['fitted on synthetic scenarios only: these weights learn the generator, not your fleet; fit on injected or postmortem labels before using them'] : []), ...(thin.length ? [`fewer than 5 labeled incidents for: ${thin.join(', ')}`] : [])] };
+    fs.writeFileSync(o.fit, JSON.stringify(fitted, null, 1));
+  }
+  if (J) { Object.assign(OUT, { benchmark: { sources: parts, top1: sum.top1, top3: sum.top3, lenientTop1: sum.lenientTop1, componentTop1: sum.componentTop1, byScenario: sum.byScenario, misses: sum.misses.map(m => ({ id: m.id, cause: m.cause, top: m.top, rank: m.rank })) }, injections: inj && { injections: inj.injections, detected: inj.detected, delayP50: inj.delayP50, delayP90: inj.delayP90, rows: inj.rows.map(({ hyps, ...r }) => r) }, fitted }); }
+  else {
+    say(`${sum.incidents} labeled incidents (${parts.join(' + ')}): top-1 ${pct(sum.top1)}, top-3 ${pct(sum.top3)}${sum.lenientTop1 !== sum.top1 ? `, top-1 counting equivalent causes ${pct(sum.lenientTop1)}` : ''}${sum.componentTop1 != null ? `, component named ${pct(sum.componentTop1)}` : ''}`);
+    for (const [k, b] of Object.entries(sum.byScenario)) say(`  ${(b.top1 + '/' + b.n).padStart(7)}  ${k}${b.top1 < b.n ? `   ranked first: ${Object.entries(b.tops).map(([r, n]) => `${r} ${n}`).join(', ')}` : ''}`);
+    if (inj) say(`injected faults: ${inj.injections}, detected ${pct(inj.detected)}, alarm after ${inj.delayP50 != null ? Math.round(inj.delayP50 / 60) : '–'} min (p50) / ${inj.delayP90 != null ? Math.round(inj.delayP90 / 60) : '–'} min (p90)`);
+    if (inj) for (const r of inj.rows) say(`  ${r.id}: ${r.detected ? `detected after ${Math.round(r.delayS / 60)} min` : 'not detected'}; ${r.cause ? `expected ${r.cause}, ranked ${r.rank ?? 'not found'} (top: ${r.top || 'none'})` : `top: ${r.top || 'none'} (detection only)`}`);
+    if (fitted) { say(`weights written to ${o.fit}: ${Object.entries(fitted.rules).filter(([, v]) => v !== 1).map(([k, v]) => `${k} ×${v}`).join(', ') || 'all 1'}; held-out top-1 ${pct(fitted.heldOut.top1Before)} → ${pct(fitted.heldOut.top1After)}`); for (const w of fitted.warnings) say(`  warning: ${w}`); }
+  }
+  const minT1 = o['min-top1'] ? +o['min-top1'] : null, minT3 = o['min-top3'] ? +o['min-top3'] : null;
+  if ((minT1 != null && sum.top1 < minT1) || (minT3 != null && sum.top3 < minT3)) { console.error(`below the bar: top-1 ${pct(sum.top1)} (min ${pct(minT1)}), top-3 ${pct(sum.top3)} (min ${pct(minT3)})`); process.exitCode = 5; }
+}
+
+// Fault injection on a test cluster (dry-run unless --live; targets must be in the --allow file).
+async function inject(store, cmd, o) {
+  if (!cmd || cmd === 'list') {
+    if (J) { OUT.faults = Object.fromEntries(Object.entries(Inject.FAULTS).map(([k, f]) => [k, { what: f.what, params: Object.keys(f.params), expect: f.expect, undo: !!f.revert, note: f.note }])); return; }
+    for (const [k, f] of Object.entries(Inject.FAULTS)) say(`  ${k.padEnd(13)} ${f.what}\n                --${Object.keys(f.params).join(' --')}${f.revert ? ' [--for S]' : ''}   expect: ${f.expect || 'detection only'}${f.note ? `\n                ${f.note}` : ''}`);
+    return;
+  }
+  const allowFile = o.allow && o.allow !== true ? o.allow : process.env.FLEETOPS_INJECT_ALLOW;
+  if (!allowFile) throw new Error('--allow FILE (or FLEETOPS_INJECT_ALLOW): the test-cluster targets injection may touch, one per line');
+  const params = Object.fromEntries(Object.entries(o).filter(([k]) => !['_', 'where', 'store', 'allow', 'live', 'for', 'json'].includes(k)));
+  const prep = Inject.prepare(cmd, params, { allow: Inject.loadAllow(allowFile) });
+  const r = await Inject.run(prep, { live: !!o.live, forS: o.for ? +o.for : 300, store, log: J ? () => {} : console.log });
+  if (J) OUT.injection = r; else if (!r.dryRun) say(`${r.id}: ${r.applied ? 'applied' : 'FAILED to apply'}${r.reverted != null ? `, reverted ${r.reverted ? 'ok' : 'with errors'}` : ''}; label written to the store (expect ${r.expect || 'detection only'})`);
 }
 
 const money = v => '$' + Math.round(v).toLocaleString('en-US');

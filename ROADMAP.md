@@ -119,6 +119,8 @@ Milestones 5–10 close those gaps, in the order they should be built.
 
 **Done when:** top-1 ≥ 80% and top-3 ≥ 95% on at least 30 labeled incidents, half of them from fault injection; detection fires within 5 minutes of the injected onset.
 
+**Status:** the tooling is built: the benchmark, fault injection, CUSUM detection with grouping, weight fitting and the CI gate ([fleetops/docs/BENCHMARK.md](fleetops/docs/BENCHMARK.md)). On synthetic scenarios not used for tuning: top-1 98.8–100%, top-3 99.6–100%. The done-when still needs real labels from a test cluster and from postmortems.
+
 ### 7. A store that holds production volume
 
 - **Storage:** Parquet partitioned by kind, day and cluster, queried with DuckDB, behind the same `DataStore` interface. ClickHouse is an option where a server is wanted.

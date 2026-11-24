@@ -14,6 +14,7 @@
 //   log        one meaningful log line: { node, gpu?, pci?, job?, rank?, code, class, severity: hard|soft|ignore|info, msg }
 //              (kernel: XID, AER, NVLink, AMD RAS, MCE, IB link, NFS/Lustre, OOM; app: NCCL/PyTorch; Kubernetes events)
 //   topology   an edge: { kind: nvlink|pcie|ib|rack|row|pdu|site, from, to, … }  (node/gpuN, switch:NAME, rack:NAME, …)
+//   injection  a fault injected on a test cluster (the label): { id, fault, expect (rule id | null), nodes, pool?, from, to, applied, reverted }
 //   inventory records may carry versions: { driver, cuda, vbios, inforom, firmware, kernel, os, runtime, kubelet, image }
 // Later PRs add calibration, drift, incident and optimization records.
 
@@ -33,6 +34,7 @@ export const KINDS = {
   optimization: ['id'],
   log: ['node', 'code', 'class'],
   topology: ['kind', 'from', 'to'],
+  injection: ['fault', 'id'],
 };
 
 export const JOB_STATUS = new Set(['ok', 'failed', 'killed', 'cancelled', 'timeout', 'retried']);
