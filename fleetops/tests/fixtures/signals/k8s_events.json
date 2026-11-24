@@ -1,0 +1,7 @@
+{"items":[
+ {"metadata":{"uid":"e1","namespace":"default"},"reason":"NodeNotSchedulable","message":"Node gpu-a01 status is now: NodeNotSchedulable","involvedObject":{"kind":"Node","name":"gpu-a01"},"lastTimestamp":"2026-11-23T10:20:00Z","source":{"component":"kubelet","host":"gpu-a01"}},
+ {"metadata":{"uid":"e2","namespace":"default"},"reason":"NodeNotReady","message":"Node gpu-a03 status is now: NodeNotReady","involvedObject":{"kind":"Node","name":"gpu-a03"},"lastTimestamp":"2026-11-23T10:21:00Z","source":{"component":"node-controller"}},
+ {"metadata":{"uid":"e3","namespace":"serving"},"reason":"ScalingReplicaSet","message":"Scaled up replica set vllm-70b-6d8f to 6","involvedObject":{"kind":"Deployment","name":"vllm-70b","namespace":"serving"},"lastTimestamp":"2026-11-23T10:22:00Z","source":{"component":"deployment-controller"}},
+ {"metadata":{"uid":"e4","namespace":"train"},"reason":"FailedMount","message":"MountVolume.SetUp failed for volume \"ckpt\" : mount failed: exit status 32","involvedObject":{"kind":"Pod","name":"train-7b-0","namespace":"train"},"count":3,"lastTimestamp":"2026-11-23T10:23:00Z","source":{"component":"kubelet","host":"gpu-a02"}},
+ {"metadata":{"uid":"e5","namespace":"train"},"reason":"BackOff","message":"Back-off restarting failed container","involvedObject":{"kind":"Pod","name":"train-7b-0","namespace":"train"},"lastTimestamp":"2026-11-23T10:24:00Z","source":{"component":"kubelet","host":"gpu-a02"}}
+]}

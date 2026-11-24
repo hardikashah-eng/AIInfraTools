@@ -40,9 +40,60 @@ export function k8sNodes(json, { t = Math.floor(Date.now() / 1000) } = {}) {
     const res = Object.keys(GPU_RESOURCES).find(r => +cap[r] > 0);
     if (!res) return [];
     const [vendor, kind] = GPU_RESOURCES[res];
+    const info = (n.status || {}).nodeInfo || {}, lab = (...ks) => ks.map(k => labels[k]).find(Boolean);
+    // GPU feature discovery publishes the driver and CUDA versions as labels (full string, or major/minor/rev)
+    const ver = (full, base) => lab(full) || (labels[`${base}.major`] ? [labels[`${base}.major`], labels[`${base}.minor`], labels[`${base}.rev`]].filter(x => x != null && x !== '').join('.') : undefined);
+    const versions = { driver: ver('nvidia.com/cuda.driver-version.full', 'nvidia.com/cuda.driver'), cuda: ver('nvidia.com/cuda.runtime-version.full', 'nvidia.com/cuda.runtime'),
+      firmware: lab('amd.com/gpu.firmware', 'nvidia.com/gpu.firmware'), kernel: info.kernelVersion, os: info.osImage, runtime: info.containerRuntimeVersion, kubelet: info.kubeletVersion };
+    for (const k of Object.keys(versions)) if (!versions[k]) delete versions[k];
     return [{ t, node: n.metadata.name, vendor, kind, sku: SKU_LABELS.map(k => labels[k]).find(Boolean) || '', devices: +cap[res],
-      site: labels['topology.kubernetes.io/region'] || labels['topology.kubernetes.io/zone'] || '', source: 'kubernetes' }];
+      site: labels['topology.kubernetes.io/region'] || labels['topology.kubernetes.io/zone'] || '', rack: lab(...RACK_LABELS) || undefined,
+      ...(Object.keys(versions).length ? { versions } : {}), source: 'kubernetes' }];
   });
+}
+// Rack labels people use; Kubernetes has no standard one.
+export const RACK_LABELS = ['topology.kubernetes.io/rack', 'node.kubernetes.io/rack', 'rack', 'topology.aiinfra/rack'];
+// Rack and zone of each accelerator node, as topology edges (from the same `kubectl get nodes -o json`).
+export function k8sNodeTopology(json, opts = {}) {
+  return k8sNodes(json, opts).flatMap(n => [
+    ...(n.rack ? [{ t: n.t, kind: 'rack', from: n.node, to: `rack:${n.rack}`, source: 'kubernetes' }] : []),
+    ...(n.site ? [{ t: n.t, kind: 'site', from: n.node, to: `site:${n.site}`, source: 'kubernetes' }] : []),
+  ]);
+}
+
+// `kubectl get events -A -o json` → { changes, logs }.
+//   changes: cordon/uncordon, reboots, scaling.   logs: node not ready, node/system OOM, mount failures, evictions.
+const EVENT_MAP = {
+  NodeNotSchedulable: { change: 'config', summary: 'cordoned' }, NodeSchedulable: { change: 'config', summary: 'uncordoned' },
+  Rebooted: { change: 'hardware', summary: 'rebooted' }, ScalingReplicaSet: { change: 'scale' },
+  NodeNotReady: { log: { code: 'node_not_ready', class: 'node', severity: 'hard' } },
+  OOMKilling: { log: { code: 'host_oom', class: 'host-memory', severity: 'soft' } }, SystemOOM: { log: { code: 'host_oom', class: 'host-memory', severity: 'soft' } },
+  FailedMount: { log: { code: 'mount_failed', class: 'storage', severity: 'hard' } }, FailedAttachVolume: { log: { code: 'mount_failed', class: 'storage', severity: 'hard' } },
+  Evicted: { log: { code: 'evicted', class: 'node', severity: 'soft' } },
+};
+export function k8sEvents(json) {
+  const j = typeof json === 'string' ? JSON.parse(json) : json, changes = [], logs = [];
+  for (const e of j.items || []) {
+    const m = EVENT_MAP[e.reason];
+    if (!m) continue;
+    const t = toEpoch(e.lastTimestamp || e.eventTime || e.firstTimestamp || (e.metadata || {}).creationTimestamp);
+    if (t == null) continue;
+    const o = e.involvedObject || {}, ns = o.namespace || (e.metadata || {}).namespace;
+    const node = o.kind === 'Node' ? o.name : (e.source || {}).host || e.reportingInstance || undefined;
+    if (m.change) changes.push({ t, kind: m.change, target: o.kind === 'Node' ? o.name : `${ns}/${o.name}`, summary: m.summary || e.message || e.reason, by: (e.source || {}).component || e.reportingComponent, id: (e.metadata || {}).uid, source: 'kubernetes-events' });
+    else if (node) logs.push(Object.assign({ t, node }, m.log, { pod: o.kind === 'Pod' ? `${ns}/${o.name}` : undefined, count: e.count, msg: String(e.message || '').slice(0, 300), source: 'kubernetes-events' }));
+  }
+  for (const l of logs) for (const k of Object.keys(l)) if (l[k] === undefined) delete l[k];
+  return { changes, logs };
+}
+
+// `helm history RELEASE -n NS -o json` → deploy changes, one per revision.
+export function helmHistory(json, { release, namespace = 'default' } = {}) {
+  const j = typeof json === 'string' ? JSON.parse(json) : json;
+  const revs = (Array.isArray(j) ? j : []).slice().sort((a, b) => a.revision - b.revision);
+  return revs.map((r, i) => ({ t: toEpoch(r.updated), kind: 'deploy', target: `${namespace}/${release}`, summary: `${r.chart}${r.app_version ? ` (app ${r.app_version})` : ''}: ${r.description || r.status}`,
+    from: i ? revs[i - 1].chart : undefined, to: r.chart, status: r.status, id: `${namespace}/${release}#${r.revision}`, source: 'helm' })).filter(r => r.t != null)
+    .map(r => { if (r.from === undefined) delete r.from; return r; });
 }
 export function k8sPods(json, { t = Math.floor(Date.now() / 1000) } = {}) {
   const j = typeof json === 'string' ? JSON.parse(json) : json;
@@ -63,7 +114,10 @@ export function slurmNodes(text, { t = Math.floor(Date.now() / 1000) } = {}) {
     const f = Object.fromEntries([...l.matchAll(/(\w+)=(\S*)/g)].map(m => [m[1], m[2]]));
     const g = (f.Gres || '').match(/gpu:(?:([\w.-]+):)?(\d+)/);
     if (!g) return [];
-    return [{ t, node: f.NodeName, vendor: /mi\d|amd/i.test(g[1] || '') ? 'amd' : 'nvidia', kind: 'gpu', sku: g[1] || '', devices: +g[2], state: f.State, source: 'slurm' }];
+    // OS=Linux 5.15.0-91-generic #101-Ubuntu …  (the value runs to the next Key=, so it's re-read from the line)
+    const os = (l.match(/\bOS=Linux (\S+)/) || [])[1];
+    return [{ t, node: f.NodeName, vendor: /mi\d|amd/i.test(g[1] || '') ? 'amd' : 'nvidia', kind: 'gpu', sku: g[1] || '', devices: +g[2], state: f.State,
+      ...(os ? { versions: { kernel: os } } : {}), source: 'slurm' }];
   });
 }
 // "gpu[01-03,07],cpu5" → ["gpu01","gpu02","gpu03","gpu07","cpu5"]

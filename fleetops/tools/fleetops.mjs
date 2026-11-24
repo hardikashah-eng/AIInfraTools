@@ -9,10 +9,15 @@ import * as Philly from '../src/adapters/philly.mjs';
 import * as Pub from '../src/adapters/public.mjs';
 import * as Live from '../src/adapters/live.mjs';
 import { toEpoch } from '../src/adapters/time.mjs';
+import * as Logs from '../src/adapters/logs.mjs';
+import * as Topo from '../src/adapters/topology.mjs';
 import { writeGpuHealth, toFleetScopeTrace } from '../src/export.mjs';
 import * as Calib from '../src/calibrate.mjs';
 import * as RCA from '../src/rca.mjs';
 import * as Opt from '../src/optimize.mjs';
+import * as Detect from '../src/detect.mjs';
+import * as Bench from '../src/bench.mjs';
+import * as Inject from '../src/inject.mjs';
 import { loadConfig as ghConfig } from '../../gpu-health/src/config.mjs';
 import { createRequire } from 'node:module';
 const FSIN = createRequire(import.meta.url)('../../fleetscope/src/ingest.js');
@@ -22,6 +27,7 @@ const HELP = `fleetops — shared data layer for AIInfraTools
   fleetops data import SOURCE FILE... [--store DIR] [options]     load records into the store
   fleetops data summary [--store DIR]                             records per kind, time range and sources
   fleetops data query KIND [--from T] [--to T] [--where k=v]... [--limit N]
+  fleetops data node NODE [--from T] [--to T]                    versions, shared switch/rack/PDU, log faults, changes
   fleetops data export gpu-health --out DIR [--from T] [--to T]   samples.jsonl, jobs.json, results.jsonl for gpu-health
   fleetops data export fleetscope-trace --out FILE [--pool P]     CSV for FleetScope's Trace replay node
 
@@ -29,9 +35,18 @@ Sources (SOURCE):
   exporter         DCGM / AMD / SambaNova exporter text      [--vendor V] [--t EPOCH] [--site S]
   vllm             vLLM /metrics snapshot                   --pool P [--before FILE | --window S] [--model M] [--gpu G] [--t EPOCH]
   prom-range       Prometheus query_range JSON              --field ttftP99|tpotP99|rate|kvUsage|… [--pool P]
-  k8s-nodes        kubectl get nodes -o json
+  k8s-nodes        kubectl get nodes -o json                 inventory with versions; rack and zone edges
   k8s-pods         kubectl get pods -A -o json
-  slurm-nodes      scontrol show node -o
+  slurm-nodes      scontrol show node -o                     (kernel version from OS=)
+  nvidia-smi-q     nvidia-smi -q                             [--node N] (default: file name)  versions, serials, PCI → GPU map
+  nvidia-topo      nvidia-smi topo -m                        [--node N]  NVLink and NIC affinity
+  ibnetdiscover    ibnetdiscover                             host → leaf → spine
+  racks            CSV: node,rack,row,pdu,site
+  kernel-log       journalctl -k -o short-iso | dmesg -T | dmesg | syslog   [--node N] [--boot T] [--year Y] [--utc-offset H]
+                   XID, NVLink, PCIe AER, AMD RAS, MCE, IB link, NFS/Lustre, OOM (GPU index from nvidia-smi-q imports)
+  app-log          NCCL / PyTorch job output                 [--node N] [--job J] [--t T]
+  k8s-events       kubectl get events -A -o json             cordon/reboot/scale changes; NotReady/OOM/mount/evict logs
+  helm-history     helm history REL -n NS -o json            [--release R] [--namespace NS]
   sacct            sacct -P -X --format=JobID,JobName,State,ExitCode,Start,End,NodeList,AllocTRES
   changes          JSON lines of change events
   git-log          git log --date=unix --pretty=format:'@@%H|%ad|%an|%s' --name-only   [--repo NAME]
@@ -53,10 +68,19 @@ Calibration (fits are stored as calibration records; profiles are JSON files the
   fleetops calibrate apply --graph G --profile P --out G2      write the multipliers into a FleetScope graph
 
 Root-cause analysis (diagnoses are stored as incident records):
-  fleetops rca detect [--from T] [--to T] [--min-failures 50] [--ratio 4] [--targets targets.json] [--diagnose] [--format md]
-        find job-failure spikes and serving latency regressions; --diagnose ranks causes for each
+  fleetops rca detect [--from T] [--to T] [--min-failures 20] [--targets targets.json] [--diagnose] [--format md]
+        find job-failure and latency incidents (seasonal baseline + CUSUM, grouped); --diagnose ranks causes for each
   fleetops rca diagnose --symptom job-failures|latency|device --from T --to T [--pool P] [--nodes n1,n2] [--format md]
   fleetops rca eval --labels FILE      top-1 / top-3 accuracy on labeled incidents (JSON lines: { incident, cause })
+  fleetops rca bench [--per-cause 10] [--seed 1] [--only PREFIX] [--injections] [--labels FILE] [--weights W] [--fit OUT]
+        [--min-top1 0.8] [--min-top3 0.95]
+        accuracy per cause on synthetic scenarios (default), injected faults and/or postmortem labels; --fit writes rule
+        weights fitted on the labels (held-out accuracy reported); exit 5 below the bar
+  detect/diagnose/bench take --weights W. detect: --method cusum (default) | threshold, --bin S, --group-gap S, --where k=v
+
+Fault injection on a TEST cluster (dry-run unless --live; every target must be in the --allow file):
+  fleetops inject list
+  fleetops inject FAULT --allow FILE [--for S] [--live] [--expect RULE] --param value …   writes an injection label
 
 Optimization with safe execution (rollback is automatic; applying a stage always needs approval):
   fleetops optimize candidates [--from T] [--to T] [--price 4] [--max-attempts 2] [--graph G [--trace-pool P [--trace-from T --trace-to T]] [--target 0.99]] [--out cands.json]
@@ -86,18 +110,43 @@ const read = f => fs.readFileSync(f, 'utf8');
 const time = v => (v == null || v === true ? undefined : toEpoch(/^\d{4}-\d{2}-\d{2}$/.test(v) ? v + 'T00:00:00Z' : v));
 const fmt = t => (Number.isFinite(t) ? new Date(t * 1000).toISOString().replace('.000', '') : '–');
 
+// PCI address → GPU index per node, from the latest nvidia-smi -q inventory in the store (for kernel logs).
+function pciMap(store) {
+  const m = {};
+  for (const r of store.scan('inventory', { where: r => Array.isArray(r.gpus) })) { m[r.node] = m[r.node] || {}; for (const g of r.gpus) if (g.pci) m[r.node][g.pci] = g.gpu; }
+  return m;
+}
 function importSource(store, src, files, o) {
   const from = time(o.from), to = time(o.to), res = [];
   const put = (kind, recs) => { const r = store.append(kind, recs, { dedupe: true }); res.push(r); return r; };
+  const tOf = f => (o.t ? time(o.t) : Math.floor(fs.statSync(f).mtimeMs / 1000));
+  const nodeOf = f => (o.node && o.node !== true ? o.node : path.basename(f).replace(/\.(txt|log|out)$/, ''));
+  // inventory with versions: a version that differs from the node's previous snapshot becomes a change record
+  let lastByNode = null;
+  const putInventory = recs => {
+    if (!lastByNode) { lastByNode = new Map(); for (const r of store.scan('inventory', { where: r => r.versions })) { const p = lastByNode.get(r.node); if (!p || p.t < r.t) lastByNode.set(r.node, r); } }
+    const changes = [];
+    for (const r of recs.slice().sort((a, b) => a.t - b.t)) { if (r.versions) { changes.push(...Topo.versionChanges(lastByNode.get(r.node), r)); const p = lastByNode.get(r.node); if (!p || p.t < r.t) lastByNode.set(r.node, r); } }
+    put('inventory', recs);
+    if (changes.length) put('change', changes);
+  };
   const each = f => (fs.statSync(f).isDirectory() ? [f] : [f]);
   for (const f of files.flatMap(each)) {
     switch (src) {
       case 'exporter': put('device', Live.exporterScrape(read(f), { vendor: o.vendor !== true ? o.vendor : undefined, t: o.t ? +o.t : Math.floor(fs.statSync(f).mtimeMs / 1000), site: o.site })); break;
       case 'vllm': put('serving', [Live.vllmSnapshot(read(f), { before: o.before ? read(o.before) : undefined, windowS: o.window ? +o.window : undefined, t: o.t ? +o.t : Math.floor(fs.statSync(f).mtimeMs / 1000), pool: o.pool || 'default', model: o.model, gpu: o.gpu })]); break;
       case 'prom-range': if (!o.field) throw new Error('prom-range needs --field'); put('serving', Live.promRange(read(f), { field: o.field, pool: o.pool })); break;
-      case 'k8s-nodes': put('inventory', Live.k8sNodes(read(f))); break;
+      case 'k8s-nodes': putInventory(Live.k8sNodes(read(f), { t: tOf(f) })); put('topology', Live.k8sNodeTopology(read(f), { t: tOf(f) })); break;
       case 'k8s-pods': put('placement', Live.k8sPods(read(f))); break;
-      case 'slurm-nodes': put('inventory', Live.slurmNodes(read(f))); break;
+      case 'slurm-nodes': putInventory(Live.slurmNodes(read(f), { t: tOf(f) })); break;
+      case 'nvidia-smi-q': putInventory([Topo.nvidiaSmiQ(read(f), { node: nodeOf(f), t: tOf(f) }).inventory]); break;
+      case 'nvidia-topo': put('topology', Topo.nvidiaTopo(read(f), { node: nodeOf(f), t: tOf(f) })); break;
+      case 'ibnetdiscover': put('topology', Topo.ibnetdiscover(read(f), { t: tOf(f) })); break;
+      case 'racks': put('topology', Topo.racks(read(f), { t: tOf(f) })); break;
+      case 'kernel-log': put('log', Logs.kernelLog(read(f), { node: o.node && o.node !== true ? o.node : undefined, boot: time(o.boot), year: o.year ? +o.year : undefined, utcOffset: o['utc-offset'] ? +o['utc-offset'] : 0, pciMap: pciMap(store) })); break;
+      case 'app-log': put('log', Logs.ncclLog(read(f), { node: o.node && o.node !== true ? o.node : undefined, job: o.job && o.job !== true ? o.job : undefined, t: o.t ? time(o.t) : tOf(f) })); break;
+      case 'k8s-events': { const e = Live.k8sEvents(read(f)); put('change', e.changes); put('log', e.logs); break; }
+      case 'helm-history': put('change', Live.helmHistory(read(f), { release: o.release && o.release !== true ? o.release : path.basename(f, '.json'), namespace: o.namespace && o.namespace !== true ? o.namespace : 'default' })); break;
       case 'sacct': put('job', Live.slurmSacct(read(f))); break;
       case 'changes': put('change', Live.changesJsonl(read(f))); break;
       case 'git-log': put('change', Live.gitLog(read(f), { repo: o.repo || path.basename(f) })); break;
@@ -142,6 +191,7 @@ async function main() {
   if (area === 'calibrate') return calibrate(store, cmd, o);
   if (area === 'rca') return rca(store, cmd, o);
   if (area === 'optimize') return optimize(store, cmd, o);
+  if (area === 'inject') return inject(store, cmd, o);
   if (area !== 'data') throw new Error(`unknown command "${area}"\n\n${HELP}`);
   if (cmd === 'import') {
     const [src, ...files] = rest;
@@ -164,6 +214,26 @@ async function main() {
     const rows = store.query(kind, { from: time(o.from), to: time(o.to), where: whereFrom(o.where), limit: o.limit ? +o.limit : 1000 });
     if (J) { OUT.records = rows; return; }
     for (const r of rows) console.log(JSON.stringify(r));
+    return;
+  }
+  if (cmd === 'node') {
+    // one node, everything the store knows: versions, what it shares, recent log faults and changes
+    const node = rest[0]; if (!node) throw new Error('data node NODE [--from T] [--to T]');
+    const to = time(o.to), from = time(o.from) ?? (to ?? Math.floor(Date.now() / 1000)) - 7 * 86400;
+    const inv = store.query('inventory', { to, where: r => r.node === node }).sort((a, b) => a.t - b.t);
+    const g = Topo.groups(store.query('topology', { to })).byNode[node] || {};
+    const nvl = store.query('topology', { to, where: e => e.kind === 'nvlink' && e.node === node });
+    const logs = store.query('log', { from, to, where: l => l.node === node && l.severity !== 'info' });
+    const changes = store.query('change', { from, to, where: c => c.target === node });
+    const out = { node, inventory: inv.at(-1) || null, versions: Object.assign({}, ...inv.map(r => r.versions || {})), shares: g, nvlinkPairs: nvl.length, logs, changes };
+    if (J) { OUT.node = out; return; }
+    const last = inv.at(-1);
+    say(`${node}${last ? `  ${last.devices}× ${last.sku || last.vendor}` : '  (not in the inventory)'}`);
+    say(`  versions  ${Object.entries(out.versions).map(([k, v]) => `${k} ${v}`).join(', ') || '–'}${last && last.mixedVersions ? `  (mixed across GPUs: ${last.mixedVersions.join(', ')})` : ''}`);
+    say(`  shares    ${[...(g.leaf || []), g.rack, g.pdu, g.row, g.site].filter(Boolean).join(', ') || '–'}${nvl.length ? `; ${nvl.length} NVLink pairs` : ''}`);
+    say(`  changes   ${changes.length ? `(${changes.length})` : '–'}`); for (const c of changes) say(`    ${fmt(c.t)}  ${c.kind}: ${c.summary || c.id}${c.since != null ? ` (between ${fmt(c.since)} and then)` : ''}`);
+    say(`  log faults ${logs.length ? `(${logs.length})` : '–'}`);
+    for (const l of logs.slice(-15)) say(`    ${fmt(l.t)}  ${l.gpu != null ? 'gpu' + l.gpu + ' ' : ''}${l.code} [${l.class}/${l.severity}] ${l.msg.slice(0, 90)}`);
     return;
   }
   if (cmd === 'export') {
@@ -243,19 +313,26 @@ async function rca(store, cmd, o) {
       say(`     ${d.narrative}`);
     }
   };
+  const weights = o.weights && o.weights !== true ? JSON.parse(read(o.weights)) : undefined;
   if (cmd === 'detect') {
-    const from = time(o.from), to = time(o.to);
-    const incs = [...RCA.detectJobFailureSpikes(store, { from, to, minFailures: o['min-failures'] ? +o['min-failures'] : 50, ratio: o.ratio ? +o.ratio : 4 }),
-      ...RCA.detectServingRegressions(store, { from, to, targets: o.targets && o.targets !== true ? JSON.parse(read(o.targets)) : {} })];
-    if (!o.diagnose) { if (J) OUT.incidents = incs; else for (const i of incs) say(`${i.id}${i.failures ? `  ${i.failures} failures (baseline ${i.baselinePerHour}/h)` : `  peak ${i.peak.toFixed(3)} s > ${i.limit.toFixed(3)} s`}`); return; }
-    const ds = incs.map(i => RCA.diagnose(store, i));
+    const from = time(o.from), to = time(o.to), targets = o.targets && o.targets !== true ? JSON.parse(read(o.targets)) : {};
+    const where = whereFrom(o.where);
+    let incs;
+    if (o.method === 'threshold') incs = [...RCA.detectJobFailureSpikes(store, { from, to, minFailures: o['min-failures'] ? +o['min-failures'] : 50, ratio: o.ratio ? +o.ratio : 4 }), ...RCA.detectServingRegressions(store, { from, to, targets })];
+    else incs = Detect.groupIncidents([...Detect.detectJobFailures(store, { from, to, binS: o.bin ? +o.bin : 600, minFailures: o['min-failures'] ? +o['min-failures'] : 20, where }), ...Detect.detectServing(store, { from, to, targets })], { gapS: o['group-gap'] ? +o['group-gap'] : 1800 });
+    if (!o.diagnose) {
+      if (J) { OUT.incidents = incs; return; }
+      for (const i of incs) say(`${i.id}  ${i.failures != null ? `${i.failures} failures` : `${i.metric} peak ${i.peak.toFixed(3)}${i.limit ? ` > ${i.limit.toFixed(3)}` : i.baseline != null ? ` vs ${i.baseline.toFixed(3)}` : ''}`}${i.alarmAt ? `, alarm ${Math.round((i.alarmAt - i.from) / 60)} min after onset` : ''}, ${((i.to - i.from) / 3600).toFixed(1)} h${i.merged ? `, ${i.merged.length + 1} merged` : ''}${i.related ? `; related: ${i.related.join(', ')}` : ''}`);
+      return;
+    }
+    const ds = incs.map(i => RCA.diagnose(store, i, { weights }));
     store.append('incident', ds);
     return show(ds);
   }
   if (cmd === 'diagnose') {
     if (!o.symptom || !o.from || !o.to) throw new Error('--symptom job-failures|latency|device --from T --to T');
     const inc = { symptom: o.symptom, from: time(o.from), to: time(o.to), pool: o.pool !== true ? o.pool : undefined, nodes: o.nodes && o.nodes !== true ? String(o.nodes).split(',') : undefined, metric: o.metric };
-    const d = RCA.diagnose(store, inc);
+    const d = RCA.diagnose(store, inc, { weights });
     store.append('incident', [d]);
     return show([d]);
   }
@@ -268,7 +345,59 @@ async function rca(store, cmd, o) {
     for (const x of r.rows) say(`  ${x.id}: labeled ${x.cause}, ranked ${x.rank ?? 'not found'} (${x.got.join(', ')})`);
     return;
   }
+  if (cmd === 'bench') return bench(store, o, weights);
   throw new Error(`unknown: rca ${cmd}\n\n${HELP}`);
+}
+
+// The root-cause benchmark: synthetic scenarios (default), injected faults (--injections), postmortem labels (--labels).
+async function bench(store, o, weights) {
+  const pct = v => (v == null ? '–' : `${(v * 100).toFixed(1)}%`);
+  const rows = [], parts = [];
+  const useSynth = !o.injections && !o.labels || o.synthetic;
+  if (useSynth) { const r = Bench.run(Bench.generate({ perCause: o['per-cause'] ? +o['per-cause'] : 10, seed: o.seed ? +o.seed : 1, only: o.only && o.only !== true ? String(o.only).split(',') : undefined }), { weights }); rows.push(...r.rows); parts.push('synthetic'); }
+  let inj = null;
+  if (o.injections) { inj = Bench.evalInjections(store, { weights, from: time(o.from), to: time(o.to) }); rows.push(...inj.rows.filter(r => r.cause)); parts.push('injected'); }
+  if (o.labels && o.labels !== true) {
+    const labeled = read(o.labels).split(/\r?\n/).filter(l => l.trim()).map(l => JSON.parse(l)).map(l => Object.assign(l, { incident: Object.assign({}, l.incident, { from: time(l.incident.from), to: time(l.incident.to) }) }));
+    rows.push(...Bench.evalLabels(store, labeled, { weights })); parts.push('postmortem');
+  }
+  let sum = Bench.summarize(rows), fitted = null;
+  if (o.fit && o.fit !== true) {
+    // fit on half, report the other half; then fit on all for the file
+    const train = rows.filter((_, i) => i % 2 === 0), test = rows.filter((_, i) => i % 2 === 1);
+    const wHalf = Bench.fitWeights(train), testBefore = Bench.summarize(test), testAfter = Bench.applyWeights(test, wHalf);
+    const w = Bench.fitWeights(rows), perCause = {};
+    for (const r of rows) perCause[r.cause] = (perCause[r.cause] || 0) + 1;
+    const thin = Object.entries(perCause).filter(([, n]) => n < 5).map(([c]) => c);
+    fitted = { rules: w, fittedOn: { sources: parts, incidents: rows.length, perCause }, heldOut: { top1Before: testBefore.top1, top1After: testAfter.top1 },
+      warnings: [...(parts.every(p => p === 'synthetic') ? ['fitted on synthetic scenarios only: these weights learn the generator, not your fleet; fit on injected or postmortem labels before using them'] : []), ...(thin.length ? [`fewer than 5 labeled incidents for: ${thin.join(', ')}`] : [])] };
+    fs.writeFileSync(o.fit, JSON.stringify(fitted, null, 1));
+  }
+  if (J) { Object.assign(OUT, { benchmark: { sources: parts, top1: sum.top1, top3: sum.top3, lenientTop1: sum.lenientTop1, componentTop1: sum.componentTop1, byScenario: sum.byScenario, misses: sum.misses.map(m => ({ id: m.id, cause: m.cause, top: m.top, rank: m.rank })) }, injections: inj && { injections: inj.injections, detected: inj.detected, delayP50: inj.delayP50, delayP90: inj.delayP90, rows: inj.rows.map(({ hyps, ...r }) => r) }, fitted }); }
+  else {
+    say(`${sum.incidents} labeled incidents (${parts.join(' + ')}): top-1 ${pct(sum.top1)}, top-3 ${pct(sum.top3)}${sum.lenientTop1 !== sum.top1 ? `, top-1 counting equivalent causes ${pct(sum.lenientTop1)}` : ''}${sum.componentTop1 != null ? `, component named ${pct(sum.componentTop1)}` : ''}`);
+    for (const [k, b] of Object.entries(sum.byScenario)) say(`  ${(b.top1 + '/' + b.n).padStart(7)}  ${k}${b.top1 < b.n ? `   ranked first: ${Object.entries(b.tops).map(([r, n]) => `${r} ${n}`).join(', ')}` : ''}`);
+    if (inj) say(`injected faults: ${inj.injections}, detected ${pct(inj.detected)}, alarm after ${inj.delayP50 != null ? Math.round(inj.delayP50 / 60) : '–'} min (p50) / ${inj.delayP90 != null ? Math.round(inj.delayP90 / 60) : '–'} min (p90)`);
+    if (inj) for (const r of inj.rows) say(`  ${r.id}: ${r.detected ? `detected after ${Math.round(r.delayS / 60)} min` : 'not detected'}; ${r.cause ? `expected ${r.cause}, ranked ${r.rank ?? 'not found'} (top: ${r.top || 'none'})` : `top: ${r.top || 'none'} (detection only)`}`);
+    if (fitted) { say(`weights written to ${o.fit}: ${Object.entries(fitted.rules).filter(([, v]) => v !== 1).map(([k, v]) => `${k} ×${v}`).join(', ') || 'all 1'}; held-out top-1 ${pct(fitted.heldOut.top1Before)} → ${pct(fitted.heldOut.top1After)}`); for (const w of fitted.warnings) say(`  warning: ${w}`); }
+  }
+  const minT1 = o['min-top1'] ? +o['min-top1'] : null, minT3 = o['min-top3'] ? +o['min-top3'] : null;
+  if ((minT1 != null && sum.top1 < minT1) || (minT3 != null && sum.top3 < minT3)) { console.error(`below the bar: top-1 ${pct(sum.top1)} (min ${pct(minT1)}), top-3 ${pct(sum.top3)} (min ${pct(minT3)})`); process.exitCode = 5; }
+}
+
+// Fault injection on a test cluster (dry-run unless --live; targets must be in the --allow file).
+async function inject(store, cmd, o) {
+  if (!cmd || cmd === 'list') {
+    if (J) { OUT.faults = Object.fromEntries(Object.entries(Inject.FAULTS).map(([k, f]) => [k, { what: f.what, params: Object.keys(f.params), expect: f.expect, undo: !!f.revert, note: f.note }])); return; }
+    for (const [k, f] of Object.entries(Inject.FAULTS)) say(`  ${k.padEnd(13)} ${f.what}\n                --${Object.keys(f.params).join(' --')}${f.revert ? ' [--for S]' : ''}   expect: ${f.expect || 'detection only'}${f.note ? `\n                ${f.note}` : ''}`);
+    return;
+  }
+  const allowFile = o.allow && o.allow !== true ? o.allow : process.env.FLEETOPS_INJECT_ALLOW;
+  if (!allowFile) throw new Error('--allow FILE (or FLEETOPS_INJECT_ALLOW): the test-cluster targets injection may touch, one per line');
+  const params = Object.fromEntries(Object.entries(o).filter(([k]) => !['_', 'where', 'store', 'allow', 'live', 'for', 'json'].includes(k)));
+  const prep = Inject.prepare(cmd, params, { allow: Inject.loadAllow(allowFile) });
+  const r = await Inject.run(prep, { live: !!o.live, forS: o.for ? +o.for : 300, store, log: J ? () => {} : console.log });
+  if (J) OUT.injection = r; else if (!r.dryRun) say(`${r.id}: ${r.applied ? 'applied' : 'FAILED to apply'}${r.reverted != null ? `, reverted ${r.reverted ? 'ok' : 'with errors'}` : ''}; label written to the store (expect ${r.expect || 'detection only'})`);
 }
 
 const money = v => '$' + Math.round(v).toLocaleString('en-US');

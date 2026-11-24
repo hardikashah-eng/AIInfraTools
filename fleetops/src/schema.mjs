@@ -11,6 +11,11 @@
 //   change     something that changed: { kind: deploy|driver|firmware|config|scale|model|policy, target, summary, from?, to?, by?, id? }
 //   health     a device state change: { key, node, gpu, from, to, why, faultClass? }   (gpu-health events)
 //   benchmark  a measured run at a known load: { system, gpu, gpus, model, scenario, qps, tokPerS, ttftP50, ttftP99, tpotP50, tpotP99, islMean?, oslMean? }
+//   log        one meaningful log line: { node, gpu?, pci?, job?, rank?, code, class, severity: hard|soft|ignore|info, msg }
+//              (kernel: XID, AER, NVLink, AMD RAS, MCE, IB link, NFS/Lustre, OOM; app: NCCL/PyTorch; Kubernetes events)
+//   topology   an edge: { kind: nvlink|pcie|ib|rack|row|pdu|site, from, to, … }  (node/gpuN, switch:NAME, rack:NAME, …)
+//   injection  a fault injected on a test cluster (the label): { id, fault, expect (rule id | null), nodes, pool?, from, to, applied, reverted }
+//   inventory records may carry versions: { driver, cuda, vbios, inforom, firmware, kernel, os, runtime, kubelet, image }
 // Later PRs add calibration, drift, incident and optimization records.
 
 export const KINDS = {
@@ -27,10 +32,15 @@ export const KINDS = {
   drift: ['target'],
   incident: ['id'],
   optimization: ['id'],
+  log: ['node', 'code', 'class'],
+  topology: ['kind', 'from', 'to'],
+  injection: ['fault', 'id'],
 };
 
 export const JOB_STATUS = new Set(['ok', 'failed', 'killed', 'cancelled', 'timeout', 'retried']);
 export const CAUSES = new Set(['device', 'app', 'infra', 'unknown']);
+export const LOG_CLASSES = new Set(['ecc', 'bus', 'link', 'firmware', 'pcie', 'network', 'storage', 'host-memory', 'cpu', 'node', 'app', 'info']);
+export const SEVERITIES = new Set(['hard', 'soft', 'ignore', 'info']);
 export const CHANGE_KINDS = new Set(['deploy', 'driver', 'firmware', 'config', 'scale', 'model', 'policy', 'hardware', 'other']);
 
 // Problems with one record, or [] when it is fine.
@@ -44,5 +54,7 @@ export function validate(kind, r) {
   if (kind === 'job' && r.status && !JOB_STATUS.has(r.status)) out.push(`status "${r.status}" is not one of ${[...JOB_STATUS].join(', ')}`);
   if (kind === 'job' && r.cause && !CAUSES.has(r.cause)) out.push(`cause "${r.cause}" is not one of ${[...CAUSES].join(', ')}`);
   if (kind === 'change' && r.kind && !CHANGE_KINDS.has(r.kind)) out.push(`change kind "${r.kind}" is not one of ${[...CHANGE_KINDS].join(', ')}`);
+  if (kind === 'log' && r.class && !LOG_CLASSES.has(r.class)) out.push(`log class "${r.class}" is not one of ${[...LOG_CLASSES].join(', ')}`);
+  if (kind === 'log' && r.severity && !SEVERITIES.has(r.severity)) out.push(`severity "${r.severity}" is not one of ${[...SEVERITIES].join(', ')}`);
   return out;
 }

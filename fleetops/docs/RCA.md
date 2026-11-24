@@ -10,9 +10,12 @@ node tools/fleetops.mjs rca eval --labels incidents.jsonl                       
 
 ## How it works
 
-**Detection.**
-- **Job failures:** an hour is flagged when its failed-job count is at least `--min-failures` (default 50) and `--ratio` (default 4) times the trailing day's hourly median. Adjacent flagged hours merge into one incident.
-- **Serving latency:** TTFT or TPOT p99 above a target from `--targets` (`{ "chat": { "ttftP99": 1.0 } }`), or 1.5× its trailing median when there is no target.
+**Detection** (`src/detect.mjs`; details in [BENCHMARK.md](BENCHMARK.md)):
+- **Baselines:** every series is compared with a seasonal baseline: the same time of day on previous days, or the trailing day while there is less history.
+- **Job failures:** a Poisson CUSUM in 10-minute bins (`--bin`). The incident starts where the change began, not at the alarm.
+- **Serving latency:** a CUSUM on robust z-scores of TTFT and TPOT p99, plus any window above a target from `--targets` (`{ "chat": { "ttftP99": 1.0 } }`).
+- **Grouping:** incidents that are one event are folded together; overlapping incidents with different symptoms are linked.
+- **The fixed-threshold detector** (an hour at ≥ 50 failures and ≥ 4× the trailing median) is still available as `--method threshold`.
 
 **Rules.** Every rule looks at the same window of the store. Each one that finds support returns a hypothesis with a score from 0 to 1.
 
@@ -36,7 +39,7 @@ node tools/fleetops.mjs rca eval --labels incidents.jsonl                       
 
 ## On real data: Microsoft Philly, 8–14 November 2017
 
-`rca detect --diagnose` on the week loaded by `fetch-public-data.sh` finds six failure spikes, each 15–75× the trailing hourly median. All six get the same diagnosis, with high confidence:
+`rca detect --method threshold --diagnose` on the week loaded by `fetch-public-data.sh` finds six failure spikes, each 15–75× the trailing hourly median. The default CUSUM detection (`--where source=philly`) finds the same six. It splits one into two and adds three smaller bursts across 9–35 nodes and 11–28 owners, which it diagnoses as shared infrastructure; without logs in the dataset, that can't be checked. All six spikes get the same diagnosis, with high confidence:
 
 | Incident (UTC hour) | Failed or retried jobs | Top hypothesis | Nodes | Other namespaces' failure rate (window vs day before) |
 |---|---|---|---|---|

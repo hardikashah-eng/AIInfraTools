@@ -33,6 +33,16 @@ The store is a directory with one folder per record kind and one file per UTC da
 
 The full field list is in [docs/DATA-LAYER.md](docs/DATA-LAYER.md).
 
+## Signals for diagnosis
+
+Beyond metrics and job outcomes, the store holds:
+- **logs:** XIDs, PCIe AER, NVLink, AMD RAS, IB link state, NFS/Lustre, OOM; NCCL and PyTorch errors;
+- **topology:** NVLink, host → leaf → spine, racks and PDUs;
+- **versions:** driver, firmware, kernel, image, NCCL; a version change becomes a change record automatically;
+- **more change feeds:** Kubernetes events, Helm history.
+
+Root-cause analysis uses them to point at a GPU seen failing only in dmesg, a bad leaf switch, a driver cohort or a storage outage. `fleetops data node NODE` shows one node's versions, what it shares, its log faults and its changes. See [docs/SIGNALS.md](docs/SIGNALS.md).
+
 ## Calibration
 
 `fleetops calibrate` fits FleetScope pools and the Inference Sizer to the measurements in the store, keeps each fit as a profile the tools read (`calibrate apply` for FleetScope graphs, `--calibration` for the sizer), checks each fit against held-out measurements, and raises drift records when new data leaves the acceptance bar. See [docs/CALIBRATION.md](docs/CALIBRATION.md), including results on MLPerf Inference v5.0: the sizer's spec-sheet defaults asked for 16 GPUs where the measured H100 and H200 systems used 8, and the calibrated profiles predict 8.
@@ -40,6 +50,10 @@ The full field list is in [docs/DATA-LAYER.md](docs/DATA-LAYER.md).
 ## Root-cause analysis
 
 `fleetops rca` finds incidents (job-failure spikes, serving latency regressions) and ranks their likely causes with rules over the store: workload, hardware, change, infrastructure, KV-cache pressure, load and monitoring gaps. Every hypothesis cites its evidence and says how to confirm it; `rca eval` measures top-1/top-3 accuracy on labeled incidents. On the Philly week it finds six failure spikes and traces each to one tenant's retry storm across 100+ machines, with the GPUs ruled out. See [docs/RCA.md](docs/RCA.md).
+
+## Measured root-cause accuracy
+
+`fleetops rca bench` scores root-cause analysis on labeled incidents: synthetic scenarios with distractors, faults injected on a test cluster (`fleetops inject`, dry-run unless `--live`, targets limited to an allowlist), and postmortems. It reports top-1/top-3 per cause and whether the right component was named, fits rule weights on real labels (`--fit`), and gates CI. Detection now uses seasonal baselines and CUSUM change-point detection, with grouping. The benchmark's first run found and fixed eight weaknesses in the rules (73% → 99% top-1 on scenarios not used for tuning). See [docs/BENCHMARK.md](docs/BENCHMARK.md), including three ways to test against production traces.
 
 ## Optimization with safe execution
 
@@ -68,10 +82,16 @@ src/schema.mjs           record kinds and validation
 src/adapters/live.mjs    exporters, vLLM, Prometheus, Kubernetes, Slurm, change feeds, gpu-health history
 src/adapters/philly.mjs  Microsoft Philly traces
 src/adapters/public.mjs  Azure LLM traces, MLPerf summaries, AcmeTrace
+src/adapters/logs.mjs    kernel and NCCL/PyTorch logs → log records (XID classes from gpu-health)
+src/adapters/topology.mjs nvidia-smi -q / topo -m, ibnetdiscover, racks, shared-component groups, version changes
 src/adapters/time.mjs    timestamps with zones and US Pacific daylight saving
 src/export.mjs           store → gpu-health inputs, FleetScope trace CSV
 src/calibrate.mjs        FleetScope pool and Inference Sizer fits, held-out checks, drift, profiles
 src/rca.mjs              incident detection, causal rules, ranked hypotheses with evidence, evaluation
+src/detect.mjs           seasonal baselines, Poisson and z-score CUSUM, incident grouping
+src/bench.mjs            labeled scenarios, accuracy per cause, injected/postmortem scoring, fitted weights
+src/inject.mjs           fault injection for a test cluster: allowlist, dry-run, undo, labels
+src/memstore.mjs         the store interface in memory (benchmark, tests)
 src/optimize.mjs         candidates, selection, staged rollout through gpu-health's queue, guards, rollback, verify
 tools/fleetops.mjs       CLI
 tools/fetch-public-data.sh
