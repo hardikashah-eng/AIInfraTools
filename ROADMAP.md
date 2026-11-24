@@ -260,6 +260,15 @@ run on GPUs yet.
 
 **Done when:** a bad node or version is stopped before it reaches a production job.
 
+**Status:** built ([fleetops/docs/ADMISSION.md](fleetops/docs/ADMISSION.md)).
+- **Admission:** six checks, against the same SKU's admitted peers. The node-side script is tested against
+  stand-in tools.
+- **Rollouts:** canary across racks, approved waves, and an automatic comparison with automatic rollback.
+- **On a synthetic fleet with a known answer:** a bad driver on two canary nodes was caught on hard faults (×7),
+  NCCL bandwidth (−22%) and per-rank compute (+12% in 43 of 44 shared jobs), rolled back and halted. A harmless one
+  was verified.
+- **Still needed:** a real rollout, and admission on real nodes.
+
 ### 15. Power-aware capacity
 
 - **FleetScope:** power budgets per rack and site, power caps per pool, and throughput per megawatt; which jobs slow

@@ -69,6 +69,8 @@ export const DEFAULTS = {
       // moves running work, adds cost or undoes a change waits for a person (see fleetops examples/agent-policy.realtime.json)
       'cordon-node': 'auto', 'uncordon-node': 'approve', 'link-check': 'auto', 'hold-rollout': 'auto',
       'drain-replica': 'approve', 'scale-out': 'approve', 'rollback-change': 'approve', 'restart-without-node': 'approve',
+      // fleetops admission: releasing a node into the pool needs a person; keeping a failed node out is automatic
+      'admit-node': 'approve', 'reject-node': 'auto', 'rollout-stage': 'approve',
     },
     // Per workload class overrides. Training jobs are never stopped automatically.
     classes: {
@@ -106,6 +108,10 @@ export const DEFAULTS = {
     'rollback-change': [['helm', 'rollback', '{release}', '{revision}', '-n', '{namespace}', '--wait']],
     // the training launcher (elastic agent) watches this label: restart from the last checkpoint without the node
     'restart-without-node': [['kubectl', 'label', 'node', '{node}', 'gpu-health.aiinfra/restart-without={job}', '--overwrite']],
+    // fleetops admission. New and repaired nodes join with the taint aiinfra.dev/admission=pending:NoSchedule
+    // (kubelet --register-with-taints, or set it when the node goes to repair); admitting removes it.
+    'admit-node': [['kubectl', 'taint', 'node', '{node}', 'aiinfra.dev/admission-'], ['kubectl', 'label', 'node', '{node}', 'aiinfra.dev/admission=admitted', '--overwrite']],
+    'reject-node': [['kubectl', 'label', 'node', '{node}', 'aiinfra.dev/admission=rejected', '--overwrite']],
     'link-check': { webhook: 'check the node\'s NICs and cables (ibstat / ethtool counters, link speed and width, PCIe AER) and the switch port' },
     'hold-rollout': { webhook: 'pause the rollout of this version until a node rolled back to the fleet version passes the failed job' },
     'notify-owner': 'webhook', 'rma': 'webhook', 'reseat': 'webhook', 'facilities-check': 'webhook', 'exporter-check': 'webhook',
