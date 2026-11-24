@@ -18,6 +18,7 @@
 //   span       one OpenTelemetry span: { traceId, spanId, parentSpanId?, name, durS, service?, node?, attrs }
 //   step       one rank's training step: { job, rank, node, gpu?, step, durS, commS?, dataS?, computeS?, ckptS?, mfu? }
 //   request records from traces add: traceId, replica, node, ttft, e2e, stages { router, queue, prefill, decode }
+//   incident_event  one step in an incident's life: { id, event: opened|acknowledged|mitigated|resolved|reopened|assigned|severity|note|paged, by, … }
 //   inventory records may carry versions: { driver, cuda, vbios, inforom, firmware, kernel, os, runtime, kubelet, image }
 // Later PRs add calibration, drift, incident and optimization records.
 
@@ -40,6 +41,7 @@ export const KINDS = {
   injection: ['fault', 'id'],
   span: ['traceId', 'spanId', 'name'],
   step: ['job', 'rank', 'step'],
+  incident_event: ['id', 'event'],
 };
 
 export const JOB_STATUS = new Set(['ok', 'failed', 'killed', 'cancelled', 'timeout', 'retried']);

@@ -8,6 +8,7 @@ import * as Retention from '../src/retention.mjs';
 import { migrate } from '../src/migrate.mjs';
 import * as Ingest from '../src/ingest.mjs';
 import * as Traces from '../src/traces.mjs';
+import * as Inc from '../src/incidents.mjs';
 import { readLines } from '../src/lines.mjs';
 import * as Philly from '../src/adapters/philly.mjs';
 import * as Pub from '../src/adapters/public.mjs';
@@ -91,6 +92,15 @@ Root-cause analysis (diagnoses are stored as incident records):
         accuracy per cause on synthetic scenarios (default), injected faults and/or postmortem labels; --fit writes rule
         weights fitted on the labels (held-out accuracy reported); exit 5 below the bar
   detect/diagnose/bench take --weights W. detect: --method cusum (default) | threshold, --bin S, --group-gap S, --where k=v
+
+Incidents (lifecycle as incident_event records; paging is a dry run unless --live):
+  fleetops incidents open [--from T] [--to T]        detect, diagnose, open the new ones (severity from the symptom's size)
+  fleetops incidents list [--status open|acknowledged|mitigated|resolved]
+  fleetops incidents ack|mitigate|resolve|reopen|assign|severity|note ID --by NAME [--note TEXT] [--owner O]
+        [--severity sev1..sev4] [--cause RULE --component X]   (resolve --cause stores the confirmed cause as a label)
+  fleetops incidents show ID | timeline ID [--out FILE.html] | postmortem ID [--out FILE.md]
+  fleetops incidents page ID --to pagerduty|opsgenie|webhook --action trigger|ack|resolve [--key K] [--url U] [--live]
+  rca bench --from-incidents    score root-cause analysis on resolved incidents' confirmed causes
 
 Fault injection on a TEST cluster (dry-run unless --live; every target must be in the --allow file):
   fleetops inject list
@@ -214,6 +224,7 @@ async function main() {
   if (area === 'rca') return rca(store, cmd, o);
   if (area === 'optimize') return optimize(store, cmd, o);
   if (area === 'inject') return inject(store, cmd, o);
+  if (area === 'incidents') return incidents(store, cmd, rest, o);
   if (area !== 'data') throw new Error(`unknown command "${area}"\n\n${HELP}`);
   if (cmd === 'import') {
     const [src, ...files] = rest;
@@ -407,10 +418,11 @@ async function rca(store, cmd, o) {
 async function bench(store, o, weights) {
   const pct = v => (v == null ? '–' : `${(v * 100).toFixed(1)}%`);
   const rows = [], parts = [];
-  const useSynth = !o.injections && !o.labels || o.synthetic;
+  const useSynth = !o.injections && !o.labels && !o['from-incidents'] || o.synthetic;
   if (useSynth) { const r = Bench.run(Bench.generate({ perCause: o['per-cause'] ? +o['per-cause'] : 10, seed: o.seed ? +o.seed : 1, only: o.only && o.only !== true ? String(o.only).split(',') : undefined }), { weights }); rows.push(...r.rows); parts.push('synthetic'); }
   let inj = null;
   if (o.injections) { inj = Bench.evalInjections(store, { weights, from: time(o.from), to: time(o.to) }); rows.push(...inj.rows.filter(r => r.cause)); parts.push('injected'); }
+  if (o['from-incidents']) { rows.push(...Bench.evalLabels(store, Inc.labelsFromIncidents(store), { weights }).map(r => Object.assign(r, { source: 'incident', scenario: `confirmed: ${r.cause}` }))); parts.push('confirmed incidents'); }
   if (o.labels && o.labels !== true) {
     const labeled = read(o.labels).split(/\r?\n/).filter(l => l.trim()).map(l => JSON.parse(l)).map(l => Object.assign(l, { incident: Object.assign({}, l.incident, { from: time(l.incident.from), to: time(l.incident.to) }) }));
     rows.push(...Bench.evalLabels(store, labeled, { weights })); parts.push('postmortem');
@@ -437,6 +449,57 @@ async function bench(store, o, weights) {
   }
   const minT1 = o['min-top1'] ? +o['min-top1'] : null, minT3 = o['min-top3'] ? +o['min-top3'] : null;
   if ((minT1 != null && sum.top1 < minT1) || (minT3 != null && sum.top3 < minT3)) { console.error(`below the bar: top-1 ${pct(sum.top1)} (min ${pct(minT1)}), top-3 ${pct(sum.top3)} (min ${pct(minT3)})`); process.exitCode = 5; }
+}
+
+// The incident workflow: open from detection, lifecycle, paging, timeline, postmortem.
+async function incidents(store, cmd, rest, o) {
+  const opt = k => (o[k] && o[k] !== true ? o[k] : undefined), id = rest[0];
+  if (!cmd || cmd === 'list') {
+    const all = Inc.state(store).filter(s => !opt('status') || s.status === o.status);
+    if (J) { OUT.incidents = all.map(({ events, diagnosis, ...s }) => Object.assign(s, { top: diagnosis && diagnosis.hypotheses[0] && diagnosis.hypotheses[0].title })); return; }
+    for (const s of all) say(`${s.severity}  ${s.status.padEnd(12)} ${s.id}${s.owner ? `  @${s.owner}` : ''}${s.cause ? `  cause: ${s.cause}` : s.diagnosis && s.diagnosis.hypotheses[0] ? `  likely: ${s.diagnosis.hypotheses[0].rule}` : ''}`);
+    if (!all.length) say('no incidents');
+    return;
+  }
+  if (cmd === 'open') {
+    // detect in the window, diagnose each, open the new ones
+    const from = time(o.from), to = time(o.to), weights = opt('weights') ? JSON.parse(read(o.weights)) : undefined;
+    const incs = Detect.groupIncidents([...Detect.detectJobFailures(store, { from, to, binS: o.bin ? +o.bin : 600, minFailures: o['min-failures'] ? +o['min-failures'] : 20, where: whereFrom(o.where) }), ...Detect.detectServing(store, { from, to }), ...Detect.detectTraining(store, { from, to })]);
+    const opened = [];
+    for (const i of incs) { const d = RCA.diagnose(store, i, { weights }); if (!store.query('incident', { where: x => x.id === d.id }).length) store.append('incident', [d]); const e = Inc.open(store, d, { by: opt('by') || 'fleetops' }); if (e) opened.push(e); }
+    if (J) { OUT.opened = opened; return; }
+    say(`${incs.length} incident(s) detected, ${opened.length} new`); for (const e of opened) say(`  ${e.severity}  ${e.id}  ${e.summary}`);
+    return;
+  }
+  if (!id) throw new Error(`incidents ${cmd} ID`);
+  if (['acknowledge', 'ack', 'mitigate', 'resolve', 'reopen', 'assign', 'severity', 'note'].includes(cmd)) {
+    const e = Inc.transition(store, id, cmd === 'ack' ? 'acknowledge' : cmd, { by: opt('by'), note: opt('note'), owner: opt('owner'), severity: opt('severity'), cause: opt('cause'), component: opt('component') });
+    if (J) { OUT.event = e; return; }
+    say(`${id}: ${e.event}${e.cause ? ` (confirmed cause ${e.cause}${e.component ? `, ${e.component}` : ''}: stored as a label for rca bench --from-incidents)` : ''}`);
+    return;
+  }
+  if (cmd === 'show') {
+    const s = Inc.state(store, id); if (!s) throw new Error(`no incident ${id}`);
+    if (J) { OUT.incident = s; return; }
+    say(`${s.id}  ${s.severity} · ${s.status}${s.owner ? ` · @${s.owner}` : ''}${s.cause ? ` · cause ${s.cause}` : ''}`);
+    for (const e of s.events) say(`  ${fmt(e.t)}  ${e.event} by ${e.by}${e.note ? `: ${e.note}` : ''}`);
+    if (s.diagnosis) { say('  ranked causes:'); s.diagnosis.hypotheses.slice(0, 3).forEach((h, i) => say(`    ${i + 1}. ${h.title} (${h.rule}, ${h.score.toFixed(2)})`)); }
+    return;
+  }
+  if (cmd === 'timeline' || cmd === 'postmortem') {
+    const out = cmd === 'timeline' ? Inc.timelineHtml(store, id) : Inc.postmortem(store, id);
+    if (opt('out')) { fs.writeFileSync(o.out, out); say(`written to ${o.out}`); } else console.log(out);
+    return;
+  }
+  if (cmd === 'page') {
+    const provider = opt('to') || 'pagerduty', key = opt('key') || process.env[provider === 'opsgenie' ? 'OPSGENIE_API_KEY' : 'PAGERDUTY_ROUTING_KEY'];
+    const r = await Inc.page(store, id, provider, opt('action') || 'trigger', { live: !!o.live, key, url: opt('url'), by: opt('by') || 'fleetops' });
+    if (J) { OUT.page = r; return; }
+    if (r.dryRun) { say(`dry run (--live to send): POST ${r.request.url}`); say(JSON.stringify(Object.assign({}, r.request.body, r.request.body.routing_key ? { routing_key: '…' } : {}), null, 1)); }
+    else say(`${provider} ${o.action || 'trigger'}: HTTP ${r.status}${r.ok ? '' : ' (failed)'}`);
+    return;
+  }
+  throw new Error(`unknown: incidents ${cmd}`);
 }
 
 // Fault injection on a test cluster (dry-run unless --live; targets must be in the --allow file).
