@@ -23,6 +23,9 @@
 //              group? (replicas that must agree), value?, expected?, ok? }   (see src/sdc.mjs)
 //   step records may add loss, gradNorm (the rank's local gradient norm) and n (steps covered, for every-N-steps logs)
 //   collective one NCCL operation (NCCL Inspector): { op, job?, node, rank?, gpu?, comm, nranks, sn?, bytes?, msgSize?, execS, busbw, algobw? }
+//   port       a switch or NIC port's counters (totals): { switch, port, symbolErrors?, linkRecovery?, linkDowned?, rcvErrors?, xmitDiscards?,
+//              fecUncorrected?, xmitWait?, pfcPause?, ecnMarked?, cnpSent?, outOfBuffer?, rxBytes?, txBytes? }   (src/adapters/fabric.mjs)
+//   storage    I/O against one storage target over a window: { target, op: read|write|meta, node?, job?, ops?, bytes?, latMs?, windowS? }
 //   inventory records may carry versions: { driver, cuda, vbios, inforom, firmware, kernel, os, runtime, kubelet, image }
 // Later PRs add calibration, drift, incident and optimization records.
 
@@ -48,6 +51,8 @@ export const KINDS = {
   incident_event: ['id', 'event'],
   collective: ['op'],
   sdc_check: ['check', 'node'],
+  port: ['switch', 'port'],
+  storage: ['target'],
 };
 
 export const JOB_STATUS = new Set(['ok', 'failed', 'killed', 'cancelled', 'timeout', 'retried']);

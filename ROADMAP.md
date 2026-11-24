@@ -324,6 +324,14 @@ serving (llm-d or Dynamo) when the sizer chooses it.
 
 **Done when:** a slow-link or data-stall diagnosis names the switch port or storage target.
 
+**Status:** built ([fleetops/docs/FABRIC-STORAGE.md](fleetops/docs/FABRIC-STORAGE.md)).
+- **Data:** switch and NIC port counters (perfquery, ibqueryerrors, ethtool, Prometheus for UFM, SONiC and SNMP),
+  and per-target storage latency (Lustre job_stats, NFS mountstats).
+- **Diagnosis:** slow-link names the port, a bad link or congestion; new rules `fabric-congestion` and
+  `storage-stall`.
+- **Benchmark:** four new scenario kinds, 10/10 each with the component named; 220 incidents in all at 99.5% top-1.
+- **Still needed:** counters from a real fabric and a real filesystem during a real stall.
+
 ## Order and why
 
 1. **Data first.** Every later step needs the same inputs, and the change feed is the single most predictive signal for incidents.

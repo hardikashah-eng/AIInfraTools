@@ -1,6 +1,6 @@
 ---
 name: fleetops
-description: Finds the root cause of GPU fleet incidents, runs them as incidents, mitigates live, measures training goodput, turns the user's traces into tuning changes, and sizes and deploys vLLM serving. It ingests DCGM, AMD and SambaNova exporters, vLLM metrics, Prometheus, Loki, OTLP, kernel and NCCL logs, NCCL Inspector, PyTorch profiler traces, Slurm and Kubernetes, or a one-command trace bundle. It detects job failures, latency regressions and training slowdowns, hangs and divergence, and ranks causes across 15 rules (hardware, bad change, shared switch or rack, version cohort, straggler, slow link, collective hang, silent data corruption, KV pressure, load, slow replica, storage, workload, monitoring gaps). A live agent mitigates within approval guardrails. It advises checkpoint intervals, pool sizes and more, then measures whether each change worked. Use for why jobs fail, latency regressed, training broke, wasted GPU-hours, NaNs, tuning, live auto-mitigation, what models fit on GPUs, or deploying one.
+description: Finds the root cause of GPU fleet incidents, runs them as incidents, mitigates live, measures training goodput, turns the user's traces into tuning changes, and sizes and deploys vLLM serving. It ingests DCGM, AMD and SambaNova exporters, vLLM, Prometheus, Loki, OTLP, kernel and NCCL logs, profiler traces, switch counters, Lustre and NFS stats, Slurm and Kubernetes. It detects job failures, latency regressions, training slowdowns, hangs and divergence, and ranks causes across 17 rules (hardware, bad change, shared switch or rack, version cohort, straggler, slow link to the switch port, fabric congestion, storage stalls to the target, collective hang, silent corruption, KV pressure, load, slow replica, workload, monitoring gaps). A live agent mitigates within approval guardrails. It advises checkpoint intervals, pool sizes and more, and measures whether changes worked. Use for why jobs fail, latency or training slowed, wasted GPU-hours, NaNs, tuning, live mitigation, or what models fit and deploying them.
 ---
 
 # fleetops
@@ -45,7 +45,7 @@ seconds.
 
 1. **Get data.**
    - **No fleet at hand:** `fleetops demo --store demo [--scenario NAME]` writes a fleet with one planted cause and
-     prints the commands to try and the answer to check against. `demo --list` names the 18 scenarios.
+     prints the commands to try and the answer to check against. `demo --list` names the 22 scenarios.
    - **Files:** `fleetops data import SOURCE FILE… --store S`. Sources include `exporter` (DCGM, AMD, SambaNova text),
      `vllm`, `prom-range`, `kernel-log` (journalctl, dmesg, syslog), `app-log` (NCCL, PyTorch), `nccl-inspector`,
      `kineto`, `step-log`, `sacct`, `k8s-nodes`, `k8s-pods`, `k8s-events`, `helm-history`, `slurm-nodes`,
@@ -211,7 +211,9 @@ Use this when asked to watch the fleet continuously, mitigate in real time, or s
 | `infrastructure` | many owners and nodes failing at once on healthy devices: storage, network, scheduler |
 | `workload` | one owner or namespace holds most of the failures |
 | `straggler` | one rank's compute is slow and the job waits for it |
-| `slow-link` | one node's NCCL bus bandwidth is well below the others' while its compute is normal |
+| `slow-link` | one node's NCCL bus bandwidth is well below the others' while its compute is normal; names its switch port, bad link or congestion |
+| `fabric-congestion` | communication slower on most nodes at once; a leaf's uplinks congested |
+| `storage-stall` | steps wait on data or checkpoints; names the OST, NFS export or bucket that slowed |
 | `collective-hang` | a rank never joins a collective; the watchdog fires |
 | `kv-pressure` | KV cache full during a latency regression, with preemptions |
 | `load` | request rate or prompt length above baseline |

@@ -88,7 +88,7 @@ test('gpu-health: demo, analyze digest, approval needs a name, execute is a dry 
 
 test('fleetops: demo → diagnose names the planted cause, game day is a dry run and checks the allowlist, k8s dry run', () => {
   const d = isolate('fleetops'), cli = 'scripts/fleetops/tools/fleetops.mjs', ex = 'scripts/fleetops/examples';
-  assert.equal(json(d, [cli, 'demo', '--list', '--json']).scenarios.length, 18);
+  assert.equal(json(d, [cli, 'demo', '--list', '--json']).scenarios.length, 22);
   for (const sc of ['hardware: GPU fault seen in dmesg', 'slow-link', 'kv-pressure']) {
     const demo = json(d, [cli, 'demo', '--scenario', sc, '--store', `s-${sc.split(':')[0]}`, '--json']).demo;
     const diag = json(d, [...demo.next[1].replace(/^fleetops /, `${cli} `).split(' '), '--json']);
