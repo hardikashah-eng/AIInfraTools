@@ -1,0 +1,7 @@
+# Format of the AMD device metrics exporter 1.x (MI300-series).
+gpu_gfx_activity{gpu_id="3",hostname="mi-a02",card_model="AMD Instinct MI300X",serial_number="X1"} 77
+gpu_umc_activity{gpu_id="3",hostname="mi-a02",card_model="AMD Instinct MI300X",serial_number="X1"} 41
+gpu_used_vram{gpu_id="3",hostname="mi-a02",card_model="AMD Instinct MI300X",serial_number="X1"} 150000
+gpu_junction_temperature{gpu_id="3",hostname="mi-a02",card_model="AMD Instinct MI300X",serial_number="X1"} 71
+gpu_power_usage{gpu_id="3",hostname="mi-a02",card_model="AMD Instinct MI300X",serial_number="X1"} 610
+gpu_ecc_uncorrect_total{gpu_id="3",hostname="mi-a02",card_model="AMD Instinct MI300X",serial_number="X1"} 0

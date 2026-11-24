@@ -1,0 +1,75 @@
+# fleetops on Kubernetes: one writer (Deployment, 1 replica) on a persistent volume, the API behind a ClusterIP
+# Service, tokens from a Secret (create with: fleetops token create --tokens tokens.jsonl …; kubectl create secret
+# generic fleetops-tokens --from-file=tokens.jsonl -n fleetops), egress limited to in-cluster Prometheus.
+apiVersion: v1
+kind: Namespace
+metadata: { name: fleetops }
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata: { name: fleetops-data, namespace: fleetops }
+spec:
+  accessModes: [ReadWriteOnce]
+  resources: { requests: { storage: 500Gi } }   # ~1.1 GB per day at 10,000 GPUs / 10 s raw (Parquet, zstd)
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata: { name: fleetops, namespace: fleetops, labels: { app: fleetops } }
+spec:
+  replicas: 1                     # one writer per store; shard by cluster with one Deployment (and store) each
+  strategy: { type: Recreate }
+  selector: { matchLabels: { app: fleetops } }
+  template:
+    metadata: { labels: { app: fleetops } }
+    spec:
+      securityContext: { runAsNonRoot: true, runAsUser: 1000, fsGroup: 1000, seccompProfile: { type: RuntimeDefault } }
+      containers:
+        - name: fleetops
+          image: REGISTRY/fleetops:0.1
+          args: [serve, --host, 0.0.0.0, --port, "9400", --store, /data, --backend, parquet, --tokens, /etc/fleetops/tokens.jsonl]
+          env:
+            - { name: FLEETOPS_EGRESS_ALLOW, value: "prometheus-operated.monitoring.svc,*.svc.cluster.local" }   # on-prem: no external calls
+          ports: [{ name: http, containerPort: 9400 }]
+          readinessProbe: { httpGet: { path: /healthz, port: http }, periodSeconds: 10 }
+          livenessProbe: { httpGet: { path: /healthz, port: http }, periodSeconds: 30, failureThreshold: 5 }
+          resources: { requests: { cpu: "2", memory: 4Gi }, limits: { memory: 8Gi } }
+          securityContext: { allowPrivilegeEscalation: false, readOnlyRootFilesystem: true, capabilities: { drop: [ALL] } }
+          volumeMounts:
+            - { name: data, mountPath: /data }
+            - { name: tokens, mountPath: /etc/fleetops, readOnly: true }
+            - { name: tmp, mountPath: /tmp }
+      volumes:
+        - { name: data, persistentVolumeClaim: { claimName: fleetops-data } }
+        - { name: tokens, secret: { secretName: fleetops-tokens, defaultMode: 0400 } }
+        - { name: tmp, emptyDir: { sizeLimit: 2Gi } }
+---
+apiVersion: v1
+kind: Service
+metadata: { name: fleetops, namespace: fleetops }
+spec:
+  selector: { app: fleetops }
+  ports: [{ name: http, port: 9400, targetPort: http }]
+---
+# Nightly rollups and retention. The volume is ReadWriteOnce, so this pod must land on the same node as the
+# Deployment (podAffinity below); with a ReadWriteMany volume the affinity can go.
+apiVersion: batch/v1
+kind: CronJob
+metadata: { name: fleetops-retention, namespace: fleetops }
+spec:
+  schedule: "17 3 * * *"
+  concurrencyPolicy: Forbid
+  jobTemplate:
+    spec:
+      template:
+        spec:
+          restartPolicy: OnFailure
+          securityContext: { runAsNonRoot: true, runAsUser: 1000, fsGroup: 1000 }
+          affinity: { podAffinity: { requiredDuringSchedulingIgnoredDuringExecution: [{ labelSelector: { matchLabels: { app: fleetops } }, topologyKey: kubernetes.io/hostname }] } }
+          containers:
+            - name: retention
+              image: REGISTRY/fleetops:0.1
+              command: [sh, -c, "node tools/fleetops.mjs data rollup --store /data && node tools/fleetops.mjs data compact --raw-days 7 --apply --store /data"]
+              volumeMounts: [{ name: data, mountPath: /data }, { name: tmp, mountPath: /tmp }]
+          volumes:
+            - { name: data, persistentVolumeClaim: { claimName: fleetops-data } }
+            - { name: tmp, emptyDir: {} }

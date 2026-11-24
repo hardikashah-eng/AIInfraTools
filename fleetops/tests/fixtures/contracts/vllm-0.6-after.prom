@@ -1,0 +1,23 @@
+# Format of vLLM 0.6: KV-cache usage as vllm:gpu_cache_usage_perc.
+# TYPE vllm:time_to_first_token_seconds histogram
+vllm:time_to_first_token_seconds_bucket{model_name="llama-70b",le="0.1"} 480
+vllm:time_to_first_token_seconds_bucket{model_name="llama-70b",le="0.25"} 1120
+vllm:time_to_first_token_seconds_bucket{model_name="llama-70b",le="0.5"} 1488
+vllm:time_to_first_token_seconds_bucket{model_name="llama-70b",le="1.0"} 1584
+vllm:time_to_first_token_seconds_bucket{model_name="llama-70b",le="2.5"} 1600
+vllm:time_to_first_token_seconds_bucket{model_name="llama-70b",le="+Inf"} 1600
+vllm:time_to_first_token_seconds_count{model_name="llama-70b"} 1600
+vllm:time_to_first_token_seconds_sum{model_name="llama-70b"} 320.0
+# TYPE vllm:time_per_output_token_seconds histogram
+vllm:time_per_output_token_seconds_bucket{model_name="llama-70b",le="0.01"} 320
+vllm:time_per_output_token_seconds_bucket{model_name="llama-70b",le="0.025"} 1200
+vllm:time_per_output_token_seconds_bucket{model_name="llama-70b",le="0.05"} 1552
+vllm:time_per_output_token_seconds_bucket{model_name="llama-70b",le="0.1"} 1600
+vllm:time_per_output_token_seconds_bucket{model_name="llama-70b",le="+Inf"} 1600
+vllm:time_per_output_token_seconds_count{model_name="llama-70b"} 1600
+vllm:time_per_output_token_seconds_sum{model_name="llama-70b"} 320.0
+vllm:request_success_total{model_name="llama-70b",finished_reason="stop"} 1600
+vllm:prompt_tokens_total{model_name="llama-70b"} 1440000
+vllm:generation_tokens_total{model_name="llama-70b"} 352000
+vllm:num_requests_running{model_name="llama-70b"} 42
+vllm:gpu_cache_usage_perc{model_name="llama-70b"} 0.63

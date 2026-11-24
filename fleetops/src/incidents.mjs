@@ -7,6 +7,8 @@
 // scores root-cause analysis on it, and the postmortem cites it.
 // Paging (PagerDuty Events v2, Opsgenie Alerts, or a JSON webhook) is a dry run unless --live: nothing is sent otherwise.
 
+import { checkEgress } from './security.mjs';
+
 export const STATES = ['open', 'acknowledged', 'mitigated', 'resolved'];
 const NEXT = { open: ['acknowledged', 'mitigated', 'resolved'], acknowledged: ['mitigated', 'resolved'], mitigated: ['resolved', 'acknowledged'], resolved: ['open'] };
 const EVENT_STATE = { opened: 'open', acknowledged: 'acknowledged', mitigated: 'mitigated', resolved: 'resolved', reopened: 'open' };
@@ -94,6 +96,7 @@ export async function page(store, id, provider, action, { live = false, key, url
   const p = pagePayload(provider, action, s, { key, url });
   if (!live) return { dryRun: true, request: p };
   if (!key && provider !== 'webhook') throw new Error(`${provider} needs a key (--key or the environment)`);
+  checkEgress(p.url); // on-prem mode: only listed hosts
   const post = poster || ((u, o) => fetch(u, o).then(async r => ({ status: r.status, text: await r.text() })));
   const r = await post(p.url, { method: 'POST', headers: p.headers, body: JSON.stringify(p.body) });
   store.append('incident_event', [{ t: now, id, event: 'paged', by, provider, action, status: r.status }]);
