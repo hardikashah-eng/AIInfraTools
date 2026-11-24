@@ -10,7 +10,7 @@
 // do not show accuracy on a real fleet: that needs injected and postmortem labels.
 import { MemStore } from './memstore.mjs';
 import { diagnose, RULE_IDS } from './rca.mjs';
-import { detectJobFailures, detectServing, groupIncidents } from './detect.mjs';
+import { detectJobFailures, detectServing, detectTraining, groupIncidents } from './detect.mjs';
 
 const H = 3600;
 const T0 = Date.UTC(2026, 0, 15, 12, 0, 0) / 1000; // a fixed time keeps runs repeatable
@@ -159,6 +159,52 @@ const SCENARIOS = {
     if (r.chance(0.5)) f.s.append('change', nodes.map(x => ({ t: T0 + r.int(0, 1800), since: T0 - r.int(2, 12) * H, kind: field === 'vbios' ? 'firmware' : field === 'kernel' ? 'config' : 'driver', target: x, field, from: 'old', to: v, summary: `${field} → ${v}`, id: `${x}:${field}:${v}`, derived: 'inventory' })));
     return { incident: JOBS_WINDOW, cause: 'version-cohort', also: ['change'] };
   },
+  'straggler: one slow GPU in a training job': f => {
+    const { r } = f, nodes = r.sample(f.nodes, r.int(2, Math.min(6, f.nodes.length))), ranks = [];
+    for (const x of nodes) for (const g of ['0', '1', '2', '3']) ranks.push({ node: x, gpu: g });
+    const bad = r.pick(ranks), slow = 1.3 + r.u() * 1.2, base = 0.8 + r.u() * 0.6, steps = [];
+    for (let i = 0; i < 160; i++) {
+      const t = T0 - 3 * H + i * 90, after = t > T0;
+      for (const [k, rk] of ranks.entries()) {
+        const comp = base * (after && rk === bad ? slow : 1) * (1 + (r.u() - 0.5) * 0.04), slowest = base * (after ? slow : 1);
+        const comm = 0.1 + (after ? slowest - comp : 0) + r.u() * 0.01; // the others wait for the slowest
+        steps.push({ t, job: 'train-llm', rank: k, node: rk.node, gpu: rk.gpu, step: i, durS: comp + comm, commS: +comm.toFixed(4), computeS: +comp.toFixed(4) });
+      }
+    }
+    f.s.append('step', steps);
+    if (r.chance(0.6)) f.s.append('device', [0, 1, 2, 3].map(i => ({ t: T0 + 300 + i * 600, node: bad.node, gpu: bad.gpu, vendor: 'nvidia', kind: 'gpu', clockMHz: r.int(700, 1200), maxClockMHz: 1980, tempC: r.int(85, 92), faults: [] })));
+    return { incident: { symptom: 'training-slow', job: 'train-llm', from: T0, to: T0 + H }, cause: 'straggler', component: bad.node };
+  },
+  'collective-hang: one rank never joins': f => {
+    const { r } = f, nodes = r.sample(f.nodes, r.int(2, Math.min(4, f.nodes.length))), ranks = nodes.flatMap(x => ['0', '1', '2', '3'].map(g => ({ node: x, gpu: g })));
+    const badK = r.int(0, ranks.length - 1), stuckAt = T0 + 60, steps = [];
+    for (let i = 0; i < 80; i++) { const t = T0 - 2 * H + i * 90; if (t > stuckAt) break; for (const [k, rk] of ranks.entries()) steps.push({ t, job: 'train-llm', rank: k, node: rk.node, gpu: rk.gpu, step: i, durS: 1.1 }); }
+    f.s.append('step', steps);
+    const silent = r.chance(0.5);
+    f.s.append('log', ranks.map((rk, k) => ({ k, rk })).filter(x => !(silent && x.k === badK)).map(({ k, rk }) => ({ t: stuckAt + 600 + r.int(0, 5), node: rk.node, job: 'train-llm', rank: k, code: 'nccl_timeout', class: 'network', severity: 'hard', op: 'ALLREDUCE', seq: k === badK ? 4120 : 4121, ms: 600000, msg: 'Watchdog caught collective operation timeout', source: 'app-log' })));
+    if (r.chance(0.4)) f.s.append('log', [kernel(ranks[badK].node, stuckAt - 30, 'xid79', ranks[badK].gpu)]);
+    return { incident: { symptom: 'training-hang', job: 'train-llm', from: stuckAt, to: stuckAt + 700 }, cause: 'collective-hang', component: ranks[badK].node };
+  },
+  'replica-tail: one serving replica slow': f => {
+    const { r } = f, reps = Array.from({ length: r.int(4, 8) }, (_, i) => `chat-70b-${i}`), bad = r.pick(reps), slow = 2 + r.u() * 2, rq = [];
+    for (let t = T0 - 24 * H; t <= T0 + 1800; t += r.int(20, 40)) {
+      const rep = r.pick(reps), m = t > T0 && rep === bad ? slow : 1, q = 0.02 * m, pf = 0.25 * m * (1 + r.u() * 0.3), dc = 4 * (1 + r.u() * 0.2);
+      rq.push({ t, pool: 'chat-70b', replica: rep, node: rep, isl: 900, osl: 220, ttft: q + pf, e2e: q + pf + dc * m, stages: { queue: q, prefill: pf, decode: dc * m } });
+    }
+    f.s.append('request', rq);
+    serving(f, 'chat-70b', { ttft: [0.6, 0.6 * (1 + slow / 2)] });
+    return { incident: { symptom: 'latency', pool: 'chat-70b', metric: 'ttftP99', from: T0, to: T0 + 1800 }, cause: 'replica-tail', component: bad };
+  },
+  'slow-stage: prefill slows on every replica': f => {
+    const { r } = f, reps = Array.from({ length: r.int(3, 6) }, (_, i) => `chat-70b-${i}`), m = 1.8 + r.u() * 1.5, rq = [];
+    for (let t = T0 - 24 * H; t <= T0 + 1800; t += r.int(20, 40)) {
+      const after = t > T0, q = 0.02 * (1 + r.u() * 0.2), pf = 0.25 * (after ? m : 1) * (1 + r.u() * 0.3), dc = 4 * (1 + r.u() * 0.2);
+      rq.push({ t, pool: 'chat-70b', replica: r.pick(reps), isl: 900, osl: 220, ttft: q + pf, e2e: q + pf + dc, stages: { queue: q, prefill: pf, decode: dc } });
+    }
+    f.s.append('request', rq);
+    serving(f, 'chat-70b', { ttft: [0.6, 0.6 * m] });
+    return { incident: { symptom: 'latency', pool: 'chat-70b', metric: 'ttftP99', from: T0, to: T0 + 1800 }, cause: 'slow-stage' };
+  },
   'monitoring-gap: exporters stop': f => {
     const { r } = f;
     f.silent = r.sample(f.nodes, Math.ceil(f.nodes.length * (0.4 + r.u() * 0.5)));
@@ -240,9 +286,10 @@ export function evalInjections(store, { weights, binS = 300, targets = {}, from,
   const injs = store.query('injection', { from, to }).filter(i => i.applied !== false);
   const rows = injs.map(inj => {
     const end = inj.to ?? inj.from + (inj.forS || 300);
-    const incs = groupIncidents([...detectJobFailures(store, { from: inj.from - 1800, to: end + 3600, binS }), ...detectServing(store, { from: inj.from - 1800, to: end + 3600, targets })]);
+    const incs = groupIncidents([...detectJobFailures(store, { from: inj.from - 1800, to: end + 3600, binS }), ...detectServing(store, { from: inj.from - 1800, to: end + 3600, targets }), ...detectTraining(store, { from: inj.from - 1800, to: end + 3600 })]);
     const hit = incs.filter(i => i.to > inj.from && i.from < end + 1800 && (!inj.pool || !i.pool || i.pool === inj.pool)).sort((a, b) => (a.alarmAt ?? a.to) - (b.alarmAt ?? b.to))[0];
-    const inc = hit || { id: `${inj.id}:window`, symptom: inj.pool ? 'latency' : 'job-failures', pool: inj.pool, metric: inj.pool ? 'ttftP99' : undefined, from: inj.from, to: end + 900 };
+    const training = ['straggler', 'collective-hang'].includes(inj.expect);
+    const inc = hit || { id: `${inj.id}:window`, symptom: inj.pool ? 'latency' : training ? (inj.expect === 'straggler' ? 'training-slow' : 'training-hang') : 'job-failures', pool: inj.pool, metric: inj.pool ? 'ttftP99' : undefined, from: inj.from, to: end + 900 };
     const d = diagnose(store, inc, { weights });
     const rank = inj.expect ? d.hypotheses.findIndex(h => h.rule === inj.expect) : -1, top = d.hypotheses[0];
     const one = (inj.nodes || []).length === 1 ? inj.nodes[0] : null;

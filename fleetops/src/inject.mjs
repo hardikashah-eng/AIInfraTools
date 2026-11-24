@@ -32,9 +32,15 @@ export const FAULTS = {
   },
   'nccl-stall': {
     what: 'One rank of a running NCCL job stops (SIGSTOP) for --for seconds: the collective hangs, the watchdog fires',
-    params: { node: NAME, pid: NUM }, targets: ['node'], expect: null,
+    params: { node: NAME, pid: NUM }, targets: ['node'], expect: 'collective-hang',
     apply: p => [['ssh', p.node, 'sudo', 'kill', '-STOP', p.pid]], revert: p => [['ssh', p.node, 'sudo', 'kill', '-CONT', p.pid]],
-    note: 'Set the job\'s NCCL/PyTorch timeout below --for to see the watchdog. Diagnosis (straggler, collective hang) arrives with milestone 8.',
+    note: 'Set the job\'s NCCL/PyTorch timeout below --for to see the watchdog; import its logs (app-log) and step records afterwards.',
+  },
+  'gpu-slow': {
+    what: 'One GPU\'s clocks locked low with nvidia-smi for --for seconds: a straggler in any synchronous job on it',
+    params: { node: NAME, gpu: NUM, mhz: NUM }, defaults: { mhz: '600' }, targets: ['node'], expect: 'straggler',
+    apply: p => [['ssh', p.node, 'sudo', 'nvidia-smi', '-i', p.gpu, '-lgc', `${p.mhz},${p.mhz}`]], revert: p => [['ssh', p.node, 'sudo', 'nvidia-smi', '-i', p.gpu, '-rgc']],
+    note: 'Run a multi-GPU training job across it and import its step records (kineto or step-log).',
   },
   'nic-down': {
     what: 'One node\'s RDMA network interface down (RoCE/Ethernet netdev) for --for seconds',

@@ -137,3 +137,29 @@ export function groupIncidents(list, { gapS = 1800 } = {}) {
   for (const a of out) if (!a.related.length) delete a.related;
   return out;
 }
+
+// Training incidents. Slowdowns: per job, the median step time across ranks against the job's own recent steps
+// (z-score CUSUM). Hangs: NCCL / PyTorch watchdog timeouts, grouped by job (or by the nodes that logged them).
+export function detectTraining(store, { from, to, k = 0.5, h = 5, history = 100 } = {}) {
+  const out = [];
+  const steps = store.query('step', { from: from != null ? from - 6 * 3600 : undefined, to });
+  for (const job of [...new Set(steps.map(s => s.job))]) {
+    const byStep = new Map();
+    for (const s of steps.filter(x => x.job === job)) { if (!byStep.has(s.step)) byStep.set(s.step, []); byStep.get(s.step).push(s); }
+    const pts = [...byStep.entries()].sort((a, b) => a[0] - b[0]).map(([, ss]) => ({ t: Math.max(...ss.map(x => x.t)), v: median(ss.map(x => x.durS)) }));
+    const series = [];
+    for (let i = 10; i < pts.length; i++) {
+      const ref = pts.slice(Math.max(0, i - history), i).map(p => p.v), med = median(ref), mad = median(ref.map(v => Math.abs(v - med)));
+      series.push({ t: pts[i].t, t0: pts[i - 1].t, v: pts[i].v, med, scale: 1.4826 * mad });
+    }
+    for (const r of zCusum(series, { k, h })) if (from == null || r.to > from) out.push({ symptom: 'training-slow', job, from: r.from, to: r.to, alarmAt: r.alarmAt, peak: r.peak, baseline: r.base, method: 'cusum', id: `training-slow:${job}@${iso(r.from)}` });
+  }
+  const tl = store.query('log', { from, to, where: l => l.code === 'nccl_timeout' });
+  const byJob = new Map();
+  for (const l of tl) { const key = l.job || `nodes:${l.node}`; if (!byJob.has(key)) byJob.set(key, []); byJob.get(key).push(l); }
+  for (const [key, ls] of byJob) {
+    const start = Math.min(...ls.map(l => l.t - (l.ms || 0) / 1000)), end = Math.max(...ls.map(l => l.t));
+    out.push({ symptom: 'training-hang', job: key.startsWith('nodes:') ? undefined : key, nodes: [...new Set(ls.map(l => l.node))], from: start, to: end + 60, alarmAt: Math.min(...ls.map(l => l.t)), method: 'watchdog', id: `training-hang:${key}@${iso(start)}` });
+  }
+  return out;
+}
