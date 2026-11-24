@@ -12,6 +12,8 @@ const inlined = {
   '/*MODEL*/': read('src/model.js'),
   '/*FLEETSCOPE*/': read('src/fleetscope.js'),
   '/*UI*/': read('src/ui.js'),
+  '/*FIT*/': read('src/fit.js'),
+  '/*FITUI*/': read('src/fit-ui.js'),
 };
 
 let out = read('src/index.src.html');

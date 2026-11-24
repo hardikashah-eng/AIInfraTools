@@ -29,6 +29,8 @@ node tools/size.mjs --model llama33-70b --gpu H200 --set conc=800 --calibration 
 
 **Calibration.** The engine efficiencies (`effPrefill`, `effDecodeBW`, `effDecodeComp`) default to conservative spec-sheet values. `--calibration FILE` replaces them with values fitted to measurements for the same GPU and model. Make the file with `fleetops calibrate benchmarks` from MLPerf or `benchmark_serving` results. `--input` and `--set` still win, and the output says which profile was used. On MLPerf Inference v5.0 Llama 2 70B server runs, the defaults asked for twice the GPUs the measured 8-GPU systems used; see [fleetops/docs/CALIBRATION.md](../fleetops/docs/CALIBRATION.md).
 
+**What fits on my GPUs.** The page has a second view (the button at the top right, or `dist/index.html#fit`). Pick a GPU and a node count, the median prompt and output length, the TTFT and TPOT targets and, optionally, a request rate. It lists every catalog model with the requests per second it carries in production (15% headroom, an N+1 spare node, 10% inside the targets) and flat out, output tokens per second, dollars per million output tokens and the layout. Models too big for the hardware say why. Click one for its concurrency, the longest prompt that still meets the target, and the `fleetops serving deploy` command for it. Rank by size (a stand-in for capability, not a quality score) or by throughput. The same engine is `fleetops serving fit` and `fleetops serving capacity` on the command line.
+
 Develop: `npm test`, then `npm run build` to rebuild `dist/index.html` from `src/`.
 
 ## What it covers
@@ -49,6 +51,11 @@ Develop: `npm test`, then `npm run build` to rebuild `dist/index.html` from `src
 ### Recommendation
 
 Llama 3.3 70B in FP8 on B200 for 500 concurrent sessions and 50K DAU, with a 1 s TTFT and a 30 ms TPOT: four 4-GPU instances serving prefill and decode together, in three 8-GPU nodes.
+
+
+### What fits on my GPUs
+
+Which models 2 nodes of 8 × H100 serve at 5 req/s within TTFT 2 s and TPOT 50 ms, and the capacity of the one picked.
 
 
 ### Topology, latency and memory
@@ -86,7 +93,8 @@ In FleetScope, **Load graph JSON** runs it. The same recommendation replays at 9
 | `src/catalog.js` | Built-in GPUs and models, field schemas, spec-sheet and `config.json` import |
 | `src/model.js` | The sizing model (`plan(s)`) |
 | `src/fleetscope.js` | Export to a FleetScope graph |
-| `src/ui.js`, `src/index.src.html` | The page |
+| `src/fit.js` | Fit and capacity: which models fit given hardware, and how much load each carries (shared with `fleetops serving`) |
+| `src/ui.js`, `src/fit-ui.js`, `src/index.src.html` | The page: the sizing view and the "What fits" view |
 | `specs/example.json` | Example spec sheet (one GPU, one model) |
 | `tools/size.mjs` | CLI |
-| `tests/` | Catalog, model and cross-tool FleetScope tests |
+| `tests/` | Catalog, model, "What fits" (in Node and in headless Chrome when there is one) and cross-tool FleetScope tests |

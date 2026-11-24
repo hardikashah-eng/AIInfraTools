@@ -344,6 +344,7 @@ prediction.
 
 **Status:** built ([fleetops/docs/SERVING.md](fleetops/docs/SERVING.md)), tested against a stub cluster and a fake
 OpenAI server.
+- **"What fits on my GPUs"** view in the Inference Sizer page: fit and capacity, with the deploy command.
 - **Disaggregated prefill/decode on llm-d:** a DisaggregatedSet, NIXL KV transfer and the llm-d router chart, with
   `--mode disagg|auto`.
 - **Still needed:** a deployment on a real cluster, a load test against the plan, and P/D roles that span nodes.
