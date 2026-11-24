@@ -180,19 +180,49 @@ input[type=text] { width: 100%; font: 13px var(--f-body); color: var(--ink); bac
 .dlg .sub { margin: 0; color: var(--muted); font-size: 13px; }
 .dlg .msg { color: var(--muted); }
 @media (prefers-reduced-motion: reduce) { * { transition: none !important; } }
+/* What fits view */
+nav.views { display: flex; gap: 6px; }
+nav.views .chip { font-size: 12.5px; padding: 4px 12px; }
+.fitlayout { display: grid; grid-template-columns: 360px minmax(0, 1fr); }
+.fitlayout[hidden], .layout[hidden] { display: none; }
+@media (max-width: 900px) { .fitlayout { grid-template-columns: 1fr; } }
+.fittable tr[data-model] { cursor: pointer; }
+.fittable tr[data-model]:hover, .fittable tr[data-model]:focus-visible { background: var(--sunk); outline: none; }
+.fittable tr.picked { background: var(--sunk); box-shadow: inset 3px 0 0 var(--accent); }
+.fittable tr.nofit td { color: var(--muted); }
+.fittable td.mono { white-space: nowrap; }
+.fittable .why { font-size: 12px; color: var(--muted); }
+.fittable .ok { color: var(--good); font-weight: 600; } .fittable .no { color: var(--muted); }
+.fittable td.barcell { width: 32%; min-width: 140px; vertical-align: middle; }
+.fitbar { display: flex; gap: 2px; height: 10px; }
+.fitbar span { display: block; height: 100%; } .fitbar span:first-child { border-radius: 4px 0 0 4px; } .fitbar span:last-child { border-radius: 0 4px 4px 0; }
+.fitbar .p, .lg.p { background: var(--decode); } .fitbar .e, .lg.e { background: var(--spare); }
+.lg { display: inline-block; width: 9px; height: 9px; border-radius: 2px; margin: 0 4px 0 6px; vertical-align: -1px; }
+.kvgrid { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 12px 18px; }
+.kvgrid .k { font-size: 12px; color: var(--muted); } .kvgrid .v { font: 500 16px var(--f-mono); font-variant-numeric: tabular-nums; }
+.cmdrow { display: flex; gap: 8px; align-items: center; margin: 12px 0 6px; }
+.cmdrow code { flex: 1; font: 12.5px var(--f-mono); background: var(--sunk); border-radius: 6px; padding: 8px 10px; overflow-x: auto; white-space: nowrap; }
 </style>
 </head>
 <body>
 <header class="top">
   <div>
     <h1>Inference Sizer</h1>
-    <p>How many GPUs serve a model at your latency targets, and how to lay them out. Part of MiscTools, next to FleetScope.</p>
+    <p>How many GPUs serve a model at your latency targets, and how to lay them out. Part of AIInfraTools, next to FleetScope.</p>
   </div>
+  <nav class="views" aria-label="View">
+    <button type="button" class="chip on" data-view="size" aria-pressed="true">Size for traffic</button>
+    <button type="button" class="chip" data-view="fit" aria-pressed="false">What fits on my GPUs</button>
+  </nav>
   <div class="spec" id="spec"></div>
 </header>
 <div class="layout">
   <aside class="inputs" id="inputs" aria-label="Inputs"></aside>
   <main class="results" id="results" aria-live="polite"></main>
+</div>
+<div class="fitlayout" id="fitview" hidden>
+  <aside class="inputs" id="fit-inputs" aria-label="What fits: inputs"></aside>
+  <main class="results" id="fit-results" aria-live="polite"></main>
 </div>
 <div class="overlay" id="dialog" hidden></div>
 <script>
@@ -206,6 +236,12 @@ input[type=text] { width: 100%; font: 13px var(--f-body); color: var(--ink); bac
 </script>
 <script>
 /*UI*/
+</script>
+<script>
+/*FIT*/
+</script>
+<script>
+/*FITUI*/
 </script>
 </body>
 </html>

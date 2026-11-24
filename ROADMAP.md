@@ -313,7 +313,7 @@ prediction.
 **Done when:** a model deployed this way meets its targets at the planned rate under a load test on a real cluster.
 
 **Status:** built ([fleetops/docs/SERVING.md](fleetops/docs/SERVING.md)), tested against a stub cluster and a fake
-OpenAI server. **Still needed:** a deployment on a real cluster, a load test against the plan, and disaggregated
+OpenAI server. Fit and capacity are also a "What fits on my GPUs" view in the Inference Sizer page. **Still needed:** a deployment on a real cluster, a load test against the plan, and disaggregated
 serving (llm-d or Dynamo) when the sizer chooses it.
 
 ### 17. Fabric and storage stalls
