@@ -29,6 +29,10 @@ node tools/fleetops.mjs rca eval --labels incidents.jsonl                       
 | `load` | request rate ≥ 1.2× its baseline, or longer prompts | capacity |
 | `silent-corruption` | a data-parallel replica that disagrees with its peers' parameter checksums, a failed canary or replay, the first rank to go non-finite ([SDC.md](SDC.md)) | one GPU computing wrong answers |
 | `monitoring-gap` | far fewer devices reporting than the day before | the monitoring |
+| `fabric-congestion` | communication slower on most of a training job's nodes at once, and the uplinks of their leaf switches show congestion (xmit wait, pause frames) | the fabric between them ([FABRIC-STORAGE.md](FABRIC-STORAGE.md)) |
+| `storage-stall` | steps wait longer on data or checkpoint writes, and one storage target the job uses got slower | that OST, export or bucket |
+
+`slow-link` also names the node's switch port, and whether that port's counters show a bad link or congestion.
 
 **Output.** Hypotheses are ranked by score.
 - **Confidence:** high when the top score is at least 0.75 and leads the next by at least 0.15; medium from 0.5.

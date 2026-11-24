@@ -94,6 +94,10 @@ export function sniff(name, head) {
   if (/^\s*<\?xml[\s\S]{0,200}<nvidia_smi_log|^==============NVSMI LOG==============/m.test(h) || /\bProduct Name\s+:/.test(h) && /\bSerial Number\s+:/.test(h)) return 'nvidia-smi-q';
   if (/\bGPU0\b/.test(h) && /Legend:/.test(h)) return 'nvidia-topo';
   if (/^(Switch|Ca)\s+\d+\s+"/m.test(h) || /vendid=0x/.test(h)) return 'ibnetdiscover';
+  if (/^Errors for\s+0x[0-9a-f]+/im.test(h)) return 'ibqueryerrors';
+  if (/^#\s*Port (extended )?counters:\s*Lid/im.test(h)) return 'perfquery';
+  if (/^device\s+\S+\s+mounted on\s+\S+\s+with fstype nfs/m.test(h)) return 'mountstats';
+  if (/^(obdfilter|mdt)\.[\w-]+\.job_stats=/m.test(h)) return 'lustre-jobstats';
   if (/^# (HELP|TYPE) vllm:|^vllm:\w+/m.test(h)) return 'vllm';
   if (/^(# (HELP|TYPE) )?(DCGM_FI_|amd_|gpu_|sambanova_)/m.test(h)) return 'exporter';
   if (/NodeName=\S+/.test(h) && /State=/.test(h)) return 'slurm-nodes';

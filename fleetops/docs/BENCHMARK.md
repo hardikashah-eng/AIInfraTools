@@ -42,7 +42,7 @@ Three kinds of label, one format: `{ store, incident, cause (rule id), component
 
 | Source | Where labels come from | What it shows |
 |---|---|---|
-| synthetic | `generate()`: randomized fleets of 12–24 nodes (leaves of 4, racks of 6 or 8, 3–6 owners) with one planted cause and 0–2 distractors; 18 scenario kinds covering all 15 rules | Each rule finds its cause through noise. Not accuracy on a real fleet. |
+| synthetic | `generate()`: randomized fleets of 12–24 nodes (leaves of 4, racks of 6 or 8, 3–6 owners) with one planted cause and 0–2 distractors; 22 scenario kinds covering all 17 rules | Each rule finds its cause through noise. Not accuracy on a real fleet. |
 | injected | `injection` records written by `fleetops inject` on a test cluster | Detection delay and diagnosis on real faults through the real collectors |
 | postmortem | JSON lines `{ incident, cause, component? }` against a store rebuilt for each window | Accuracy on your fleet's real failures |
 

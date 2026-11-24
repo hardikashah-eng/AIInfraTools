@@ -104,6 +104,10 @@ See [docs/ADMISSION.md](docs/ADMISSION.md).
 
 The numbers are the Inference Sizer's, from spec sheets unless `fleetops calibrate` has fitted them to your benchmarks. See [docs/SERVING.md](docs/SERVING.md).
 
+## Fabric and storage stalls
+
+A slow-link diagnosis names the switch port behind the slow node (`leaf-03/17`) and whether its counters show a bad cable or congestion. Counters come from perfquery, ibqueryerrors, the NIC's `ethtool -S`, or UFM, SONiC or SNMP through Prometheus. `fabric-congestion` names a leaf whose uplinks congested when a whole job's communication slowed. `storage-stall` traces data-loader and checkpoint waits to the Lustre OST, NFS export or bucket whose latency rose (Lustre job_stats, NFS mountstats). See [docs/FABRIC-STORAGE.md](docs/FABRIC-STORAGE.md).
+
 ## Training goodput
 
 `fleetops goodput` splits every training allocation, per job, team and day:

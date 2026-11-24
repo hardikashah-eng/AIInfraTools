@@ -14,6 +14,7 @@
 // serving replica holds the slow requests), slow-link (one node's NCCL bandwidth well below the others'), slow-stage (the request stage that grew: queue, prefill, decode).
 
 import { groups } from './adapters/topology.mjs';
+import { growth, ERROR_COUNTERS, CONGESTION_COUNTERS } from './adapters/fabric.mjs';
 import { findSdc } from './sdc.mjs';
 import { DEVICE_CLASSES } from './adapters/logs.mjs';
 
@@ -22,6 +23,7 @@ const median = a => { const s = a.filter(Number.isFinite).sort((x, y) => x - y);
 const share = (counts, total) => [...counts.entries()].map(([k, n]) => ({ k, n, share: total ? n / total : 0 })).sort((a, b) => b.n - a.n);
 const count = (arr, f) => { const m = new Map(); for (const x of arr) for (const k of [].concat(f(x)).filter(v => v != null)) m.set(k, (m.get(k) || 0) + 1); return m; };
 const clamp01 = v => Math.max(0, Math.min(1, v));
+const mostCommon = a => { const m = new Map(); for (const v of a) m.set(v, (m.get(v) || 0) + 1); let b = null, n = 0; for (const [k, c] of m) if (c > n) { b = k; n = c; } return b; };
 const ref = (kind, r, extra = {}) => Object.assign({ kind, t: r.t }, extra);
 const iso = t => new Date(t * 1000).toISOString().replace('.000Z', 'Z');
 
@@ -96,6 +98,10 @@ function context(store, inc, { lookbackH = 24 } = {}) {
   c.steps = store.query('step', { from: from - 6 * H, to, where: s => !inc.job || s.job === inc.job });
   c.requests = inc.pool ? store.query('request', { from: before, to, where: r => r.pool === inc.pool }) : [];
   c.collectives = inc.symptom && inc.symptom.startsWith('training') ? store.query('collective', { from: from - 2 * H, to, where: x => !inc.job || !x.job || x.job === inc.job }) : [];
+  // switch and NIC port counters, and storage I/O per target (6 h of history for baselines)
+  c.ports = store.query('port', { from: from - 6 * H, to });
+  c.storage = store.query('storage', { from: from - 6 * H, to });
+  c.ibEdges = store.query('topology', { to, where: e => e.kind === 'ib' });
   // logs: the whole lookback (for baselines) and the incident window (2 h lead-in)
   c.logs = store.query('log', { from: before, to });
   c.logsWin = c.logs.filter(l => l.t >= from - 2 * H);
@@ -132,6 +138,26 @@ const holdingGroup = (c, nodes, cover = 0.8) => {
 // Log lines that point at a node's own hardware: device faults, CPU/DIMM errors, and its NIC (kernel IB link down).
 const isHardwareLog = l => l.severity === 'hard' && (DEVICE_CLASSES.has(l.class) || l.class === 'cpu' || l.class === 'host-memory' || (l.class === 'network' && l.source === 'kernel'));
 const where = l => `${l.node}${l.gpu != null ? '/' + l.gpu : l.pci ? ` (${l.pci})` : ''}`;
+
+// The switch port a node's link lands on (ibnetdiscover edges carry it), and what its counters and the node's own NIC
+// counters did in the incident against the hours before: error counters growing → a bad cable, transceiver or port;
+// xmit wait or pause frames growing → congestion.
+const bareSw = s => String(s || '').replace(/^switch:/, '');
+function portOf(c, node) {
+  const e = c.ibEdges.find(x => !x.uplink && x.from === node && x.port != null);
+  const sw = e && bareSw(e.to), name = e ? `${sw}/${e.port}` : null, evidence = [];
+  const recs = c.ports.filter(r => (e && bareSw(r.switch) === sw && String(r.port) === String(e.port)) || r.switch === node);
+  if (!recs.length) return { name, kind: null, evidence: name ? [{ what: `${node} connects to ${name}; no counters for that port in the store` }] : [] };
+  const now = growth(recs.filter(r => r.switch !== node), c.from - 600, c.to), nic = growth(recs.filter(r => r.switch === node), c.from - 600, c.to);
+  const base = growth(recs.filter(r => r.switch !== node), c.from - 6 * H, c.from - 600), baseNic = growth(recs.filter(r => r.switch === node), c.from - 6 * H, c.from - 600);
+  const rate = (g, k) => (g.seconds > 0 && Number.isFinite(g[k]) ? g[k] / g.seconds : null);
+  const errs = ERROR_COUNTERS.filter(k => (now[k] || 0) + (nic[k] || 0) > 0 && ((rate(now, k) ?? rate(nic, k) ?? 0) > 3 * Math.max(rate(base, k) ?? 0, rate(baseNic, k) ?? 0)));
+  const cong = CONGESTION_COUNTERS.filter(k => { const r = rate(now, k) ?? rate(nic, k), b = rate(base, k) ?? rate(baseNic, k); return r != null && r > 0 && (b == null || r > 3 * b); });
+  const fmtN = v => Math.round(v).toLocaleString('en-US');
+  for (const k of errs) evidence.push({ what: `${name || node}: ${k} grew by ${fmtN((now[k] || 0) + (nic[k] || 0))} in the incident, ${fmtN((base[k] || 0) + (baseNic[k] || 0))} in the hours before`, refs: [ref('port', { t: c.from }, { switch: sw || node, port: e ? e.port : undefined })] });
+  for (const k of cong) evidence.push({ what: `${name || node}: ${k} rose ${Number.isFinite(rate(base, k) ?? rate(baseNic, k)) && (rate(base, k) ?? rate(baseNic, k)) > 0 ? `${((rate(now, k) ?? rate(nic, k)) / (rate(base, k) ?? rate(baseNic, k))).toFixed(1)}×` : 'from nothing'} against the hours before`, refs: [ref('port', { t: c.from }, { switch: sw || node })] });
+  return { name, kind: errs.length ? 'bad link' : cong.length ? 'congestion' : null, evidence: evidence.length ? evidence : [{ what: `${name || node}: its counters did not change in the incident (the link itself looks clean)` }] };
+}
 // P(X ≥ k) for X ~ Binomial(n, p)
 const binomTail = (n, k, p) => { let t = 0, c = 1; for (let i = 0; i <= n; i++) { if (i > 0) c = c * (n - i + 1) / i; if (i >= k) t += c * p ** i * (1 - p) ** (n - i); } return Math.min(1, t); };
 const DIM_NAME = { leaf: 'leaf switch', spine: 'spine switch', rack: 'rack', pdu: 'PDU', row: 'row' };
@@ -139,6 +165,74 @@ const DIM_NAME = { leaf: 'leaf switch', spine: 'spine switch', rack: 'rack', pdu
 // ---------- rules ----------
 
 const RULES = {
+  // Communication slowed on every node of a job at once, and the uplinks of the leaf switches they sit behind show
+  // congestion (xmit wait, pause frames) the hours before didn't: the fabric between them, not one node.
+  'fabric-congestion'(c) {
+    if (c.inc.symptom !== 'training-slow') return null;
+    const st = c.steps.filter(s => s.commS != null), during = st.filter(s => s.t > c.from && s.t <= c.to), before = st.filter(s => s.t <= c.from);
+    const cb = median(before.map(s => s.commS)), cd = median(during.map(s => s.commS));
+    if (!(cd > 1.3 * cb) || during.length < 10) return null;
+    const nodes = [...new Set(during.map(s => s.node).filter(Boolean))];
+    const perNode = nodes.map(n => median(during.filter(s => s.node === n).map(s => s.commS)) / Math.max(1e-9, median(before.filter(s => s.node === n).map(s => s.commS))));
+    if (perNode.filter(r => r > 1.2).length < 0.6 * nodes.length) return null; // one node's link is slow-link's case
+    const leaves = [...new Set(nodes.flatMap(n => c.ibEdges.filter(e => !e.uplink && e.from === n).map(e => bareSw(e.to))))];
+    const hot = [];
+    for (const l of leaves) for (const e of c.ibEdges.filter(e => e.uplink && bareSw(e.from) === l)) {
+      const recs = c.ports.filter(r => bareSw(r.switch) === l && String(r.port) === String(e.port)); if (!recs.length) continue;
+      const now = growth(recs, c.from - 600, c.to), base = growth(recs, c.from - 6 * H, c.from - 600);
+      const k = CONGESTION_COUNTERS.find(k => now.seconds > 0 && (now[k] || 0) / now.seconds > 3 * ((base[k] || 0) / Math.max(1, base.seconds)) && (now[k] || 0) > 0);
+      if (k) hot.push({ leaf: l, port: e.port, to: bareSw(e.to), k, ratio: base[k] ? ((now[k] / now.seconds) / (base[k] / Math.max(1, base.seconds))) : Infinity });
+    }
+    if (!hot.length) return null;
+    const leaf = mostCommon(hot.map(h => h.leaf)), mine = hot.filter(h => h.leaf === leaf);
+    return {
+      cause: 'fabric-congestion', title: `Fabric congestion on ${leaf}'s uplinks (${mine.map(h => `${leaf}/${h.port}`).join(', ')}): communication ${((cd / cb - 1) * 100).toFixed(0)}% slower on ${nodes.length} node(s)`,
+      score: clamp01(0.55 + 0.2 * Math.min(1, (cd / cb - 1)) + 0.05 * Math.min(4, mine.length)),
+      evidence: [{ what: `communication per step ${cb.toFixed(3)} → ${cd.toFixed(3)} s on ${perNode.filter(r => r > 1.2).length} of ${nodes.length} nodes at once` },
+        ...mine.slice(0, 4).map(h => ({ what: `${h.leaf}/${h.port} → ${h.to}: ${h.k} ${Number.isFinite(h.ratio) ? `${h.ratio.toFixed(1)}×` : 'from nothing'} against the hours before`, refs: [ref('port', { t: c.from }, { switch: h.leaf, port: h.port })] }))],
+      against: [], verify: [`Find the other traffic on ${leaf}'s uplinks then (other jobs' all-reduce, storage, checkpoint writes); check adaptive routing, the uplink count and QoS.`, 'Place the job under fewer leaves (topology-aware scheduling) if it spans several.'],
+      likelyCause: 'infra', component: `switch:${leaf}`, targets: { job: c.inc.job, switch: leaf, ports: mine.map(h => h.port) },
+    };
+  },
+
+  // Steps wait longer on data or on checkpoint writes, and one storage target the job uses got slower: that target.
+  'storage-stall'(c) {
+    if (c.inc.symptom !== 'training-slow') return null;
+    const st = c.steps, during = st.filter(s => s.t > c.from && s.t <= c.to), before = st.filter(s => s.t <= c.from);
+    // share of step time (checkpoints happen on a few steps, so totals, not medians); seconds per step that has it
+    const share = (xs, k) => xs.reduce((a, s) => a + (s[k] ?? 0), 0) / Math.max(1e-9, xs.reduce((a, s) => a + (s.durS || 0), 0));
+    const per = (xs, k) => { const v = xs.map(s => s[k]).filter(x => x > 0); return v.length ? v.reduce((a, b) => a + b, 0) / v.length : 0; };
+    const which = ['dataS', 'ckptS'].map(k => ({ k, b: share(before, k), d: share(during, k), bs: per(before, k), ds: per(during, k) }))
+      .filter(x => x.ds > 1.5 * Math.max(x.bs, 1e-3) && x.d >= 0.1 && x.d > x.b + 0.05).sort((a, b) => b.d - a.d)[0];
+    if (!which) return null;
+    const op = which.k === 'ckptS' ? 'write' : 'read', jobNodes = new Set(during.map(s => s.node));
+    const mine = c.storage.filter(r => (r.job ? r.job === c.inc.job : jobNodes.has(r.node)) && (r.op === op || (op === 'read' && r.op === 'meta')) && Number.isFinite(r.latMs));
+    const lat = (rs, a, b) => { const xs = rs.filter(r => r.t > a && r.t <= b); const ops = xs.reduce((s, r) => s + (r.ops || 1), 0); return ops ? xs.reduce((s, r) => s + r.latMs * (r.ops || 1), 0) / ops : NaN; };
+    const targets = [...new Set(mine.map(r => r.target))].map(t => { const rs = mine.filter(r => r.target === t); return { t, now: lat(rs, c.from - 600, c.to), base: lat(rs, c.from - 6 * H, c.from - 600) }; })
+      .map(x => Object.assign(x, { ratio: x.now / x.base })).filter(x => Number.isFinite(x.ratio)).sort((a, b) => b.ratio - a.ratio);
+    const top = targets[0], logs = c.logsWin.filter(l => l.class === 'storage' && jobNodes.has(l.node));
+    const what = which.k === 'ckptS' ? 'checkpoint writes' : 'the input pipeline (data loading)';
+    const stepEv = { what: `steps wait on ${what} ${(which.b * 100).toFixed(0)}% → ${(which.d * 100).toFixed(0)}% of each step (${which.bs.toFixed(2)} → ${which.ds.toFixed(2)} s)` };
+    if (!top || !(top.ratio >= 1.5)) {
+      return { cause: 'storage-stall', title: `${c.inc.job || 'The job'} waits on ${what}${logs.length ? `; storage errors on its nodes` : ''}`, score: clamp01(0.35 + (logs.length ? 0.2 : 0) + Math.min(0.2, which.d)),
+        evidence: [stepEv, ...logs.slice(0, 3).map(l => ({ what: `${where(l)} logged ${l.code}${l.server ? ` (${l.server})` : ''} at ${iso(l.t)}`, refs: [ref('log', l, { node: l.node, code: l.code })] }))],
+        against: targets.length ? [{ what: `the storage targets it uses did not slow (${targets.slice(0, 3).map(x => `${x.t} ×${x.ratio.toFixed(1)}`).join(', ')}): the loader itself (CPU, workers, decode) is more likely` }] : [],
+        verify: targets.length ? ['Profile the data loader: workers, CPU, decode, prefetch.'] : ['Import per-target storage metrics (Lustre job_stats, NFS mountstats, or the loader\'s own read timing) to name the target.'],
+        likelyCause: 'infra', component: c.inc.job, targets: { job: c.inc.job } };
+    }
+    const others = [...new Set(c.storage.filter(r => r.target === top.t && r.job && r.job !== c.inc.job && r.t > c.from - 600 && r.t <= c.to).map(r => r.job))];
+    return {
+      cause: 'storage-stall', title: `${top.t} slowed: ${op} latency ${top.base.toFixed(1)} → ${top.now.toFixed(1)} ms, and ${c.inc.job || 'the job'} waits on ${what}`,
+      score: clamp01(0.5 + 0.25 * Math.min(1, (top.ratio - 1) / 4) + (logs.length ? 0.1 : 0) + (others.length ? 0.05 : 0)),
+      evidence: [stepEv, { what: `${top.t}: ${op} latency ×${top.ratio.toFixed(1)} against the hours before`, refs: [ref('storage', { t: c.from }, { target: top.t })] },
+        ...targets.slice(1, 3).map(x => ({ what: `${x.t}: ×${x.ratio.toFixed(1)} (the job's other targets)` })),
+        ...(others.length ? [{ what: `${others.length} other job(s) use ${top.t} too: ${others.slice(0, 4).join(', ')}` }] : []),
+        ...logs.slice(0, 2).map(l => ({ what: `${where(l)} logged ${l.code} at ${iso(l.t)}`, refs: [ref('log', l, { node: l.node, code: l.code })] }))],
+      against: [], verify: [`Check ${top.t}'s server: load, disk or network errors, failover, a scrub or rebuild; who else is hitting it.`, op === 'write' ? 'Stagger checkpoint writes or write to node-local disk first.' : 'Spread the dataset over more targets (striping) or cache it locally.'],
+      likelyCause: 'infra', component: top.t, targets: { job: c.inc.job, target: top.t },
+    };
+  },
+
   // One submitter or namespace owns most of the failures while the rest of the fleet runs normally.
   workload(c) {
     if (c.inc.symptom !== 'job-failures') return null;
@@ -472,16 +566,20 @@ const RULES = {
     if (Number.isFinite(cw) && Number.isFinite(co) && cw > 1.2 * co) return null; // slow compute: a straggler, not the link
     const net = c.logsWin.filter(l => l.node === worst.n && (l.class === 'network' || l.class === 'pcie') && l.severity !== 'info');
     const leaf = ((c.topo.byNode[worst.n] || {}).leaf || [])[0], othersBw = median(per.filter(p => p !== worst).map(p => p.bw));
+    const port = portOf(c, worst.n);
     return {
-      cause: 'slow-link', title: `Slow links on ${worst.n}: NCCL bus bandwidth ${worst.bw.toFixed(0)} GB/s vs ${othersBw.toFixed(0)} GB/s on the other ${nodes.length - 1} node(s)`,
-      score: clamp01(0.45 + 0.35 * Math.min(1, (1 - worst.ratio / others) / 0.6) + (net.length ? 0.15 : 0)),
+      cause: 'slow-link', title: `Slow links on ${worst.n}${port.name ? ` (${port.name}, ${port.kind})` : ''}: NCCL bus bandwidth ${worst.bw.toFixed(0)} GB/s vs ${othersBw.toFixed(0)} GB/s on the other ${nodes.length - 1} node(s)`,
+      score: clamp01(0.45 + 0.35 * Math.min(1, (1 - worst.ratio / others) / 0.6) + (net.length ? 0.15 : 0) + (port.kind ? 0.1 : 0)),
       evidence: [{ what: `${worst.count} collectives from ${worst.n} ran at ${Math.round(worst.ratio * 100)}% of the bandwidth the same operations got elsewhere (${Math.round(others * 100)}% for the median node)`, refs: [ref('collective', { t: c.from }, { node: worst.n })] },
         ...(Number.isFinite(cw) ? [{ what: `compute per step on its ranks ${cw.toFixed(3)} s vs ${co.toFixed(3)} s elsewhere: not a straggler` }] : []),
         ...net.slice(0, 3).map(l => ({ what: `${where(l)} logged ${l.code} at ${iso(l.t)}`, refs: [ref('log', l, { node: l.node, code: l.code })] })),
-        ...(leaf ? [{ what: `${worst.n} sits behind ${leaf.replace('switch:', 'leaf switch ')}` }] : [])],
+        ...port.evidence,
+        ...(leaf && !port.name ? [{ what: `${worst.n} sits behind ${leaf.replace('switch:', 'leaf switch ')}` }] : [])],
       against: [],
-      verify: [`Check ${worst.n}'s NICs and cables: ibstat / ethtool error counters, link speed and width, PCIe AER.`, `Run nccl-tests (all_reduce_perf) between ${worst.n} and a known-good node.`],
-      likelyCause: 'infra', component: worst.n, targets: { job: c.inc.job || win[0]?.job, node: worst.n },
+      verify: port.kind === 'bad link' ? [`Reseat or replace the cable and transceiver on ${port.name} (${worst.n}'s side and the switch's); clear the counters and watch them.`, `Run nccl-tests between ${worst.n} and a known-good node afterwards.`]
+        : port.kind === 'congestion' ? [`Look at what else crosses ${port.name}'s switch at the same time (other jobs, storage traffic) and the uplinks' load; check adaptive routing and the QoS/PFC settings.`]
+        : [`Check ${worst.n}'s NICs and cables: ibstat / ethtool error counters, link speed and width, PCIe AER.`, `Run nccl-tests (all_reduce_perf) between ${worst.n} and a known-good node.`, 'Import switch port counters (perfquery, ibqueryerrors, UFM or SONiC through Prometheus) to name the port.'],
+      likelyCause: 'infra', component: port.name ? `${worst.n} ${port.name}` : worst.n, targets: { job: c.inc.job || win[0]?.job, node: worst.n, port: port.name || undefined },
     };
   },
 

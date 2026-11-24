@@ -32,6 +32,8 @@ import * as Sdc from '../src/sdc.mjs';
 import * as Bundle from '../src/bundle.mjs';
 import * as Tune from '../src/tune.mjs';
 import * as Serving from '../src/serving.mjs';
+import * as Fabric from '../src/adapters/fabric.mjs';
+import * as Storage from '../src/adapters/storage.mjs';
 import * as Power from '../src/power.mjs';
 import * as Adm from '../src/admission.mjs';
 import * as RO from '../src/rollout.mjs';
@@ -80,7 +82,15 @@ Sources (SOURCE):
   slurm-nodes      scontrol show node -o                     (kernel version from OS=)
   nvidia-smi-q     nvidia-smi -q                             [--node N] (default: file name)  versions, serials, PCI → GPU map
   nvidia-topo      nvidia-smi topo -m                        [--node N]  NVLink and NIC affinity
-  ibnetdiscover    ibnetdiscover                             host → leaf → spine
+  ibnetdiscover    ibnetdiscover                             host → leaf → spine (with switch port numbers)
+  perfquery        perfquery [-x] LID PORT output             [--switch NAME]  switch port counters (errors, xmit wait, data)
+  ibqueryerrors    ibqueryerrors                              switch ports with error counters, fabric-wide
+  ethtool          ethtool -S IFACE                           --node N --iface I  RoCE NIC counters: pause frames, discards, link errors, CNPs
+  fabric-prom      Prometheus query_range of switch counters  [--map metric=field,…]  UFM telemetry, SONiC, SNMP (ifInErrors, …)
+  ports            JSON lines {t, switch, port, symbolErrors?, xmitWait?, pfcPause?, …}
+  lustre-jobstats  lctl get_param obdfilter.*.job_stats (on an OSS) [--before FILE] [--fs NAME]  per-OST I/O per job
+  mountstats       /proc/self/mountstats                      --node N [--before FILE --window S]  NFS latency per export
+  storage          JSON lines {t, target, op, node?, job?, ops?, bytes?, latMs?}   anything else (S3 clients, loaders)
   racks            CSV: node,rack,row,pdu,site
   kernel-log       journalctl -k -o short-iso | dmesg -T | dmesg | syslog   [--node N] [--boot T] [--year Y] [--utc-offset H]
                    XID, NVLink, PCIe AER, AMD RAS, MCE, IB link, NFS/Lustre, OOM (GPU index from nvidia-smi-q imports)
@@ -280,6 +290,14 @@ function importSource(store, src, files, o) {
       case 'nvidia-smi-q': putInventory([Topo.nvidiaSmiQ(read(f), { node: nodeOf(f), t: tOf(f) }).inventory]); break;
       case 'nvidia-topo': put('topology', Topo.nvidiaTopo(read(f), { node: nodeOf(f), t: tOf(f) })); break;
       case 'ibnetdiscover': put('topology', Topo.ibnetdiscover(read(f), { t: tOf(f) })); break;
+      case 'perfquery': put('port', Fabric.perfquery(read(f), { switch: o.switch, t: tOf(f) })); break;
+      case 'ibqueryerrors': put('port', Fabric.ibqueryerrors(read(f), { t: tOf(f) })); break;
+      case 'ethtool': put('port', Fabric.ethtool(read(f), { node: o.node || nodeOf(f), iface: o.iface || 'eth0', t: tOf(f) })); break;
+      case 'fabric-prom': put('port', Fabric.fabricProm(JSON.parse(read(f)), { map: o.map ? Object.fromEntries(String(o.map).split(',').map(x => x.split('='))) : {} })); break;
+      case 'ports': put('port', read(f).split(/\r?\n/).filter(l => l.trim()).map(l => Object.assign({ source: 'ports' }, JSON.parse(l)))); break;
+      case 'lustre-jobstats': put('storage', Storage.lustreJobstats(read(f), { before: o.before ? read(o.before) : undefined, fs: o.fs || 'lustre', t: tOf(f) })); break;
+      case 'mountstats': put('storage', Storage.nfsMountstats(read(f), { node: o.node || nodeOf(f), before: o.before ? read(o.before) : undefined, windowS: o.window ? +o.window : undefined, t: tOf(f) })); break;
+      case 'storage': put('storage', Storage.storageLines(read(f))); break;
       case 'racks': put('topology', Topo.racks(read(f), { t: tOf(f) })); break;
       case 'kernel-log': put('log', Logs.kernelLog(read(f), { node: o.node && o.node !== true ? o.node : undefined, boot: time(o.boot), year: o.year ? +o.year : undefined, utcOffset: o['utc-offset'] ? +o['utc-offset'] : 0, pciMap: pciMap(store) })); break;
       case 'app-log': put('log', Logs.ncclLog(read(f), { node: o.node && o.node !== true ? o.node : undefined, job: o.job && o.job !== true ? o.job : undefined, t: o.t ? time(o.t) : tOf(f) })); break;
