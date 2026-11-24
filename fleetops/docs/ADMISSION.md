@@ -93,7 +93,7 @@ version, over the time since the canary:
 
 | Signal | Regression when |
 |---|---|
-| job failures per GPU-hour on the nodes | at least 2, ≥ 1.5× the old version's rate, Poisson p < 0.01 |
+| job failures per GPU-hour on the nodes | at least 2, ≥ 1.5× the old version's rate, p < 0.01 (Poisson, widened by the between-node dispersion) |
 | hard faults (XID, AER, …) per GPU-hour | the same |
 | NCCL bus bandwidth (NCCL Inspector collectives) | the median ≥ 10% lower, Mann-Whitney p < 0.01, ≥ 20 samples each |
 | compute time per training step, within the same job | ≥ 5% slower in at least 3 of 4 jobs that ran on both versions |
@@ -115,6 +115,25 @@ Applied waves are stored as `change` records, so root-cause analysis sees them l
 `fleetops rollout check --field driver --version V --from T --to T` runs the same comparison on any version already
 in the fleet, without a plan. `fleetops rollout demo [--good]` writes 24 nodes where two moved to a new driver, bad
 or harmless, to try it on.
+
+## Validation on real data
+
+`tests/admission-real.test.mjs` runs the comparison on a real week of the Philly cluster (8–15 Nov 2017, 29,230
+placements on 238 machines of one SKU), with a random 10% of the machines labelled as the new version:
+
+| Case | Result |
+| --- | --- |
+| Random labels, nothing changed (A/A, 100 splits) | 1 false alarm with the dispersion, 17 with a plain Poisson test |
+| Failure rate tripled on the "new" machines (30 splits) | caught in most splits (the test needs 60%) |
+| Failure rate doubled (40 splits, not in the test) | caught in about half |
+
+Failures on real clusters cluster on a few flaky machines and on multi-node jobs, so per-node counts vary several
+times more than Poisson allows (the dispersion was above 2 in every split). The comparison estimates that from the
+control nodes and widens the test by it. A one-week canary on 10% of a SKU catches a doubling about half the time; to
+catch smaller regressions, bake longer or canary more nodes.
+
+No-mock and mocked tests in the same file: `admit-node.sh` run on the test host as it is, and a live admit and
+reject through a stand-in `kubectl`, which runs only with approval, `--live` and `policy.dryRun: false`.
 
 ## Limits
 

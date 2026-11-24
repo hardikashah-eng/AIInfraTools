@@ -115,7 +115,11 @@ test('collect.sh → bundle → import, and upload to a server by role', async (
   const c = spawnSync('bash', [path.join(here, '..', 'tools', 'collect.sh'), '--node', 'gpu-a1', '--dcgm', 'http://127.0.0.1:1/none', '--k8s', '--step-log', path.join(d, 'steps.jsonl'), '--out', path.join(d, 'b')], { env, cwd: d, encoding: 'utf8' });
   assert.equal(c.status, 0, c.stderr);
   const mf = JSON.parse(fs.readFileSync(path.join(d, 'b', 'manifest.json'), 'utf8'));
-  assert.deepEqual(mf.files.map(f => f.source).sort(), ['k8s-events', 'k8s-nodes', 'k8s-pods', 'kernel-log', 'nvidia-smi-q', 'nvidia-topo', 'step-log']);
+  // ethtool counters (RDMA NICs under /sys/class/infiniband) and NFS mountstats come from the host itself, not the
+  // stand-ins: present on a CI runner with Mellanox NICs, absent in a container. They must parse when present.
+  const HOST = ['ethtool', 'mountstats'];
+  assert.deepEqual(mf.files.map(f => f.source).filter(x => !HOST.includes(x)).sort(), ['k8s-events', 'k8s-nodes', 'k8s-pods', 'kernel-log', 'nvidia-smi-q', 'nvidia-topo', 'step-log']);
+  for (const f of mf.files.filter(x => HOST.includes(x.source))) assert.ok(fs.statSync(path.join(d, 'b', f.path)).size > 0, f.path);
   const r = JSON.parse((await run(process.execPath, [cli, 'data', 'import', 'bundle', path.join(d, 'b.tar.gz'), '--store', path.join(d, 's'), '--json'])).stdout).bundle;
   assert.ok(r.totals.inventory >= 2 && r.totals.log >= 1 && r.totals.step === 1 && r.totals.placement >= 1);
   assert.ok(r.files.every(f => !f.error), JSON.stringify(r.files.filter(f => f.error)));
