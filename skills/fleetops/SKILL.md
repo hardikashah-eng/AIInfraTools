@@ -156,7 +156,9 @@ Use this when asked which models fit on some GPUs, how much a model can serve, o
 - **Deploy:** `fleetops serving deploy --model M --gpu G --nodes N [--hf-secret S] [--cache-pvc P] [--autoscale]` is a
   dry run that prints the plan, the manifests and the cluster checks. The user (or you, when asked) runs it with
   `--apply`, or `scripts/fleetops/install/install-serving.sh`. Relay its notes: image tag, weights cache, gated models,
-  disaggregation.
+  disaggregation. `--mode disagg` (or `auto`) renders prefill and decode pools on llm-d (DisaggregatedSet, NIXL, the
+  llm-d router chart); it needs LeaderWorkerSet ≥ 0.11.1 and the InferencePool CRDs (`--install-prereqs` in the script),
+  and works best with RDMA between the nodes: say so.
 - **Say:** the numbers are spec-sheet estimates unless calibrated (`fleetops calibrate`); a load test against the
   endpoint confirms them. Details: [references/SERVING.md](references/SERVING.md).
 

@@ -62,6 +62,24 @@ export function ethtool(text, { node, iface = 'eth0', t = Math.floor(Date.now() 
   return [r];
 }
 
+// The host side of an InfiniBand or RoCE port from sysfs: `grep -H . /sys/class/infiniband/*/ports/*/{counters,hw_counters}/*`,
+// one "PATH:VALUE" per line. counters/ are the standard IB port counters (data in 4-byte words, like perfquery);
+// hw_counters/ hold the RoCE congestion counters (CNPs, ECN marks) that ethtool -S does not show.
+const IBSYS = { symbol_error: 'symbolErrors', link_error_recovery: 'linkRecovery', link_downed: 'linkDowned', port_rcv_errors: 'rcvErrors', port_xmit_discards: 'xmitDiscards',
+  port_xmit_wait: 'xmitWait', port_rcv_data: 'rxBytes', port_xmit_data: 'txBytes', np_cnp_sent: 'cnpSent', np_ecn_marked_roce_packets: 'ecnMarked', rp_cnp_handled: 'cnpHandled',
+  out_of_buffer: 'outOfBuffer', local_ack_timeout_err: 'ackTimeouts', out_of_sequence: 'outOfSequence', packet_seq_err: 'packetSeqErrors' };
+export function ibSysfs(text, { node, t = Math.floor(Date.now() / 1000) } = {}) {
+  if (!node) throw new Error('ib-sysfs needs --node');
+  const by = new Map();
+  for (const line of String(text).split(/\r?\n/)) {
+    const m = line.match(/\/class\/infiniband\/([\w.-]+)\/ports\/(\d+)\/(?:hw_)?counters\/(\w+):\s*(\d+)\s*$/); if (!m) continue;
+    const f = IBSYS[m[3]]; if (!f) continue;
+    const k = `${m[1]}/${m[2]}`; if (!by.has(k)) by.set(k, { t, switch: node, port: k, nic: true, source: 'ib-sysfs' });
+    by.get(k)[f] = /^port_(rcv|xmit)_data$/.test(m[3]) ? +m[4] * 4 : +m[4];
+  }
+  return [...by.values()];
+}
+
 // Prometheus query_range JSON from any switch exporter. Metric names map by pattern (override with `map`), the
 // switch and port from common label names.
 const PROM = [

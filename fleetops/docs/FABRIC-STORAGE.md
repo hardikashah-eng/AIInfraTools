@@ -11,18 +11,19 @@ bucket.
 |---|---|---|
 | `perfquery [-x] LID PORT` (InfiniBand) | `data import perfquery FILE --switch leaf-03` | `port`: symbol errors, link recovery, link downs, receive errors, xmit discards, xmit wait, data |
 | `ibqueryerrors` | `data import ibqueryerrors FILE` | `port`: every switch port with errors, fabric-wide |
-| `ethtool -S IFACE` (RoCE NIC) | `data import ethtool FILE --node N --iface I` | `port` on the node's side: PFC pause frames, discards, CNPs sent, link downs |
+| `ethtool -S IFACE` (RoCE NIC) | `data import ethtool FILE --node N --iface I` | `port` on the node's side: PFC pause frames, discards, out-of-buffer, link downs |
+| `/sys/class/infiniband/*/ports/*/{counters,hw_counters}` (IB or RoCE host port) | `data import ib-sysfs FILE --node N` (`grep -H .` output) | `port` on the node's side: the IB port counters, plus CNPs sent, ECN marks, ACK timeouts and out-of-sequence from `hw_counters` (ethtool -S does not have these) |
 | UFM telemetry, SONiC, SNMP through Prometheus | `data import fabric-prom range.json [--map metric=field]` | `port`, metric names mapped by pattern (`PortXmitWait*`, `ifInErrors`, `*pfc*`, `*ecn*`, `ifHCInOctets`, …), switch and port from common labels |
 | anything else | `data import ports FILE` (JSON lines) | `port` |
-| Lustre `lctl get_param obdfilter.*.job_stats` on the OSS | `data import lustre-jobstats now.txt --before then.txt` | `storage`: reads, writes and metadata per OST per job, with latency |
+| Lustre `lctl get_param obdfilter.*.job_stats` on the OSS | `data import lustre-jobstats now.txt --before then.txt` (a file read from `/proc/fs/lustre/.../<fs>-OST0003/job_stats` takes the target from its path, or `--target`) | `storage`: reads, writes and metadata per OST per job; latency on servers that keep it (not 2.10) |
 | NFS `/proc/self/mountstats` on a client | `data import mountstats now.txt --node N --before then.txt --window 60` | `storage`: per export, round-trip and execution time per op |
 | anything else (an S3 client, the data loader's own timing) | `data import storage FILE` (JSON lines `{ t, target, op, job?, node?, ops?, latMs? }`) | `storage` |
 
 `ibnetdiscover` now keeps the switch port each host lands on, so a node maps to `leaf-03/17`.
 
 `tools/collect.sh` adds two things:
-- NFS mountstats and the RDMA NICs' `ethtool -S`, taken at the start and at the end, so the bundle holds what
-  happened in between;
+- NFS mountstats, the RDMA NICs' `ethtool -S` and the IB ports' sysfs counters, taken at the start and at the end
+  (at least 30 s apart), so the bundle holds what happened in between;
 - with `--fabric`, `ibnetdiscover` and `ibqueryerrors`.
 
 Counters are stored as totals. Analysis takes how much each one grew in a window, and handles resets.
@@ -64,6 +65,21 @@ Four planted-cause scenarios, 10 incidents each:
 
 The whole benchmark (22 scenario kinds, 220 incidents) stays at 99.5% top-1. The one miss is a version-cohort case
 that misses on main too.
+
+## Validation on real data
+
+`tests/fabric-storage-real.test.mjs` runs the adapters on real files (sources and licenses in
+`tests/fixtures/real/README.md`):
+
+| Data | Checked | Found and fixed |
+| --- | --- | --- |
+| sysfs IB counters from mlx4, mlx5 and hfi1 hosts (prometheus/procfs) | bytes per port match procfs's own expected values | CNP and ECN counters are RDMA `hw_counters`, not `ethtool -S` names: the `ib-sysfs` source and collector step were added |
+| The mlx5 driver's documented `ethtool -S` counters (Linux docs) | every counter the adapter reads exists | three CNP/ECN names the adapter expected from ethtool are not there |
+| NFSv4 mountstats (statvers 1.1, wrapped 64-bit queue time) | per-export read latency is RTT per op; the wrapped field is ignored | none |
+| Lustre 2.10 OST and MDT `job_stats` from `/proc` (lustre_exporter) | per-job write ops and bytes | a raw file has no target line (now taken from the path); `punch` and `sync` were counted as writes; 2.10 keeps no latency |
+
+The same file runs `ethtool -S` and `tools/collect.sh` on the test host with nothing stubbed, and the collector against
+a stand-in sysfs and `ethtool` whose counters grow inside the window, imported as port growth.
 
 ## Limits
 

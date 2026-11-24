@@ -97,6 +97,8 @@ export function sniff(name, head) {
   if (/^Errors for\s+0x[0-9a-f]+/im.test(h)) return 'ibqueryerrors';
   if (/^#\s*Port (extended )?counters:\s*Lid/im.test(h)) return 'perfquery';
   if (/^device\s+\S+\s+mounted on\s+\S+\s+with fstype nfs/m.test(h)) return 'mountstats';
+  if (/\/class\/infiniband\/[\w.-]+\/ports\/\d+\/(hw_)?counters\/\w+:\d+/.test(h)) return 'ib-sysfs';
+  if (/^job_stats:\s*\n-\s*job_id:/m.test(h)) return 'lustre-jobstats';
   if (/^(obdfilter|mdt)\.[\w-]+\.job_stats=/m.test(h)) return 'lustre-jobstats';
   if (/^# (HELP|TYPE) vllm:|^vllm:\w+/m.test(h)) return 'vllm';
   if (/^(# (HELP|TYPE) )?(DCGM_FI_|amd_|gpu_|sambanova_)/m.test(h)) return 'exporter';

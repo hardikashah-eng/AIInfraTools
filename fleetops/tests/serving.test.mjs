@@ -184,3 +184,62 @@ test('CLI: serving fit / capacity / deploy --out (dry run) and tune reads the re
   const del = (await run('node', [cli, 'serving', 'delete', 'chat', '--store', store])).stdout;
   assert.match(del, /would run: kubectl delete -f .*chat\.yaml/); assert.match(del, /--apply to delete/);
 });
+
+test('disaggregated on llm-d: a DisaggregatedSet with prefill and decode roles that the router chart selects', { skip: !YAML && 'yaml not installed' }, () => {
+  const d = planDeployment({ model: 'llama33-70b', gpu: 'H100', rate: 20, isl: 8000, osl: 300, mode: 'disagg', name: 'chat-pd', hfSecret: 'hf-token', cachePvc: 'models' });
+  assert.equal(d.kind, 'DisaggregatedSet'); assert.equal(d.mode, 'disagg');
+  const [sa, ds] = YAML.parseAllDocuments(d.yaml).map(x => x.toJSON());
+  assert.equal(sa.kind, 'ServiceAccount'); assert.equal(ds.apiVersion, 'disaggregatedset.x-k8s.io/v1');
+  const [P, D] = ds.spec.roles, pt = P.spec.leaderWorkerTemplate.workerTemplate, dt = D.spec.leaderWorkerTemplate.workerTemplate;
+  assert.deepEqual([P.name, D.name], ['prefill', 'decode']);
+  assert.equal(P.spec.replicas, d.layout.prefill.instances); assert.equal(D.spec.replicas, d.layout.decode.instances);
+  const pa = pt.spec.containers[0].args, da = dt.spec.containers[0].args, kv = a => JSON.parse(a[a.indexOf('--kv-transfer-config') + 1]);
+  assert.equal(kv(pa).kv_role, 'kv_producer'); assert.equal(kv(da).kv_role, 'kv_consumer'); assert.equal(kv(pa).kv_connector, 'NixlConnector');
+  assert.ok(pa.includes(`--tensor-parallel-size=${d.layout.prefill.tp}`) && da.includes(`--tensor-parallel-size=${d.layout.decode.tp}`));
+  assert.ok(da.includes('--port=8200'), 'decode serves behind the routing sidecar on 8000');
+  assert.equal(dt.spec.initContainers[0].name, 'routing-proxy'); assert.equal(dt.spec.initContainers[0].restartPolicy, 'Always'); assert.ok(!pt.spec.initContainers);
+  assert.equal(pt.metadata.labels['llm-d.ai/role'], 'prefill'); assert.equal(dt.metadata.labels['llm-d.ai/role'], 'decode');
+  assert.equal(pt.spec.containers[0].resources.limits['nvidia.com/gpu'], String(d.layout.prefill.tp));
+  assert.equal(pt.spec.containers[0].env.find(e => e.name === 'VLLM_NIXL_SIDE_CHANNEL_HOST').valueFrom.fieldRef.fieldPath, 'status.podIP');
+  // the router's InferencePool selects exactly these pods
+  const rv = YAML.parse(d.router.yaml).router;
+  assert.deepEqual(rv.modelServers.matchLabels, { 'llm-d.ai/guide': 'chat-pd' }); assert.equal(pt.metadata.labels['llm-d.ai/guide'], 'chat-pd');
+  assert.match(rv.epp.pluginsCustomConfig['pd-config.yaml'], /always-disagg-pd-decider/);
+  assert.equal(d.service, 'chat-pd-epp'); assert.equal(d.layout.gpus, d.layout.prefill.tp * d.layout.prefill.instances + d.layout.decode.tp * d.layout.decode.instances);
+  assert.ok(d.prereqs.some(c => c.join(' ').includes('enableDisaggregatedSet=true')));
+});
+
+test('auto picks disaggregated only when the sizer finds it smaller; roles larger than a node are refused', () => {
+  const tie = planDeployment({ model: 'llama33-70b', gpu: 'H100', rate: 5, mode: 'auto', name: 'a' });
+  assert.equal(tie.kind, 'Deployment'); assert.match(tie.notes[0], /auto: .*aggregated/);
+  const big = planDeployment({ model: 'llama33-70b', gpu: 'H100', rate: 40, isl: 16000, osl: 200, mode: 'auto', name: 'b' });
+  const aggOnly = planDeployment({ model: 'llama33-70b', gpu: 'H100', rate: 40, isl: 16000, osl: 200, name: 'c' });
+  if (big.mode === 'disagg') assert.ok(big.sized.nodes < aggOnly.sized.nodes, 'chosen because it is smaller');
+  else assert.ok(aggOnly.notes.every(n => !/--mode disagg deploys it/.test(n)) || big.kind === 'Deployment');
+  assert.throws(() => planDeployment({ model: 'kimi-k2', gpu: 'H100', rate: 1, mode: 'disagg', name: 'k' }), /more than a node|no disaggregated layout/);
+  assert.throws(() => planDeployment({ model: 'llama33-70b', gpu: 'H100', rate: 5, mode: 'pd', name: 'k' }), /--mode/);
+});
+
+test('disaggregated deploy: preflight checks the CRDs and helm; apply installs the router, applies, waits for every pod, smoke-tests through the router', async () => {
+  const d = planDeployment({ model: 'llama33-70b', gpu: 'H100', rate: 20, isl: 8000, osl: 300, mode: 'disagg', name: 'chat-pd', hfSecret: 'hf-token' }), dir = tmp();
+  const want = d.layout.prefill.instances + d.layout.decode.instances;
+  const kube = (crds = true, ready = want) => { const calls = []; const base = stubKube({ nodes: 12 }); return { calls, runner: (argv, o) => {
+    calls.push({ argv, input: o && o.input }); const a = argv.join(' ');
+    if (/get crd (disaggregatedsets|inferencepools)/.test(a)) return crds ? { code: 0, out: '', err: '' } : { code: 1, out: '', err: 'NotFound' };
+    if (/get pods -l llm-d.ai\/guide=chat-pd/.test(a)) return { code: 0, out: JSON.stringify({ items: Array.from({ length: ready }, () => ({ status: { conditions: [{ type: 'Ready', status: 'True' }] } })) }), err: '' };
+    return base.runner(argv, o); } }; };
+  const helmCalls = [], helm = argv => { helmCalls.push(argv); return { code: 0, out: 'v3.15.0', err: '' }; };
+  const pf = preflight(d, { runner: kube(false).runner, helm });
+  assert.ok(!pf.ready); assert.match(pf.checks.find(c => /DisaggregatedSet/.test(c.name)).detail, /enableDisaggregatedSet=true/);
+  assert.ok(preflight(d, { runner: kube().runner, helm }).checks.find(c => /GPU nodes/.test(c.name)).pass, '12 nodes fit 8 TP8 prefill and 2 TP4 decode pods');
+  const api = await fakeOpenAI('llama33-70b');
+  try {
+    const k = kube(), r = await deploy(d, { apply: true, runner: k.runner, helm, endpoint: api.base, registerDir: dir, sleep: async () => {} });
+    assert.ok(r.ok, r.error); assert.deepEqual(r.steps.map(s => s.step), ['preflight', 'router', 'apply', 'wait', 'smoke', 'register']);
+    const up = helmCalls.find(a => a[0] === 'upgrade'); assert.deepEqual(up.slice(0, 6), ['upgrade', '--install', 'chat-pd', 'oci://ghcr.io/llm-d/charts/llm-d-router-standalone', '--version', 'v0']);
+    assert.equal(k.calls.find(c => c.argv[0] === 'apply').input, d.yaml);
+    assert.ok(fs.existsSync(path.join(dir, 'chat-pd.router.values.yaml')));
+    const r2 = await deploy(d, { apply: true, runner: kube(true, want - 1).runner, helm, endpoint: api.base, waitS: 0, sleep: async () => {} });
+    assert.match(r2.error, new RegExp(`${want - 1} of ${want} pods ready`));
+  } finally { api.close(); }
+});

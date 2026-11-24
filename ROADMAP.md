@@ -343,8 +343,10 @@ prediction.
 **Done when:** a model deployed this way meets its targets at the planned rate under a load test on a real cluster.
 
 **Status:** built ([fleetops/docs/SERVING.md](fleetops/docs/SERVING.md)), tested against a stub cluster and a fake
-OpenAI server. **Still needed:** a deployment on a real cluster, a load test against the plan, and disaggregated
-serving (llm-d or Dynamo) when the sizer chooses it.
+OpenAI server.
+- **Disaggregated prefill/decode on llm-d:** a DisaggregatedSet, NIXL KV transfer and the llm-d router chart, with
+  `--mode disagg|auto`.
+- **Still needed:** a deployment on a real cluster, a load test against the plan, and P/D roles that span nodes.
 
 ### 17. Fabric and storage stalls
 
