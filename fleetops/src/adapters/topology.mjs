@@ -1,5 +1,5 @@
 // What hardware is where and what it runs: versions for inventory records, and `topology` edges
-//   { t, kind: nvlink|pcie|ib|rack|row|pdu|site, from, to, ...attrs }
+//   { t, kind: nvlink|xgmi|pcie|pcie-p2p|ib|rack|row|pdu|site, from, to, ...attrs }
 // Node names are plain (gpu-a01); devices are node/gpuN or node/mlx5_0; shared components are prefixed
 // (switch:leaf-01, rack:R12, pdu:P3, row:B, site:dc1).
 import { normPci } from './logs.mjs';
@@ -69,6 +69,58 @@ export function nvidiaTopo(text, { node, t = Math.floor(Date.now() / 1000) } = {
         out.push({ t, kind: 'pcie', from: name(gpu), to: name(nic), path: v, near: v === 'PIX' || v === 'PXB', node, source: 'nvidia-smi-topo' });
       }
     });
+  }
+  return out;
+}
+
+// amd-smi JSON: a list of per-GPU objects, or { "gpu_data": [...] } in newer releases; values may be { value, unit }.
+const amdList = j => { const o = typeof j === 'string' ? JSON.parse(j) : j; const a = Array.isArray(o) ? o : (o && (o.gpu_data || o.gpus)) || []; return a.filter(x => x && typeof x === 'object' && x.gpu != null); };
+const val = v => (v && typeof v === 'object' && 'value' in v ? v.value : v);
+const known = v => { const x = val(v); return x == null || x === 'N/A' || x === '' ? undefined : x; };
+const num = v => { const x = known(v); const n = typeof x === 'number' ? x : parseFloat(String(x ?? '')); return Number.isFinite(n) ? n : undefined; };
+const PCIE_GEN = { 2.5: 1, 5: 2, 8: 3, 16: 4, 32: 5, 64: 6, 128: 7 };
+
+// `amd-smi static --json` (or --asic --bus --vbios --driver --limit --json) → { inventory, pciMap }, the AMD
+// counterpart of nvidiaSmiQ: product name, driver, IFWI (VBIOS) per GPU, PCI address → GPU index, power limit, PCIe max.
+export function amdSmiStatic(json, { node, t = Math.floor(Date.now() / 1000), rocm } = {}) {
+  if (!node) throw new Error('amd-smi static output has no hostname: pass node');
+  const gpus = amdList(json).map(g => {
+    const a = g.asic || {}, b = g.bus || {}, fw = typeof g.ifwi === 'object' && g.ifwi ? g.ifwi : typeof g.vbios === 'object' && g.vbios ? g.vbios : {}, lim = g.limit || {}, brd = g.board || {};
+    const speed = num(b.max_pcie_speed);
+    const r = { gpu: String(g.gpu), pci: b.bdf && known(b.bdf) ? normPci(b.bdf) : undefined, sku: known(a.market_name) || known(brd.product_name), serial: known(a.asic_serial) || known(brd.product_serial),
+      vbios: known(fw.version) || known(fw.part_number), oamId: num(a.oam_id), gfx: known(a.target_graphics_version),
+      powerLimitW: num((lim.ppt0 || {}).socket_power_limit) ?? num(lim.socket_power) ?? num(lim.max_power),
+      pcieWidthMax: num(b.max_pcie_width), pcieGenMax: speed != null ? PCIE_GEN[speed] : undefined, driver: known((g.driver || {}).version) };
+    for (const k of Object.keys(r)) if (r[k] === undefined) delete r[k];
+    return r;
+  });
+  if (!gpus.length) throw new Error('no GPUs in the amd-smi output (expected `amd-smi static --json`)');
+  const versions = { driver: mostCommon(gpus.map(x => x.driver)), vbios: mostCommon(gpus.map(x => x.vbios)), ...(rocm ? { rocm } : {}) };
+  for (const k of Object.keys(versions)) if (!versions[k]) delete versions[k];
+  const mixed = ['vbios', 'driver'].filter(k => new Set(gpus.map(x => x[k]).filter(Boolean)).size > 1);
+  gpus.forEach(x => delete x.driver);
+  const inventory = { t, node, vendor: 'amd', kind: 'gpu', sku: mostCommon(gpus.map(x => x.sku)) || '', devices: gpus.length, versions, gpus, ...(mixed.length ? { mixedVersions: mixed } : {}), source: 'amd-smi' };
+  return { inventory, pciMap: Object.fromEntries(gpus.filter(x => x.pci).map(x => [x.pci, x.gpu])) };
+}
+
+// `amd-smi topology --json` → GPU↔GPU edges: kind xgmi (Infinity Fabric, the scale-up link) or pcie-p2p, with hops and
+// weight. Reads both layouts amd-smi has shipped: per-GPU `links: [...]`, and the older per-field maps
+// (link_type: { gpu_1: "XGMI" }, hops: { … }, weight: { … }).
+export function amdSmiTopology(json, { node, t = Math.floor(Date.now() / 1000) } = {}) {
+  if (!node) throw new Error('amd-smi topology output has no hostname: pass node');
+  const out = [], seen = new Set();
+  const edge = (a, b, type, hops, weight, bw, status) => {
+    const T = String(type || '').toUpperCase();
+    if (a === b || T === 'SELF' || !T || T === 'N/A') return;
+    const key = [a, b].sort().join('|'); if (seen.has(key)) return; seen.add(key);
+    const r = { t, kind: T === 'XGMI' ? 'xgmi' : 'pcie-p2p', from: `${node}/gpu${a}`, to: `${node}/gpu${b}`, hops: num(hops), weight: num(weight), bandwidth: known(bw), enabled: status == null ? undefined : String(status).toUpperCase() === 'ENABLED', node, source: 'amd-smi-topology' };
+    for (const k of Object.keys(r)) if (r[k] === undefined) delete r[k];
+    out.push(r);
+  };
+  for (const g of amdList(json)) {
+    if (Array.isArray(g.links)) for (const l of g.links) edge(String(g.gpu), String(l.gpu), l.link_type, l.num_hops, l.weight, l.bandwidth, l.link_status);
+    else if (g.link_type && typeof g.link_type === 'object')
+      for (const [k, type] of Object.entries(g.link_type)) { const b = k.replace(/^gpu_/, ''); edge(String(g.gpu), b, type, (g.hops || {})[k], (g.weight || {})[k], (g.numa_bandwidth || {})[k], (g.link_accessibility || {})[k]); }
   }
   return out;
 }

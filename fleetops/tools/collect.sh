@@ -8,7 +8,7 @@
 #                    [--step-log FILE]... [--requests FILE]... [--app-log FILE]... [--kineto FILE]...
 #                    [--nccl-inspector DIR] [--sdc-checks FILE]... [--fabric] [--no-kernel] [--no-gpu]
 #
-# Per node (by default): nvidia-smi -q and topo -m (or rocm-smi), the kernel log since --since, and the DCGM exporter
+# Per node (by default): nvidia-smi -q and topo -m, or amd-smi static and topology on AMD; the kernel log since --since; the DCGM exporter
 # at http://localhost:9400/metrics if it answers. --k8s adds nodes, pods and events cluster-wide; --slurm adds sacct
 # and scontrol show node. vLLM /metrics are scraped twice, a minute apart, so rates can be computed. NFS mountstats
 # (per-export latency), ethtool -S of the RDMA NICs (pause frames, discards, link errors) and the InfiniBand/RoCE port
@@ -88,6 +88,11 @@ if [ "$GPU" = 1 ]; then
   if have nvidia-smi; then
     nvidia-smi -q > "$OUT/node/nvidia-smi-q.txt" 2>/dev/null || true; add node/nvidia-smi-q.txt nvidia-smi-q "{\"node\":\"$NODE\",\"t\":\"$NOW\"}"
     nvidia-smi topo -m > "$OUT/node/nvidia-topo.txt" 2>/dev/null || true; add node/nvidia-topo.txt nvidia-topo "{\"node\":\"$NODE\",\"t\":\"$NOW\"}"
+  fi
+  if have amd-smi; then
+    ROCMV="$(sed -n 1p /opt/rocm/.info/version 2>/dev/null || true)"
+    amd-smi static --json > "$OUT/node/amd-smi-static.json" 2>/dev/null && add node/amd-smi-static.json amd-smi-static "{\"node\":\"$NODE\",\"t\":\"$NOW\"${ROCMV:+,\"rocm\":\"$ROCMV\"}}" || true
+    amd-smi topology --json > "$OUT/node/amd-smi-topology.json" 2>/dev/null && add node/amd-smi-topology.json amd-smi-topology "{\"node\":\"$NODE\",\"t\":\"$NOW\"}" || true
   fi
   if curl -fsS -m 5 "$DCGM" -o "$OUT/node/dcgm.prom" 2>/dev/null; then add node/dcgm.prom exporter "{\"t\":\"$NOW\"}"; fi
   if [ -n "$AMD" ] && curl -fsS -m 5 "$AMD" -o "$OUT/node/amd.prom" 2>/dev/null; then add node/amd.prom exporter "{\"vendor\":\"amd\",\"t\":\"$NOW\"}"; fi

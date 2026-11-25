@@ -1,0 +1,186 @@
+[
+ {
+  "gpu": 0,
+  "pcie": {
+   "width": 16,
+   "speed": {
+    "value": 32,
+    "unit": "GT/s"
+   },
+   "bandwidth": {
+    "value": 512,
+    "unit": "Mb/s"
+   },
+   "replay_count": 0,
+   "l0_to_recovery_count": 0,
+   "replay_roll_over_count": 0,
+   "nak_sent_count": 0,
+   "nak_received_count": 0,
+   "current_bandwidth_sent": "N/A",
+   "current_bandwidth_received": "N/A",
+   "max_packet_size": "N/A",
+   "lc_perf_other_end_recovery": "N/A"
+  }
+ },
+ {
+  "gpu": 1,
+  "pcie": {
+   "width": 16,
+   "speed": {
+    "value": 32,
+    "unit": "GT/s"
+   },
+   "bandwidth": {
+    "value": 512,
+    "unit": "Mb/s"
+   },
+   "replay_count": 0,
+   "l0_to_recovery_count": 0,
+   "replay_roll_over_count": 0,
+   "nak_sent_count": 0,
+   "nak_received_count": 0,
+   "current_bandwidth_sent": "N/A",
+   "current_bandwidth_received": "N/A",
+   "max_packet_size": "N/A",
+   "lc_perf_other_end_recovery": "N/A"
+  }
+ },
+ {
+  "gpu": 2,
+  "pcie": {
+   "width": 16,
+   "speed": {
+    "value": 32,
+    "unit": "GT/s"
+   },
+   "bandwidth": {
+    "value": 512,
+    "unit": "Mb/s"
+   },
+   "replay_count": 0,
+   "l0_to_recovery_count": 0,
+   "replay_roll_over_count": 0,
+   "nak_sent_count": 0,
+   "nak_received_count": 0,
+   "current_bandwidth_sent": "N/A",
+   "current_bandwidth_received": "N/A",
+   "max_packet_size": "N/A",
+   "lc_perf_other_end_recovery": "N/A"
+  }
+ },
+ {
+  "gpu": 3,
+  "pcie": {
+   "width": 8,
+   "speed": {
+    "value": 32,
+    "unit": "GT/s"
+   },
+   "bandwidth": {
+    "value": 512,
+    "unit": "Mb/s"
+   },
+   "replay_count": 0,
+   "l0_to_recovery_count": 0,
+   "replay_roll_over_count": 0,
+   "nak_sent_count": 0,
+   "nak_received_count": 0,
+   "current_bandwidth_sent": "N/A",
+   "current_bandwidth_received": "N/A",
+   "max_packet_size": "N/A",
+   "lc_perf_other_end_recovery": "N/A"
+  }
+ },
+ {
+  "gpu": 4,
+  "pcie": {
+   "width": 16,
+   "speed": {
+    "value": 32,
+    "unit": "GT/s"
+   },
+   "bandwidth": {
+    "value": 512,
+    "unit": "Mb/s"
+   },
+   "replay_count": 0,
+   "l0_to_recovery_count": 0,
+   "replay_roll_over_count": 0,
+   "nak_sent_count": 0,
+   "nak_received_count": 0,
+   "current_bandwidth_sent": "N/A",
+   "current_bandwidth_received": "N/A",
+   "max_packet_size": "N/A",
+   "lc_perf_other_end_recovery": "N/A"
+  }
+ },
+ {
+  "gpu": 5,
+  "pcie": {
+   "width": 16,
+   "speed": {
+    "value": 32,
+    "unit": "GT/s"
+   },
+   "bandwidth": {
+    "value": 512,
+    "unit": "Mb/s"
+   },
+   "replay_count": 0,
+   "l0_to_recovery_count": 0,
+   "replay_roll_over_count": 0,
+   "nak_sent_count": 0,
+   "nak_received_count": 0,
+   "current_bandwidth_sent": "N/A",
+   "current_bandwidth_received": "N/A",
+   "max_packet_size": "N/A",
+   "lc_perf_other_end_recovery": "N/A"
+  }
+ },
+ {
+  "gpu": 6,
+  "pcie": {
+   "width": 16,
+   "speed": {
+    "value": 32,
+    "unit": "GT/s"
+   },
+   "bandwidth": {
+    "value": 512,
+    "unit": "Mb/s"
+   },
+   "replay_count": 0,
+   "l0_to_recovery_count": 0,
+   "replay_roll_over_count": 0,
+   "nak_sent_count": 0,
+   "nak_received_count": 0,
+   "current_bandwidth_sent": "N/A",
+   "current_bandwidth_received": "N/A",
+   "max_packet_size": "N/A",
+   "lc_perf_other_end_recovery": "N/A"
+  }
+ },
+ {
+  "gpu": 7,
+  "pcie": {
+   "width": 16,
+   "speed": {
+    "value": 32,
+    "unit": "GT/s"
+   },
+   "bandwidth": {
+    "value": 512,
+    "unit": "Mb/s"
+   },
+   "replay_count": 0,
+   "l0_to_recovery_count": 0,
+   "replay_roll_over_count": 0,
+   "nak_sent_count": 0,
+   "nak_received_count": 0,
+   "current_bandwidth_sent": "N/A",
+   "current_bandwidth_received": "N/A",
+   "max_packet_size": "N/A",
+   "lc_perf_other_end_recovery": "N/A"
+  }
+ }
+]

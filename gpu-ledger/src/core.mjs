@@ -9,20 +9,21 @@
 //     status? ('succeeded'|'failed'|'cancelled'|'preempted'|'running'),
 //     util? { busy (0–1: share of GPU-time above the idle threshold), sm (0–1 mean SM activity while busy),
 //             memPeak (0–1 of HBM), idleLong (GPU-seconds idle in stretches ≥ 30 min), samples },
-//     checkpoint? { intervalS?, lastAt? }, serving? { model, tokensIn, tokensOut, requests } }
+//     checkpoint? { intervalS?, lastAt? }, serving? { model, tokensIn, tokensOut, requests },
+//     rate? ($/GPU-h actually billed, from a cloud bill: wins over the rate card), purchase?, instanceType? }
 //
 // Classes (they add up to the allocation): useful, idle (allocated, GPU not working), lost (work thrown away by a
 // failure or preemption). Unallocated capacity is counted per cluster and GPU type, outside any one workload.
 
+import { createRequire } from 'node:module';
+
 // Spec-sheet numbers: HBM per GPU, dense BF16 TFLOPS. Used only to say whether a job would fit on another GPU.
-export const GPU_SPECS = {
-  'B200': { hbmGB: 180, tflops: 2250 }, 'B300': { hbmGB: 270, tflops: 2250 }, 'GB200': { hbmGB: 186, tflops: 2500 },
-  'H200': { hbmGB: 141, tflops: 989 }, 'H100': { hbmGB: 80, tflops: 989 }, 'H20': { hbmGB: 96, tflops: 148 },
-  'A100': { hbmGB: 80, tflops: 312 }, 'A100-40GB': { hbmGB: 40, tflops: 312 }, 'L40S': { hbmGB: 48, tflops: 362 },
-  'L4': { hbmGB: 24, tflops: 121 }, 'A10': { hbmGB: 24, tflops: 125 }, 'T4': { hbmGB: 16, tflops: 65 },
-  'MI300X': { hbmGB: 192, tflops: 1307 }, 'MI325X': { hbmGB: 256, tflops: 1307 },
-  'V100': { hbmGB: 32, tflops: 125 }, 'P100': { hbmGB: 16, tflops: 19 }, 'K80': { hbmGB: 12, tflops: 4 },
-};
+// Chips the sizer knows come from the shared accelerator registry; older and smaller ones are listed here.
+const REG = createRequire(import.meta.url)('../../inference-sizer/src/accelerators.js');
+export const GPU_SPECS = Object.assign(
+  Object.fromEntries(REG.ACCELERATORS.map(a => [a.kind === 'tpu' ? a.id : a.short || a.id, { hbmGB: a.hbmGB, tflops: a.tfBf16 }])),
+  { 'H20': { hbmGB: 96, tflops: 148 }, 'A100-40GB': { hbmGB: 40, tflops: 312 }, 'L4': { hbmGB: 24, tflops: 121 }, 'A10': { hbmGB: 24, tflops: 125 },
+    'T4': { hbmGB: 16, tflops: 65 }, 'V100': { hbmGB: 32, tflops: 125 }, 'P100': { hbmGB: 16, tflops: 19 }, 'K80': { hbmGB: 12, tflops: 4 } });
 // "NVIDIA-H100-80GB-HBM3", "h100", "Tesla V100-SXM2-32GB" → a key above (or the input when unknown)
 export function gpuKey(s) {
   if (!s) return null;
@@ -113,7 +114,8 @@ export function classify(r, { from = -Infinity, to = Infinity, now = Infinity, p
   const L = lostSpan(r, whole, policy), tailStart = end - L.s, inWin = Math.max(0, Math.min(e, end) - Math.max(s, tailStart));
   const lost = r.gpus * inWin * (busy != null ? busy : 1);
   const useful = Math.max(0, alloc - idle - lost);
-  const p = card ? priceOf(card, prices, r.gpuType, r.provider) : null, rate = p ? p.rate : null;
+  // a record from a cloud bill carries what was paid per GPU-hour; it wins over the rate card
+  const p = r.rate != null ? { rate: r.rate, basis: r.rateBasis || 'bill' } : card ? priceOf(card, prices, r.gpuType, r.provider) : null, rate = p ? p.rate : null;
   const usd = h => (rate == null ? null : rate * h / 3600);
   return {
     r, alloc, useful, idle, lost, idleLong: u.idleLong != null ? u.idleLong * frac : null, lostBasis: L.basis, measured: busy != null,

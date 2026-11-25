@@ -92,6 +92,9 @@ export function sniff(name, head) {
   const n = name.toLowerCase(), h = String(head).slice(0, 65536), t = h.trimStart();
   if (n.endsWith('manifest.json')) return null;
   if (/^\s*<\?xml[\s\S]{0,200}<nvidia_smi_log|^==============NVSMI LOG==============/m.test(h) || /\bProduct Name\s+:/.test(h) && /\bSerial Number\s+:/.test(h)) return 'nvidia-smi-q';
+  if (/"timeSeries"\s*:/.test(h) && /accelerator\/(duty_cycle|tensorcore_utilization|memory_used)/.test(h)) return 'cloud-monitoring';
+  if (/"market_name"\s*:/.test(h) && /"asic"\s*:/.test(h)) return 'amd-smi-static';
+  if (/"link_type"\s*:/.test(h) && /"(links|hops|num_hops)"\s*:/.test(h)) return 'amd-smi-topology';
   if (/\bGPU0\b/.test(h) && /Legend:/.test(h)) return 'nvidia-topo';
   if (/^(Switch|Ca)\s+\d+\s+"/m.test(h) || /vendid=0x/.test(h)) return 'ibnetdiscover';
   if (/^Errors for\s+0x[0-9a-f]+/im.test(h)) return 'ibqueryerrors';

@@ -70,6 +70,8 @@ Where to save (per month):
 | vLLM in Prometheus | `--prom` with `vllm:generation_tokens_total`, `vllm:prompt_tokens_total`, `vllm:request_success_total` | tokens and requests per serving pod and hour |
 | Slurm | `import slurm sacct.txt` | jobs with `gres/gpu`, user, account, partition, state |
 | OpenCost / Kubecost | `import opencost allocation.json` | per-pod GPU-hours from `/allocation` |
+| AWS Cost and Usage Report | `import aws-cur cur.csv[.gz]` (CUR 2.0 data export or legacy CUR, with resource IDs) | GPU instance-hours priced at what was billed: Savings Plan and Reserved effective cost, Spot, on demand. The GPU type and count come from the instance type; tags (`user:team`) attribute |
+| Google Cloud Billing export | `import gcp-billing export.jsonl` (the BigQuery standard or detailed usage cost export, as JSON lines or an array) | GPU and TPU hours from their own SKUs (`Nvidia H100 80GB GPU …`, `TpuV6e …`), net of credits: committed use, spot, calendar mode, on demand. The VM's vCPU and memory are separate lines and not included. GKE cost-allocation labels give the cluster and namespace |
 | Anything else | `import csv FILE --map start=…,end=…,gpus=…,user=…` | your own columns |
 | fleetops | `fleetops data export gpu-ledger --out usage.jsonl --capacity cap.json` | placements, status, utilization and inventory from a fleetops store |
 
