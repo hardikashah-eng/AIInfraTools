@@ -21,6 +21,7 @@ export const TOOLS = {
   'skew-corrector': { file: 'hybrid-tracing/tools/skew-corrector.mjs', what: 'run the skew-corrector service' },
   mcp: { file: 'mcp/server.mjs', what: 'run every tool as an MCP server over stdio (for Claude, Cursor and other MCP clients)' },
 };
+TOOLS.demo = { file: 'fleetops/tools/loop-demo.mjs', what: 'the whole loop on a real week of a GPU cluster: observe → diagnose → simulate → approve → optimize → verify' };
 const ALIASES = { 'inference-sizer': 'sizer', 'gpu-ledger': 'ledger', tracing: 'fix-skew', 'hybrid-tracing': 'fix-skew' };
 const version = () => JSON.parse(fs.readFileSync(path.join(ROOT, 'package.json'), 'utf8')).version;
 

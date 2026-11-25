@@ -28,12 +28,22 @@ Where this is going, from four utilities to one Observe → Diagnose → Simulat
 Node.js 20+ and nothing else:
 
 ```bash
+npx aiinfra-tools demo                                    # the whole loop on a real week of a GPU cluster
 npx aiinfra-tools --help                                  # every tool, one entry point
 npx aiinfra-tools sizer --model llama33-70b --gpu H100    # or: npm i -g aiinfra-tools, then `aiinfra sizer …`
 ```
 
-Every command takes `--json`; the output of the ones agents rely on is described by [JSON Schemas](schemas/README.md). The package also installs each tool's own command (`fleetops`, `gpu-health`, `gpu-ledger`, `inference-sizer`,
+Every command takes `--json`; the output of the ones agents rely on is described by [JSON Schemas](schemas/README.md). Or open the repository in a Codespace ([.devcontainer](.devcontainer/devcontainer.json)): `aiinfra` is ready on the path. The package also installs each tool's own command (`fleetops`, `gpu-health`, `gpu-ledger`, `inference-sizer`,
 `fleetscope`, `fix-skew`). Or clone the repository and run any tool from its folder.
+
+## The loop in one command
+
+`aiinfra demo` runs Observe → Diagnose → Simulate → Approve → Optimize → Verify on one real week of the Microsoft
+Philly GPU cluster (552 machines, 23,000 jobs), which ships with the repository. It finds the week's failure spikes
+and pins most of them on one team's jobs, flags ten flaky nodes, plans a fix worth about $6,900 a week, and stops for
+you to approve it. Then `aiinfra demo --continue DIR` rolls it out (dry run) and checks the flaky nodes on the second
+half of the week, which they fail at 3.3× the expected rate. It prints every command, so you can repeat each step on
+your own data.
 
 ## Use with LLMs (skills)
 
