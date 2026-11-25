@@ -1,7 +1,7 @@
 // Production sources: exporter scrapes, vLLM metrics, Kubernetes and Slurm inventory, job accounting, change feeds,
 // and gpu-health's own history. Each turns what a system already emits into data-layer records.
 import { createRequire } from 'node:module';
-import { samplesFromExporter } from '../../../gpu-health/src/ingest.mjs';
+import { samplesFromExporter, samplesFromCloudMonitoring } from '../../../gpu-health/src/ingest.mjs';
 import { cloudIdentity } from '../../../gpu-health/src/platforms.mjs';
 import { toEpoch } from './time.mjs';
 
@@ -11,6 +11,8 @@ const REG = require('../../../inference-sizer/src/accelerators.js');
 
 // DCGM, AMD or SambaNova exporter text → device samples (gpu-health's parser; the vendor is detected from metric names).
 export const exporterScrape = (text, opts = {}) => samplesFromExporter(text, opts).map(s => Object.assign(s, { source: opts.source || `exporter:${s.vendor}` }));
+// Google Cloud Monitoring accelerator metrics (GKE nodes, TPU VMs) → device samples (gpu-health's parser)
+export const cloudMonitoring = (json, opts = {}) => samplesFromCloudMonitoring(json, opts).map(s => Object.assign(s, { source: 'cloud-monitoring' }));
 
 // Two vLLM /metrics snapshots (or one with the window it covers) → one serving record for the pool.
 export function vllmSnapshot(text, { before, windowS, t, pool, model, gpu } = {}) {
@@ -74,6 +76,11 @@ export function k8sNodeConditions(json, { t: t0 = Math.floor(Date.now() / 1000) 
     const cls = xid ? 'gpu' : /DoubleBit|ECC|PageRetire|RowRemap/i.test(reason) ? 'ecc' : /Neuron/.test(reason) ? 'hardware' : COND_CLASS[c.type] || 'node';
     out.push({ t: toEpoch(c.lastTransitionTime || c.lastHeartbeatTime) ?? t0, node: n.metadata.name, code: xid ? `xid${xid[1]}` : `k8s_${c.type}`, class: cls, severity: 'hard',
       reason, condition: c.type, msg: String(c.message || '').slice(0, 300), source: 'k8s-condition' });
+  }
+  // GKE: host maintenance scheduled for a GPU or TPU node (they don't live-migrate): planned, not a fault
+  for (const n of j.items || []) {
+    const at = +(((n.metadata || {}).labels || {})['cloud.google.com/scheduled-maintenance-time']);
+    if (at > 0) out.push({ t: t0, node: n.metadata.name, code: 'scheduled_maintenance', class: 'maintenance', severity: 'info', at, msg: `host maintenance scheduled for ${new Date(at * 1000).toISOString()}`, source: 'k8s-label' });
   }
   return out;
 }

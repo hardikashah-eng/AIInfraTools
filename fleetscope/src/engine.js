@@ -30,7 +30,7 @@
   const GPU_ORDER = ['A100', 'L40S', 'H100', 'H200', 'MI300X', 'B200', 'B300', 'GB200', 'GB300', 'MI325X', 'MI355X'];
   const GPUS = {};
   for (const k of GPU_ORDER.concat(REG.ACCELERATORS.map(a => a.short || a.id))) {
-    const a = REG.byId(k); if (!a || GPUS[k]) continue;
+    const a = REG.byId(k); if (!a || GPUS[k] || !a.tdpW) continue; // the power model needs board power (cloud TPUs don't publish it)
     GPUS[k] = { label: `${k} ${a.hbmGB}GB${a.domain >= 72 ? ` (NVL${a.domain})` : ''}`, hbm: a.hbmGB, bw: a.hbmTBs, bf16: a.tfBf16, fp8: a.tfFp8 || a.tfBf16,
       onprem: a.onprem, rent: a.price, tdpW: a.tdpW, vendor: a.vendorKey, kind: a.kind };
   }

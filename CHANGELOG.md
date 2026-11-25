@@ -12,6 +12,14 @@ Vendor-neutral: the tools no longer assume NVIDIA.
 - **One accelerator registry** (`inference-sizer/src/accelerators.js`), read by the sizer, FleetScope, the power model,
   serving manifests and Kubernetes inventory; vendor adapters replace the NVIDIA-or-AMD branches. MI325X, MI355X and
   GB300 NVL72 added. InferenceX validation covers 198 runs (#66).
+- **GCP and Cloud TPU:**
+  - TPU v6e, v5p and TPU7x in the sizer.
+  - Serving on GKE TPUs: `vllm/vllm-tpu`, `google.com/tpu`, slice selected by accelerator and topology labels.
+  - GKE nodes give project, zone and instance, and scheduled host maintenance is a planned event.
+  - gpu-health `gke` and `gcp` platforms: GKE's `fault-behavior` label, `report-host-as-faulty` on Compute Engine.
+  - Cloud Monitoring accelerator metrics as telemetry.
+  - `gpu-ledger import gcp-billing`.
+  - `fleetops procure gcp-calendar`.
 - **AWS:**
   - EFA `hw_counters` read as fabric counters. Retransmits, timeouts and impaired connections count as congestion; RDMA errors as errors.
   - EKS nodes give their instance, zone and GPU (from the instance type); the node monitoring agent's `AcceleratedHardwareReady` conditions become faults.

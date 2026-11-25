@@ -163,8 +163,8 @@ export function ladderFor(cfg, vendor, cls, node) {
 // Executor for an action: the node's platform's (reboot or replace a cloud instance), else the vendor's own, else the
 // global one.
 export function executorFor(cfg, vendor, kind, node) {
-  const p = platformProfile(cfg, node);
-  if (p && p.executors && p.executors[kind] != null) return p.executors[kind];
+  const p = platformProfile(cfg, node), v0 = vendorOf(cfg, vendor);
+  if (p && p.executors && p.executors[kind] != null && !(p.skipKinds || []).includes((v0 || {}).kind)) return p.executors[kind];
   const v = vendorOf(cfg, vendor);
   if (v && v.executors && v.executors[kind] != null) return v.executors[kind];
   return cfg.executors[kind];

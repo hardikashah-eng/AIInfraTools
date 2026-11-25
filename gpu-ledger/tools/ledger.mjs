@@ -23,6 +23,7 @@ Bring usage in (appends to --out, JSON lines):
   gpu-ledger import opencost allocation.json [--cluster C] --out usage.jsonl     (/allocation?aggregate=pod&step=1h)
   gpu-ledger import csv FILE [--map start=Start,end=End,gpus=GPUs,user=Owner,...] --out usage.jsonl
   gpu-ledger import aws-cur cur.csv[.gz] [--cluster C] --out usage.jsonl          (AWS CUR 2.0 or legacy CUR, with resource IDs)
+  gpu-ledger import gcp-billing export.json[l] [--cluster C] --out usage.jsonl    (Cloud Billing export to BigQuery, as JSON)
   gpu-ledger import acme acme_trace_kalos.csv --out usage.jsonl                    (public trace)
   gpu-ledger import philly --jobs cluster_job_log --util cluster_gpu_util --machines cluster_machine_list [--from T --to T] [--capacity-out cap.json] --out usage.jsonl
 
@@ -84,9 +85,10 @@ async function main() {
     if (sub === 'opencost') return writeUsage(A.opencost(json(f), common));
     if (sub === 'csv') return writeUsage(A.csv(text(), Object.assign({ map: Object.fromEntries((opt('map') || '').split(',').filter(Boolean).map(x => x.split('='))) }, common)));
     if (sub === 'aws-cur') { const recs = Cloud.awsCur(f.endsWith('.gz') ? zlib.gunzipSync(fs.readFileSync(f)).toString() : text(), common); if (!J) process.stderr.write(`aws-cur: ${recs.length} GPU instance line(s); skipped ${JSON.stringify(recs.skipped)}${recs.unknownTypes.length ? `; GPU-like instance types not in the registry: ${recs.unknownTypes.join(', ')}` : ''}\n`); return writeUsage(recs); }
+    if (sub === 'gcp-billing') { const recs = Cloud.gcpBilling(text(), common); if (!J) process.stderr.write(`gcp-billing: ${recs.length} GPU/TPU line(s); skipped ${JSON.stringify(recs.skipped)}${recs.unknownSkus.length ? `; GPU SKUs not in the registry: ${recs.unknownSkus.join('; ')}` : ''}\n`); return writeUsage(recs); }
     if (sub === 'acme') return writeUsage(A.acme(text(), { cluster: opt('cluster') || 'kalos' }));
     if (sub === 'philly') { const recs = await A.philly({ jobs: json(opt('jobs')), utilPath: opt('util'), machines: opt('machines') ? A.phillyMachines(read(opt('machines'))) : [], from: time(opt('from')), to: time(opt('to')) }); if (opt('capacity-out')) { fs.writeFileSync(opt('capacity-out'), JSON.stringify(recs.inventory, null, 1)); say(`capacity (GPUs reporting utilization) → ${opt('capacity-out')}`); } return writeUsage(recs); }
-    throw new Error('import k8s | slurm | opencost | csv | aws-cur | acme | philly');
+    throw new Error('import k8s | slurm | opencost | csv | aws-cur | gcp-billing | acme | philly');
   }
   if (cmd === 'demo') {
     const dir = opt('out') || 'ledger-demo', d = demo(); fs.mkdirSync(dir, { recursive: true });

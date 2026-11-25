@@ -52,6 +52,7 @@ const HELP = `fleetops — shared data layer for AIInfraTools
                                                                  manifest entry or by content
   fleetops send FILE.tar.gz|DIR --to URL [--token T]              upload a bundle to a fleetops server (POST /v1/bundle)
   fleetops procure aws-blocks --gpu H100 --gpus 64 --days 7       the read-only AWS command listing Capacity Blocks on offer
+  fleetops procure gcp-calendar --gpu H200 --gpus 64 --days 7 --region us-central1   the read-only GCP calendar-mode advice
   fleetops data summary [--store DIR]                             records per kind, time range and sources
   fleetops data query KIND [--from T] [--to T] [--where k=v]... [--limit N]
   fleetops data node NODE [--from T] [--to T]                    versions, shared switch/rack/PDU, log faults, changes
@@ -86,6 +87,7 @@ Sources (SOURCE):
   nvidia-topo      nvidia-smi topo -m                        [--node N]  NVLink and NIC affinity
   amd-smi-static   amd-smi static --json                     [--node N] [--rocm V]  versions, IFWI, PCI → GPU map
   amd-smi-topology amd-smi topology --json                   [--node N]  XGMI and PCIe peer links
+  cloud-monitoring Google Cloud Monitoring timeSeries JSON    [--site S]  GKE node / TPU VM accelerator metrics → device samples
   ibnetdiscover    ibnetdiscover                             host → leaf → spine (with switch port numbers)
   perfquery        perfquery [-x] LID PORT output             [--switch NAME]  switch port counters (errors, xmit wait, data)
   ibqueryerrors    ibqueryerrors                              switch ports with error counters, fabric-wide
@@ -298,6 +300,7 @@ function importSource(store, src, files, o) {
       case 'nvidia-topo': put('topology', Topo.nvidiaTopo(read(f), { node: nodeOf(f), t: tOf(f) })); break;
       case 'amd-smi-static': putInventory([Topo.amdSmiStatic(read(f), { node: nodeOf(f), t: tOf(f), rocm: o.rocm }).inventory]); break;
       case 'amd-smi-topology': put('topology', Topo.amdSmiTopology(read(f), { node: nodeOf(f), t: tOf(f) })); break;
+      case 'cloud-monitoring': put('device', Live.cloudMonitoring(read(f), { site: o.site })); break;
       case 'ibnetdiscover': put('topology', Topo.ibnetdiscover(read(f), { t: tOf(f) })); break;
       case 'perfquery': put('port', Fabric.perfquery(read(f), { switch: o.switch, t: tOf(f) })); break;
       case 'ibqueryerrors': put('port', Fabric.ibqueryerrors(read(f), { t: tOf(f) })); break;
@@ -479,9 +482,11 @@ async function procureCmd(cmd, o) {
   const from = opt('from') ? time(opt('from')) : undefined;
   let r;
   if (cmd === 'aws-blocks') r = Procure.awsCapacityBlocks({ chip: opt('gpu'), instanceType: opt('instance-type'), gpus: num('gpus'), days: num('days'), from, windowDays: num('window-days') });
-  else throw new Error('fleetops procure aws-blocks --gpu H100|--instance-type T --gpus N --days N [--from DATE] [--window-days 14]');
+  else if (cmd === 'gcp-calendar') r = Procure.gcpCalendarMode({ chip: opt('gpu'), machineType: opt('machine-type'), gpus: num('gpus') ?? num('chips'), days: num('days'), region: opt('region'), from, windowDays: num('window-days'), workload: opt('workload') });
+  else throw new Error('fleetops procure aws-blocks --gpu H100|--instance-type T --gpus N --days N [--from DATE] [--window-days 14]\n       fleetops procure gcp-calendar --gpu H200|TPU-v6e|--machine-type T --gpus N|--chips N --days N --region R [--from DATE]');
   if (J) { OUT.procure = r; return; }
-  say(`${r.instances} × ${r.instanceType} (${r.gpusPerInstance} GPUs each) for ${r.days} day(s). To see what is on offer:\n\n  ${r.argv.join(' ')}\n\n${r.notes.map(n => `- ${n}`).join('\n')}`);
+  const what = r.instanceType ? `${r.instances} × ${r.instanceType} (${r.gpusPerInstance} GPUs each)` : r.machineType ? `${r.vms} × ${r.machineType} (${r.gpusPerVm} GPUs each)` : `${r.chips} ${r.chip} chips`;
+  say(`${what} for ${r.days} day(s). To see what is on offer:\n\n  ${r.argv.join(' ')}\n\n${r.notes.map(n => `- ${n}`).join('\n')}`);
 }
 async function main() {
   const o = args(process.argv.slice(2));

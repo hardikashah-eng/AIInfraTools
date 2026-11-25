@@ -56,3 +56,49 @@ export function awsCur(text, { cluster = null } = {}) {
   out.skipped = skipped; out.unknownTypes = [...unknownTypes];
   return out;
 }
+
+// Google Cloud Billing export to BigQuery (standard or detailed usage cost), as JSON lines or a JSON array — what
+// `bq query --format=json` or an export to newline-delimited JSON gives (CSV can't hold its nested labels and credits).
+// GPUs and TPUs are billed as their own SKUs ("Nvidia H100 80GB GPU running in Americas", "TpuV6e running in
+// Americas"), metered in seconds of one device: so GPU-hours = usage seconds ÷ 3600, and the record covers the
+// accelerator charges only (the VM's vCPU and memory are other lines). Cost is net of credits (committed-use and
+// sustained-use discounts, promotions). Commitment fee lines ("Commitment v1: …") are not usage and are skipped.
+const get = (o, k) => k.split('.').reduce((x, p) => (x == null ? undefined : x[p]), o) ?? o[k];
+function gcpChip(sku) {
+  const s = String(sku || '');
+  const tpu = s.match(/\bTpu\s?(V\w+)|\bTPU\s?(v\d\w*|7x)|Ironwood|Trillium/i);
+  if (tpu) { const m = REG.match(`tpu ${(tpu[1] || tpu[2] || tpu[0]).toLowerCase()}`); return m ? { chip: m.id, kind: 'tpu' } : null; }
+  const g = s.match(/\bNvidia\s+(?:Tesla\s+)?(.+?)\s+GPU\b/i);
+  if (!g) return null;
+  const name = g[1];
+  if (/A100/i.test(name) && !/80\s?GB/i.test(name)) return { chip: 'A100-40GB', kind: 'gpu' };
+  const m = REG.match(`NVIDIA ${name}`);
+  return m ? { chip: m.id, kind: 'gpu' } : { chip: name, kind: 'gpu', unknown: true };
+}
+const gcpPurchase = (sku, credits) => /\bSpot\b|Preemptible/i.test(sku) ? 'spot' : /Calendar Mode/i.test(sku) ? 'calendar-mode' : /Flex[- ]?start|DWS/i.test(sku) ? 'flex-start'
+  : (credits || []).some(c => /COMMITTED_USAGE/i.test(c.type || '')) ? 'committed' : 'on-demand';
+export function gcpBilling(text, { cluster = null } = {}) {
+  const rows = typeof text !== 'string' ? text : text.trim().startsWith('[') ? JSON.parse(text) : text.split(/\r?\n/).filter(l => l.trim()).map(l => JSON.parse(l));
+  const out = [], skipped = { notAccelerator: 0, commitmentFee: 0, notUsage: 0 }, unknownSkus = new Set();
+  for (const r of rows) {
+    const sku = get(r, 'sku.description') || '';
+    if (/^Commitment/i.test(sku)) { skipped.commitmentFee++; continue; }
+    const c = gcpChip(sku);
+    if (!c) { skipped.notAccelerator++; continue; }
+    if (c.unknown) unknownSkus.add(sku);
+    const start = t(get(r, 'usage_start_time')), end = t(get(r, 'usage_end_time')), unit = String(get(r, 'usage.unit') || 'seconds'), amount = +get(r, 'usage.amount');
+    const secs = /^s(ec(ond)?s?)?$|seconds/i.test(unit) ? amount : /^h(our)?s?$/i.test(unit) ? amount * 3600 : NaN;
+    if (start == null || end == null || !(end > start) || !(secs > 0)) { skipped.notUsage++; continue; }
+    const credits = get(r, 'credits') || [], cost = +(get(r, 'cost') || 0) + credits.reduce((a, x) => a + (+x.amount || 0), 0);
+    const labels = Object.fromEntries((get(r, 'labels') || []).map(l => [l.key, String(l.value)]));
+    const resource = get(r, 'resource.name') || undefined, project = get(r, 'project.id');
+    const rec = { id: `${resource || `${project}/${sku}`}@${start}`, start, end, gpus: secs / (end - start), gpuType: gpuKey(c.chip), kind: c.kind === 'tpu' ? 'tpu' : 'instance',
+      cluster: labels['goog-k8s-cluster-name'] || labels.cluster || cluster, provider: 'gcp', region: get(r, 'location.region') || undefined, node: resource, project,
+      namespace: labels['k8s-namespace'], name: labels['k8s-workload-name'] || resource || sku, labels, group: resource || sku, purchase: gcpPurchase(sku, credits), sku,
+      rate: cost / (secs / 3600), billed: cost, source: 'gcp-billing' };
+    for (const k of Object.keys(rec)) if (rec[k] === undefined || rec[k] === null) delete rec[k];
+    out.push(rec);
+  }
+  out.skipped = skipped; out.unknownSkus = [...unknownSkus];
+  return out;
+}
