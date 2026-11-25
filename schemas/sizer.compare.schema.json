@@ -1,0 +1,195 @@
+{
+ "$schema": "https://json-schema.org/draft/2020-12/schema",
+ "$id": "https://github.com/hardikashah-eng/AIInfraTools/schemas/sizer.compare.schema.json",
+ "title": "aiinfra sizer --model M --compare G1,G2,… --json",
+ "type": "object",
+ "properties": {
+  "model": {
+   "type": "string"
+  },
+  "modelId": {
+   "type": "string"
+  },
+  "results": {
+   "type": "array",
+   "items": {
+    "type": "object",
+    "properties": {
+     "calibration": {
+      "type": "null"
+     },
+     "costPerHour": {
+      "type": "number"
+     },
+     "costPerMOutputTokens": {
+      "type": "number"
+     },
+     "estimates": {
+      "type": "object",
+      "properties": {
+       "tpotS": {
+        "type": "number"
+       },
+       "ttftAvgS": {
+        "type": "number"
+       },
+       "ttftPeakS": {
+        "type": "number"
+       }
+      },
+      "required": [
+       "tpotS",
+       "ttftAvgS",
+       "ttftPeakS"
+      ]
+     },
+     "floors": {
+      "type": "object",
+      "properties": {
+       "tpotS": {
+        "type": "number"
+       },
+       "ttftS": {
+        "type": "number"
+       }
+      },
+      "required": [
+       "tpotS",
+       "ttftS"
+      ]
+     },
+     "found": {
+      "type": "boolean"
+     },
+     "gpu": {
+      "type": "string"
+     },
+     "gpuId": {
+      "type": "string"
+     },
+     "gpus": {
+      "type": "number"
+     },
+     "gpusPerNode": {
+      "type": "number"
+     },
+     "mode": {
+      "type": "string"
+     },
+     "model": {
+      "type": "string"
+     },
+     "modelId": {
+      "type": "string"
+     },
+     "nodes": {
+      "type": "number"
+     },
+     "pools": {
+      "type": "array",
+      "items": {
+       "type": "object",
+       "properties": {
+        "gpusPerInstance": {
+         "type": "number"
+        },
+        "instances": {
+         "type": "number"
+        },
+        "layout": {
+         "type": "string"
+        },
+        "role": {
+         "type": "string"
+        }
+       },
+       "required": [
+        "gpusPerInstance",
+        "instances",
+        "layout",
+        "role"
+       ]
+      }
+     },
+     "pricePerGpuHour": {
+      "type": "number"
+     },
+     "provisionedGpus": {
+      "type": "number"
+     },
+     "reason": {
+      "type": "string"
+     },
+     "targets": {
+      "type": "object",
+      "properties": {
+       "concurrency": {
+        "type": "number"
+       },
+       "contextTokens": {
+        "type": "number"
+       },
+       "tpotMs": {
+        "type": "number"
+       },
+       "ttftMs": {
+        "type": "number"
+       }
+      },
+      "required": [
+       "concurrency",
+       "contextTokens",
+       "tpotMs",
+       "ttftMs"
+      ]
+     },
+     "tpotSensitivity": {
+      "type": "array",
+      "items": {
+       "type": "object",
+       "properties": {
+        "gpus": {
+         "type": "number"
+        },
+        "tpot": {
+         "type": "number"
+        }
+       },
+       "required": [
+        "gpus",
+        "tpot"
+       ]
+      }
+     }
+    },
+    "required": [
+     "calibration",
+     "costPerHour",
+     "costPerMOutputTokens",
+     "estimates",
+     "floors",
+     "found",
+     "gpu",
+     "gpuId",
+     "gpus",
+     "gpusPerNode",
+     "mode",
+     "model",
+     "modelId",
+     "nodes",
+     "pools",
+     "pricePerGpuHour",
+     "provisionedGpus",
+     "reason",
+     "targets",
+     "tpotSensitivity"
+    ]
+   }
+  }
+ },
+ "required": [
+  "model",
+  "modelId",
+  "results"
+ ]
+}

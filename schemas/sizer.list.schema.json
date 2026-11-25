@@ -1,0 +1,175 @@
+{
+ "$schema": "https://json-schema.org/draft/2020-12/schema",
+ "$id": "https://github.com/hardikashah-eng/AIInfraTools/schemas/sizer.list.schema.json",
+ "title": "aiinfra sizer --list --json",
+ "type": "object",
+ "properties": {
+  "gpus": {
+   "type": "array",
+   "items": {
+    "type": "object",
+    "properties": {
+     "domain": {
+      "type": "number"
+     },
+     "hbmGB": {
+      "type": "number"
+     },
+     "hbmTBs": {
+      "type": "number"
+     },
+     "id": {
+      "type": "string"
+     },
+     "label": {
+      "type": "string"
+     },
+     "nicGbps": {
+      "type": "number"
+     },
+     "nodeKW": {
+      "type": "number"
+     },
+     "price": {
+      "type": "number"
+     },
+     "scaleUpGBs": {
+      "type": "number"
+     },
+     "source": {
+      "type": "string"
+     },
+     "tfBf16": {
+      "type": "number"
+     },
+     "tfFp4": {
+      "type": "number"
+     },
+     "tfFp8": {
+      "type": "number"
+     },
+     "vendor": {
+      "type": "string"
+     }
+    },
+    "required": [
+     "domain",
+     "hbmGB",
+     "hbmTBs",
+     "id",
+     "label",
+     "nicGbps",
+     "nodeKW",
+     "price",
+     "scaleUpGBs",
+     "source",
+     "tfBf16",
+     "tfFp4",
+     "tfFp8",
+     "vendor"
+    ]
+   }
+  },
+  "inputs": {
+   "type": "array",
+   "items": {
+    "type": "string"
+   }
+  },
+  "models": {
+   "type": "array",
+   "items": {
+    "type": "object",
+    "properties": {
+     "active": {
+      "type": "number"
+     },
+     "attn": {
+      "type": "string"
+     },
+     "experts": {
+      "type": "number"
+     },
+     "headDim": {
+      "type": "number"
+     },
+     "hidden": {
+      "type": "number"
+     },
+     "id": {
+      "type": "string"
+     },
+     "kvHeads": {
+      "type": "number"
+     },
+     "layers": {
+      "type": "number"
+     },
+     "maxCtx": {
+      "type": "number"
+     },
+     "mlaLatent": {
+      "type": "number"
+     },
+     "mlaNope": {
+      "type": "number"
+     },
+     "mlaRope": {
+      "type": "number"
+     },
+     "mlaV": {
+      "type": "number"
+     },
+     "name": {
+      "type": "string"
+     },
+     "qHeads": {
+      "type": "number"
+     },
+     "source": {
+      "type": "string"
+     },
+     "swaFrac": {
+      "type": "number"
+     },
+     "swaWindow": {
+      "type": "number"
+     },
+     "topk": {
+      "type": "number"
+     },
+     "total": {
+      "type": "number"
+     },
+     "wprec": {
+      "type": "string"
+     }
+    },
+    "required": [
+     "active",
+     "attn",
+     "experts",
+     "headDim",
+     "hidden",
+     "id",
+     "kvHeads",
+     "layers",
+     "maxCtx",
+     "name",
+     "qHeads",
+     "source",
+     "swaFrac",
+     "swaWindow",
+     "topk",
+     "total",
+     "wprec"
+    ]
+   }
+  }
+ },
+ "required": [
+  "gpus",
+  "inputs",
+  "models"
+ ]
+}

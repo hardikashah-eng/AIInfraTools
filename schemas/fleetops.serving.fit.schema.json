@@ -1,0 +1,321 @@
+{
+ "$schema": "https://json-schema.org/draft/2020-12/schema",
+ "$id": "https://github.com/hardikashah-eng/AIInfraTools/schemas/fleetops.serving.fit.schema.json",
+ "title": "aiinfra fleetops serving fit --gpu G --nodes N … --json",
+ "type": "object",
+ "properties": {
+  "fit": {
+   "type": "object",
+   "properties": {
+    "hw": {
+     "type": "object",
+     "properties": {
+      "gpu": {
+       "type": "string"
+      },
+      "nodes": {
+       "type": "number"
+      }
+     },
+     "required": [
+      "gpu",
+      "nodes"
+     ]
+    },
+    "need": {
+     "type": "number"
+    },
+    "rank": {
+     "type": "string"
+    },
+    "rows": {
+     "type": "array",
+     "items": {
+      "type": "object",
+      "properties": {
+       "active": {
+        "type": "number"
+       },
+       "edge": {
+        "type": "object",
+        "properties": {
+         "floors": {
+          "type": "object",
+          "properties": {
+           "tpotS": {
+            "type": "number"
+           },
+           "ttftS": {
+            "type": "number"
+           }
+          },
+          "required": [
+           "tpotS",
+           "ttftS"
+          ]
+         },
+         "gpus": {
+          "type": "number"
+         },
+         "layout": {
+          "type": "object",
+          "properties": {
+           "concurrency": {
+            "type": "number"
+           },
+           "gpusPerInstance": {
+            "type": "number"
+           },
+           "instances": {
+            "type": "number"
+           },
+           "kvUse": {
+            "type": "number"
+           },
+           "label": {
+            "type": "string"
+           },
+           "mode": {
+            "type": "string"
+           },
+           "pp": {
+            "type": "number"
+           },
+           "tp": {
+            "type": "number"
+           }
+          },
+          "required": [
+           "concurrency",
+           "gpusPerInstance",
+           "instances",
+           "kvUse",
+           "label",
+           "mode",
+           "pp",
+           "tp"
+          ]
+         },
+         "nodes": {
+          "type": "number"
+         },
+         "provGPUs": {
+          "type": "number"
+         },
+         "rate": {
+          "type": "number"
+         },
+         "reason": {
+          "type": "string"
+         },
+         "why": {
+          "type": "string"
+         }
+        },
+        "required": [
+         "rate"
+        ]
+       },
+       "gpu": {
+        "type": "string"
+       },
+       "gpus": {
+        "type": "number"
+       },
+       "maxPrompt": {
+        "type": "null"
+       },
+       "meetsRate": {
+        "type": "boolean"
+       },
+       "model": {
+        "type": "string"
+       },
+       "modelMaxCtx": {
+        "type": "number"
+       },
+       "name": {
+        "type": "string"
+       },
+       "params": {
+        "type": "number"
+       },
+       "production": {
+        "type": "object",
+        "properties": {
+         "dollarsPerMOut": {
+          "type": "number"
+         },
+         "floors": {
+          "type": "object",
+          "properties": {
+           "tpotS": {
+            "type": "number"
+           },
+           "ttftS": {
+            "type": "number"
+           }
+          },
+          "required": [
+           "tpotS",
+           "ttftS"
+          ]
+         },
+         "gpus": {
+          "type": "number"
+         },
+         "layout": {
+          "type": "object",
+          "properties": {
+           "concurrency": {
+            "type": "number"
+           },
+           "gpusPerInstance": {
+            "type": "number"
+           },
+           "instances": {
+            "type": "number"
+           },
+           "kvUse": {
+            "type": "number"
+           },
+           "label": {
+            "type": "string"
+           },
+           "mode": {
+            "type": "string"
+           },
+           "pp": {
+            "type": "number"
+           },
+           "tp": {
+            "type": "number"
+           }
+          },
+          "required": [
+           "concurrency",
+           "gpusPerInstance",
+           "instances",
+           "kvUse",
+           "label",
+           "mode",
+           "pp",
+           "tp"
+          ]
+         },
+         "nodes": {
+          "type": "number"
+         },
+         "outTokensPerS": {
+          "type": "number"
+         },
+         "provGPUs": {
+          "type": "number"
+         },
+         "rate": {
+          "type": "number"
+         },
+         "reason": {
+          "type": "string"
+         },
+         "why": {
+          "type": "string"
+         }
+        },
+        "required": [
+         "rate"
+        ]
+       },
+       "tg": {
+        "type": "object",
+        "properties": {
+         "tpotS": {
+          "type": "number"
+         },
+         "ttftS": {
+          "type": "number"
+         }
+        },
+        "required": [
+         "tpotS",
+         "ttftS"
+        ]
+       },
+       "wl": {
+        "type": "object",
+        "properties": {
+         "isl": {
+          "type": "number"
+         },
+         "osl": {
+          "type": "number"
+         }
+        },
+        "required": [
+         "isl",
+         "osl"
+        ]
+       }
+      },
+      "required": [
+       "active",
+       "edge",
+       "gpu",
+       "gpus",
+       "maxPrompt",
+       "meetsRate",
+       "model",
+       "modelMaxCtx",
+       "name",
+       "params",
+       "production",
+       "tg",
+       "wl"
+      ]
+     }
+    },
+    "tg": {
+     "type": "object",
+     "properties": {
+      "tpotS": {
+       "type": "number"
+      },
+      "ttftS": {
+       "type": "number"
+      }
+     },
+     "required": [
+      "tpotS",
+      "ttftS"
+     ]
+    },
+    "wl": {
+     "type": "object",
+     "properties": {
+      "isl": {
+       "type": "number"
+      },
+      "osl": {
+       "type": "number"
+      }
+     },
+     "required": [
+      "isl",
+      "osl"
+     ]
+    }
+   },
+   "required": [
+    "hw",
+    "need",
+    "rank",
+    "rows",
+    "tg",
+    "wl"
+   ]
+  }
+ },
+ "required": [
+  "fit"
+ ]
+}

@@ -1,0 +1,25 @@
+{
+ "$schema": "https://json-schema.org/draft/2020-12/schema",
+ "$id": "https://github.com/hardikashah-eng/AIInfraTools/schemas/fleetscope.templates.schema.json",
+ "title": "aiinfra fleetscope templates --json",
+ "type": "array",
+ "items": {
+  "type": "object",
+  "properties": {
+   "description": {
+    "type": "string"
+   },
+   "id": {
+    "type": "string"
+   },
+   "name": {
+    "type": "string"
+   }
+  },
+  "required": [
+   "description",
+   "id",
+   "name"
+  ]
+ }
+}

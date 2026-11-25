@@ -1,0 +1,244 @@
+{
+ "$schema": "https://json-schema.org/draft/2020-12/schema",
+ "$id": "https://github.com/hardikashah-eng/AIInfraTools/schemas/fleetscope.ask.schema.json",
+ "title": "aiinfra fleetscope ask \"QUESTION\" --template T --json",
+ "type": "object",
+ "properties": {
+  "after": {
+   "type": "object",
+   "properties": {
+    "bottleneck": {
+     "type": "object",
+     "properties": {
+      "at": {
+       "type": "number"
+      },
+      "what": {
+       "type": "string"
+      },
+      "where": {
+       "type": "string"
+      }
+     },
+     "required": [
+      "at",
+      "what",
+      "where"
+     ]
+    },
+    "completed": {
+     "type": "number"
+    },
+    "costPerHr": {
+     "type": "number"
+    },
+    "costPerMTok": {
+     "type": "number"
+    },
+    "lost": {
+     "type": "number"
+    },
+    "peakGpus": {
+     "type": "number"
+    },
+    "rejected": {
+     "type": "number"
+    },
+    "slo": {
+     "type": "number"
+    },
+    "tpotP99": {
+     "type": "number"
+    },
+    "ttftP50": {
+     "type": "number"
+    },
+    "ttftP99": {
+     "type": "number"
+    },
+    "util": {
+     "type": "number"
+    }
+   },
+   "required": [
+    "bottleneck",
+    "completed",
+    "costPerHr",
+    "costPerMTok",
+    "lost",
+    "peakGpus",
+    "rejected",
+    "slo",
+    "tpotP99",
+    "ttftP50",
+    "ttftP99",
+    "util"
+   ]
+  },
+  "answer": {
+   "type": "string"
+  },
+  "before": {
+   "type": "object",
+   "properties": {
+    "bottleneck": {
+     "type": "object",
+     "properties": {
+      "at": {
+       "type": "number"
+      },
+      "what": {
+       "type": "string"
+      },
+      "where": {
+       "type": "string"
+      }
+     },
+     "required": [
+      "at",
+      "what",
+      "where"
+     ]
+    },
+    "completed": {
+     "type": "number"
+    },
+    "costPerHr": {
+     "type": "number"
+    },
+    "costPerMTok": {
+     "type": "number"
+    },
+    "lost": {
+     "type": "number"
+    },
+    "peakGpus": {
+     "type": "number"
+    },
+    "rejected": {
+     "type": "number"
+    },
+    "slo": {
+     "type": "number"
+    },
+    "tpotP99": {
+     "type": "number"
+    },
+    "ttftP50": {
+     "type": "number"
+    },
+    "ttftP99": {
+     "type": "number"
+    },
+    "util": {
+     "type": "number"
+    }
+   },
+   "required": [
+    "bottleneck",
+    "completed",
+    "costPerHr",
+    "costPerMTok",
+    "lost",
+    "peakGpus",
+    "rejected",
+    "slo",
+    "tpotP99",
+    "ttftP50",
+    "ttftP99",
+    "util"
+   ]
+  },
+  "edits": {
+   "type": "array",
+   "items": {
+    "type": "object",
+    "properties": {
+     "field": {
+      "type": "string"
+     },
+     "from": {
+      "type": "number"
+     },
+     "node": {
+      "type": "string"
+     },
+     "to": {
+      "type": "number"
+     }
+    },
+    "required": [
+     "field",
+     "from",
+     "node",
+     "to"
+    ]
+   }
+  },
+  "notUsed": {
+   "type": "string"
+  },
+  "question": {
+   "type": "string"
+  },
+  "readAs": {
+   "type": "array",
+   "items": {
+    "type": "string"
+   }
+  },
+  "stress": {
+   "type": "object",
+   "properties": {
+    "name": {
+     "type": "string"
+    },
+    "outages": {
+     "type": "array"
+    },
+    "surge": {
+     "type": "object",
+     "properties": {
+      "dur": {
+       "type": "number"
+      },
+      "mult": {
+       "type": "number"
+      },
+      "start": {
+       "type": "number"
+      },
+      "target": {
+       "type": "string"
+      }
+     },
+     "required": [
+      "dur",
+      "mult",
+      "start",
+      "target"
+     ]
+    }
+   },
+   "required": [
+    "name",
+    "outages",
+    "surge"
+   ]
+  },
+  "understood": {
+   "type": "boolean"
+  }
+ },
+ "required": [
+  "after",
+  "answer",
+  "before",
+  "edits",
+  "notUsed",
+  "question",
+  "readAs",
+  "stress",
+  "understood"
+ ]
+}

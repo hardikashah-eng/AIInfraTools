@@ -1,0 +1,226 @@
+{
+ "$schema": "https://json-schema.org/draft/2020-12/schema",
+ "$id": "https://github.com/hardikashah-eng/AIInfraTools/schemas/fleetops.serving.capacity.schema.json",
+ "title": "aiinfra fleetops serving capacity --model M --gpu G --nodes N … --json",
+ "type": "object",
+ "properties": {
+  "capacity": {
+   "type": "object",
+   "properties": {
+    "active": {
+     "type": "number"
+    },
+    "edge": {
+     "type": "object",
+     "properties": {
+      "gpus": {
+       "type": "number"
+      },
+      "layout": {
+       "type": "object",
+       "properties": {
+        "concurrency": {
+         "type": "number"
+        },
+        "gpusPerInstance": {
+         "type": "number"
+        },
+        "instances": {
+         "type": "number"
+        },
+        "kvUse": {
+         "type": "number"
+        },
+        "label": {
+         "type": "string"
+        },
+        "mode": {
+         "type": "string"
+        },
+        "pp": {
+         "type": "number"
+        },
+        "tp": {
+         "type": "number"
+        }
+       },
+       "required": [
+        "concurrency",
+        "gpusPerInstance",
+        "instances",
+        "kvUse",
+        "label",
+        "mode",
+        "pp",
+        "tp"
+       ]
+      },
+      "nodes": {
+       "type": "number"
+      },
+      "provGPUs": {
+       "type": "number"
+      },
+      "rate": {
+       "type": "number"
+      },
+      "reason": {
+       "type": "string"
+      }
+     },
+     "required": [
+      "gpus",
+      "layout",
+      "nodes",
+      "provGPUs",
+      "rate",
+      "reason"
+     ]
+    },
+    "gpu": {
+     "type": "string"
+    },
+    "gpus": {
+     "type": "number"
+    },
+    "maxPrompt": {
+     "type": "number"
+    },
+    "model": {
+     "type": "string"
+    },
+    "modelMaxCtx": {
+     "type": "number"
+    },
+    "name": {
+     "type": "string"
+    },
+    "params": {
+     "type": "number"
+    },
+    "production": {
+     "type": "object",
+     "properties": {
+      "dollarsPerMOut": {
+       "type": "number"
+      },
+      "gpus": {
+       "type": "number"
+      },
+      "layout": {
+       "type": "object",
+       "properties": {
+        "concurrency": {
+         "type": "number"
+        },
+        "gpusPerInstance": {
+         "type": "number"
+        },
+        "instances": {
+         "type": "number"
+        },
+        "kvUse": {
+         "type": "number"
+        },
+        "label": {
+         "type": "string"
+        },
+        "mode": {
+         "type": "string"
+        },
+        "pp": {
+         "type": "number"
+        },
+        "tp": {
+         "type": "number"
+        }
+       },
+       "required": [
+        "concurrency",
+        "gpusPerInstance",
+        "instances",
+        "kvUse",
+        "label",
+        "mode",
+        "pp",
+        "tp"
+       ]
+      },
+      "nodes": {
+       "type": "number"
+      },
+      "outTokensPerS": {
+       "type": "number"
+      },
+      "provGPUs": {
+       "type": "number"
+      },
+      "rate": {
+       "type": "number"
+      },
+      "reason": {
+       "type": "string"
+      }
+     },
+     "required": [
+      "dollarsPerMOut",
+      "gpus",
+      "layout",
+      "nodes",
+      "outTokensPerS",
+      "provGPUs",
+      "rate",
+      "reason"
+     ]
+    },
+    "tg": {
+     "type": "object",
+     "properties": {
+      "tpotS": {
+       "type": "number"
+      },
+      "ttftS": {
+       "type": "number"
+      }
+     },
+     "required": [
+      "tpotS",
+      "ttftS"
+     ]
+    },
+    "wl": {
+     "type": "object",
+     "properties": {
+      "isl": {
+       "type": "number"
+      },
+      "osl": {
+       "type": "number"
+      }
+     },
+     "required": [
+      "isl",
+      "osl"
+     ]
+    }
+   },
+   "required": [
+    "active",
+    "edge",
+    "gpu",
+    "gpus",
+    "maxPrompt",
+    "model",
+    "modelMaxCtx",
+    "name",
+    "params",
+    "production",
+    "tg",
+    "wl"
+   ]
+  }
+ },
+ "required": [
+  "capacity"
+ ]
+}

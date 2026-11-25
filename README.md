@@ -32,7 +32,7 @@ npx aiinfra-tools --help                                  # every tool, one entr
 npx aiinfra-tools sizer --model llama33-70b --gpu H100    # or: npm i -g aiinfra-tools, then `aiinfra sizer …`
 ```
 
-The package also installs each tool's own command (`fleetops`, `gpu-health`, `gpu-ledger`, `inference-sizer`,
+Every command takes `--json`; the output of the ones agents rely on is described by [JSON Schemas](schemas/README.md). The package also installs each tool's own command (`fleetops`, `gpu-health`, `gpu-ledger`, `inference-sizer`,
 `fleetscope`, `fix-skew`). Or clone the repository and run any tool from its folder.
 
 ## Use with LLMs (skills)

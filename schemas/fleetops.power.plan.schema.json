@@ -1,0 +1,323 @@
+{
+ "$schema": "https://json-schema.org/draft/2020-12/schema",
+ "$id": "https://github.com/hardikashah-eng/AIInfraTools/schemas/fleetops.power.plan.schema.json",
+ "title": "aiinfra fleetops power plan --budgets F --from T --to T --json",
+ "type": "object",
+ "properties": {
+  "plan": {
+   "type": "object",
+   "properties": {
+    "assumptions": {
+     "type": "object",
+     "properties": {
+      "alphaCompute": {
+       "type": "number"
+      },
+      "alphaMemory": {
+       "type": "number"
+      },
+      "gpuShare": {
+       "type": "number"
+      },
+      "maxSlowdown": {
+       "type": "number"
+      }
+     },
+     "required": [
+      "alphaCompute",
+      "alphaMemory",
+      "gpuShare",
+      "maxSlowdown"
+     ]
+    },
+    "caps": {
+     "type": "array",
+     "items": {
+      "type": "object",
+      "properties": {
+       "capPct": {
+        "type": "number"
+       },
+       "capW": {
+        "type": "number"
+       },
+       "class": {
+        "type": "string"
+       },
+       "computeBound": {
+        "type": "number"
+       },
+       "devices": {
+        "type": "array",
+        "items": {
+         "type": "object",
+         "properties": {
+          "gpu": {
+           "type": "number"
+          },
+          "node": {
+           "type": "string"
+          }
+         },
+         "required": [
+          "gpu",
+          "node"
+         ]
+        }
+       },
+       "drawP95": {
+        "type": "number"
+       },
+       "gpus": {
+        "type": "number"
+       },
+       "group": {
+        "type": "string"
+       },
+       "job": {
+        "type": "string"
+       },
+       "limitW": {
+        "type": "number"
+       },
+       "owner": {
+        "type": "string"
+       },
+       "predictedSlowdown": {
+        "type": "number"
+       },
+       "savedKw": {
+        "type": "number"
+       },
+       "vendor": {
+        "type": "string"
+       }
+      },
+      "required": [
+       "capPct",
+       "capW",
+       "class",
+       "computeBound",
+       "devices",
+       "drawP95",
+       "gpus",
+       "group",
+       "job",
+       "limitW",
+       "owner",
+       "predictedSlowdown",
+       "savedKw",
+       "vendor"
+      ]
+     }
+    },
+    "createdAt": {
+     "type": "number"
+    },
+    "groups": {
+     "type": "array",
+     "items": {
+      "type": "object",
+      "properties": {
+       "budgetKw": {
+        "type": "number"
+       },
+       "group": {
+        "type": "string"
+       },
+       "met": {
+        "type": "boolean"
+       },
+       "needKw": {
+        "type": "number"
+       },
+       "p99Kw": {
+        "type": "number"
+       },
+       "savedKw": {
+        "type": "number"
+       }
+      },
+      "required": [
+       "budgetKw",
+       "group",
+       "met",
+       "needKw",
+       "p99Kw",
+       "savedKw"
+      ]
+     }
+    },
+    "id": {
+     "type": "string"
+    },
+    "kind": {
+     "type": "string"
+    },
+    "report": {
+     "type": "array",
+     "items": {
+      "type": "object",
+      "properties": {
+       "avgKw": {
+        "type": "number"
+       },
+       "budgetKw": {
+        "type": "number"
+       },
+       "facilityKwP99": {
+        "type": "number"
+       },
+       "group": {
+        "type": "string"
+       },
+       "headroomKw": {
+        "type": "number"
+       },
+       "moreNodes": {
+        "type": "number"
+       },
+       "nodeKwP95": {
+        "type": "number"
+       },
+       "nodes": {
+        "type": "number"
+       },
+       "overBudgetShare": {
+        "type": "number"
+       },
+       "p99Kw": {
+        "type": "number"
+       },
+       "peakKw": {
+        "type": "number"
+       },
+       "sku": {
+        "type": "string"
+       }
+      },
+      "required": [
+       "avgKw",
+       "budgetKw",
+       "facilityKwP99",
+       "group",
+       "headroomKw",
+       "moreNodes",
+       "nodeKwP95",
+       "nodes",
+       "overBudgetShare",
+       "p99Kw",
+       "peakKw",
+       "sku"
+      ]
+     }
+    },
+    "stages": {
+     "type": "array",
+     "items": {
+      "type": "object",
+      "properties": {
+       "apply": {
+        "type": "array",
+        "items": {
+         "type": "array",
+         "items": {
+          "type": "string"
+         }
+        }
+       },
+       "bakeS": {
+        "type": "number"
+       },
+       "candidate": {
+        "type": "string"
+       },
+       "caps": {
+        "type": "array",
+        "items": {
+         "type": "object",
+         "properties": {
+          "capW": {
+           "type": "number"
+          },
+          "job": {
+           "type": "string"
+          },
+          "predictedSlowdown": {
+           "type": "number"
+          }
+         },
+         "required": [
+          "capW",
+          "job",
+          "predictedSlowdown"
+         ]
+        }
+       },
+       "guard": {
+        "type": "null"
+       },
+       "n": {
+        "type": "number"
+       },
+       "rollback": {
+        "type": "array",
+        "items": {
+         "type": "array",
+         "items": {
+          "type": "string"
+         }
+        }
+       },
+       "status": {
+        "type": "string"
+       },
+       "title": {
+        "type": "string"
+       }
+      },
+      "required": [
+       "apply",
+       "bakeS",
+       "candidate",
+       "caps",
+       "guard",
+       "n",
+       "rollback",
+       "status",
+       "title"
+      ]
+     }
+    },
+    "state": {
+     "type": "string"
+    },
+    "status": {
+     "type": "string"
+    }
+   },
+   "required": [
+    "assumptions",
+    "caps",
+    "createdAt",
+    "groups",
+    "id",
+    "kind",
+    "report",
+    "stages",
+    "state",
+    "status"
+   ]
+  },
+  "queued": {
+   "type": "array",
+   "items": {
+    "type": "string"
+   }
+  }
+ },
+ "required": [
+  "plan",
+  "queued"
+ ]
+}

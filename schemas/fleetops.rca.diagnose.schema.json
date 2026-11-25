@@ -1,0 +1,133 @@
+{
+ "$schema": "https://json-schema.org/draft/2020-12/schema",
+ "$id": "https://github.com/hardikashah-eng/AIInfraTools/schemas/fleetops.rca.diagnose.schema.json",
+ "title": "aiinfra fleetops rca diagnose --symptom S --from T --to T --json",
+ "type": "object",
+ "properties": {
+  "incidents": {
+   "type": "array",
+   "items": {
+    "type": "object",
+    "properties": {
+     "confidence": {
+      "type": "string"
+     },
+     "hypotheses": {
+      "type": "array",
+      "items": {
+       "type": "object",
+       "properties": {
+        "against": {
+         "type": "array"
+        },
+        "cause": {
+         "type": "string"
+        },
+        "evidence": {
+         "type": "array",
+         "items": {
+          "type": "object"
+         }
+        },
+        "likelyCause": {
+         "type": "string"
+        },
+        "rule": {
+         "type": "string"
+        },
+        "score": {
+         "type": "number"
+        },
+        "targets": {
+         "type": "object",
+         "properties": {
+          "gpus": {
+           "type": "array"
+          },
+          "nodes": {
+           "type": "array"
+          }
+         },
+         "required": [
+          "gpus",
+          "nodes"
+         ]
+        },
+        "title": {
+         "type": "string"
+        },
+        "verify": {
+         "type": "array",
+         "items": {
+          "type": "string"
+         }
+        }
+       },
+       "required": [
+        "against",
+        "cause",
+        "evidence",
+        "likelyCause",
+        "rule",
+        "score",
+        "targets",
+        "title",
+        "verify"
+       ]
+      }
+     },
+     "id": {
+      "type": "string"
+     },
+     "incident": {
+      "type": "object",
+      "properties": {
+       "from": {
+        "type": "number"
+       },
+       "symptom": {
+        "type": "string"
+       },
+       "to": {
+        "type": "number"
+       }
+      },
+      "required": [
+       "from",
+       "symptom",
+       "to"
+      ]
+     },
+     "narrative": {
+      "type": "string"
+     },
+     "ruledOut": {
+      "type": "array",
+      "items": {
+       "type": "string"
+      }
+     },
+     "source": {
+      "type": "string"
+     },
+     "t": {
+      "type": "number"
+     }
+    },
+    "required": [
+     "confidence",
+     "hypotheses",
+     "id",
+     "incident",
+     "narrative",
+     "ruledOut",
+     "source",
+     "t"
+    ]
+   }
+  }
+ },
+ "required": [
+  "incidents"
+ ]
+}
