@@ -84,7 +84,7 @@ Action kinds:
 
 ## Executors
 
-Each action kind maps to a list of argv arrays, run in order without a shell, or to `"webhook"`, or to `{ "webhook": "what a person should do" }`. A vendor profile's `executors` win over these for its devices (`vendors.<v>.executors`). Placeholders: `{node} {gpu} {job} {namespace} {replicas} {level} {fraction} {reason} {vendor}`. Each value filled in must match `^[A-Za-z0-9][A-Za-z0-9._:/=-]{0,252}$`. Anything else, including values starting with `-`, stops the action.
+Each action kind maps to a list of argv arrays, run in order without a shell, or to `"webhook"`, or to `{ "webhook": "what a person should do" }`. A vendor profile's `executors` win over these for its devices (`vendors.<v>.executors`), and a cloud platform's win over both for its nodes (see Platforms). Placeholders: `{node} {gpu} {job} {namespace} {replicas} {level} {fraction} {reason} {vendor}`, plus `{instance} {zone} {project}` on a cloud. Each value filled in must match `^[A-Za-z0-9][A-Za-z0-9._:/=-]{0,252}$`. Anything else, including values starting with `-`, stops the action.
 
 Slurm example. Draining in Slurm is per node, so quarantining one GPU drains the whole node:
 
@@ -95,6 +95,34 @@ Slurm example. Draining in Slurm is per node, so quarantining one GPU drains the
 ```
 
 `notify.webhook` takes a Lark/Feishu or Slack incoming-webhook URL; the message format is picked from the host. When it is empty, messages are printed only.
+
+## Platforms (clouds)
+
+The vendor says how to read and reset a device; the platform says who owns the hardware. On a cloud instance:
+- reseating, firmware alignment and facilities checks are never proposed;
+- rebooting and replacing act on the cloud's instance, not the node name.
+
+| Platform | `node-reboot` | `rma` (replace) |
+| --- | --- | --- |
+| `aws` | `aws ec2 reboot-instances --instance-ids {instance}` | `aws autoscaling set-instance-health --instance-id {instance} --health-status Unhealthy --no-should-respect-grace-period`: the instance's Auto Scaling group (EKS managed node groups use one) replaces it |
+| `gke` | `gcloud compute instances reset {instance}` | `kubectl label node {node} cloud.google.com/fault-behavior={behavior}`: GKE drains the node, reports the host as faulty and brings the node back repaired. `{behavior}` is `XID`, `SDC` or `PERFORMANCE` from the fault class. TPU slices keep the TPU profile's steps |
+| `gcp` (Compute Engine VMs, Slurm) | `gcloud compute instances reset {instance}` | `gcloud compute instances report-host-as-faulty {instance} --disruption-schedule=IMMEDIATE --fault-reasons=behavior={behavior}`, with `UNRECOVERABLE_GPU_ERROR`, `SILENT_DATA_CORRUPTION`, `PERFORMANCE`, or `CHIP_ERROR` for TPUs |
+
+Tell gpu-health where each node runs:
+
+```json
+{ "platform": "aws",
+  "nodesFrom": "nodes.json",
+  "platforms": { "aws": { "autoRepair": true } } }
+```
+
+- `nodesFrom`: a `kubectl get nodes -o json` file. Each node's `spec.providerID` (`aws:///us-east-1a/i-0abc…`, `gce://project/zone/name`) gives its platform, instance, zone and project. GKE nodes (with `cloud.google.com/gke-*` labels) get `gke`.
+- `nodes.<name>`: `{ platform, instance, zone, project }` set by hand. These entries win over `nodesFrom`.
+- `platformByNode`: `{ "regex": "aws" }`, for mixed fleets.
+- `platform`: the default for every node.
+- `autoRepair: true`: use this when the cloud repairs nodes itself (EKS node auto repair with the node monitoring agent, or GKE node auto-repair). Reboot and replace then become notes that say what the cloud will do, so gpu-health and the cloud don't both act on one node.
+
+Executors can use `{instance}`, `{zone}` and `{project}`. A platform's executors win over the vendor's. Device actions (`gpu-reset`, power caps) stay the vendor's.
 
 ## Flakiness
 

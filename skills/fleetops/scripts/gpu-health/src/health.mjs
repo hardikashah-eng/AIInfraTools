@@ -240,7 +240,7 @@ export function assessHealth({ samples, probes = [], results = [], jobs = [], pr
       const d = latestResult(results, k, p.since, ['diag']);
       if (d && d.pass) go('burnin', p.faultClass, `diag level ${d.level || '?'} passed; burn-in next`);
       else if (d && !d.pass) {
-        const ladder = ladderFor(cfg, r.vendor, p.faultClass);
+        const ladder = ladderFor(cfg, r.vendor, p.faultClass, r.node);
         r.ladderStep = Math.min((p.ladderStep || 0) + 1, ladder.length - 1);
         r.state = ladder[r.ladderStep] === 'rma' ? 'rma' : 'remediate'; r.since = now; r.why = `diag failed${d.detail ? ': ' + d.detail : ''}; next step ${ladder[r.ladderStep]}`;
         r.history = [...(p.history || []), { t: now, state: r.state, why: r.why }].slice(-20);

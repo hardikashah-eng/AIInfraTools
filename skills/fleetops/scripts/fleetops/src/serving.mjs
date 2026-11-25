@@ -103,6 +103,16 @@ export function planDeployment(opts) {
   if (wprec === 'fp4' && !NATIVE_LOWP.has(m.id) && !opts.hf) notes.push(`The plan assumes fp4 weights: pass --hf with an fp4 checkpoint of ${m.id}, or --weights fp8 to re-plan.`);
   if (m.experts > 0 && multiNode) args.push('--enable-expert-parallel');
   const gpuRes = V.k8sResource, perPod = multiNode ? per : tpp;
+  // Cloud TPU on GKE: the slice is picked by accelerator and topology labels; one host per instance for now
+  let nodeSelector = opts.nodeSelector || null;
+  if (V.kind === 'tpu') {
+    if (multiNode) throw new Error(`${m.id} on ${g.id} needs ${tpp} chips per instance, more than one ${per}-chip TPU host: multi-host TPU slices are not rendered yet`);
+    const topo = REG.tpuTopology(g.id, perPod);
+    if (!topo) throw new Error(`no single-host ${g.id} topology with ${perPod} chips`);
+    nodeSelector = Object.assign({ [V.productLabels[0]]: g.gkeAccelerator, [V.topologyLabel]: topo }, nodeSelector || {});
+    for (const flag of ['--kv-cache-dtype', '--quantization']) { const i = args.indexOf(flag); if (i >= 0) args.splice(i, 2); }
+    notes.push(`TPU: a ${g.gkeAccelerator} slice with topology ${topo} (${perPod} chip${perPod === 1 ? "" : "s"}) per instance. KV-cache and weight quantization flags are left to vLLM's TPU defaults: check the vllm-tpu release you pin for what it supports.`);
+  }
   const labels = { app: name, 'fleetops.aiinfra/pool': name, 'gpu-health.aiinfra/serving': 'true' };
   const env = [{ name: 'HF_HOME', value: '/cache/huggingface' }, { name: 'VLLM_NO_USAGE_STATS', value: '1' }];
   if (opts.hfSecret) env.push({ name: 'HF_TOKEN', valueFrom: { secretKeyRef: { name: opts.hfSecret, key: opts.hfSecretKey || 'token' } } });
@@ -118,7 +128,7 @@ export function planDeployment(opts) {
       startupProbe: probe(8000, { periodSeconds: 10, failureThreshold: 240 }), readinessProbe: probe(8000, { periodSeconds: 10 }), livenessProbe: probe(8000, { periodSeconds: 20, failureThreshold: 6 }) } : {}),
   });
   const annotations = { 'prometheus.io/scrape': 'true', 'prometheus.io/port': '8000', 'prometheus.io/path': '/metrics' };
-  const spec = Object.assign({ volumes, terminationGracePeriodSeconds: 60 }, opts.nodeSelector ? { nodeSelector: opts.nodeSelector } : {});
+  const spec = Object.assign({ volumes, terminationGracePeriodSeconds: 60 }, nodeSelector ? { nodeSelector } : {});
   const docs = [];
   if (opts.createNamespace) docs.push({ apiVersion: 'v1', kind: 'Namespace', metadata: { name: ns } });
   let workload;

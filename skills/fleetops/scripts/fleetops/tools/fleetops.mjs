@@ -20,6 +20,7 @@ import * as Live from '../src/adapters/live.mjs';
 import { toEpoch } from '../src/adapters/time.mjs';
 import * as Logs from '../src/adapters/logs.mjs';
 import * as Topo from '../src/adapters/topology.mjs';
+import * as Procure from '../src/procure.mjs';
 import { writeGpuHealth, toFleetScopeTrace, toGpuLedger } from '../src/export.mjs';
 import * as Calib from '../src/calibrate.mjs';
 import * as RCA from '../src/rca.mjs';
@@ -50,6 +51,8 @@ const HELP = `fleetops — shared data layer for AIInfraTools
   fleetops data import bundle FILE.tar.gz|DIR                     a trace bundle (tools/collect.sh): every file, by its
                                                                  manifest entry or by content
   fleetops send FILE.tar.gz|DIR --to URL [--token T]              upload a bundle to a fleetops server (POST /v1/bundle)
+  fleetops procure aws-blocks --gpu H100 --gpus 64 --days 7       the read-only AWS command listing Capacity Blocks on offer
+  fleetops procure gcp-calendar --gpu H200 --gpus 64 --days 7 --region us-central1   the read-only GCP calendar-mode advice
   fleetops data summary [--store DIR]                             records per kind, time range and sources
   fleetops data query KIND [--from T] [--to T] [--where k=v]... [--limit N]
   fleetops data node NODE [--from T] [--to T]                    versions, shared switch/rack/PDU, log faults, changes
@@ -82,6 +85,9 @@ Sources (SOURCE):
   slurm-nodes      scontrol show node -o                     (kernel version from OS=)
   nvidia-smi-q     nvidia-smi -q                             [--node N] (default: file name)  versions, serials, PCI → GPU map
   nvidia-topo      nvidia-smi topo -m                        [--node N]  NVLink and NIC affinity
+  amd-smi-static   amd-smi static --json                     [--node N] [--rocm V]  versions, IFWI, PCI → GPU map
+  amd-smi-topology amd-smi topology --json                   [--node N]  XGMI and PCIe peer links
+  cloud-monitoring Google Cloud Monitoring timeSeries JSON    [--site S]  GKE node / TPU VM accelerator metrics → device samples
   ibnetdiscover    ibnetdiscover                             host → leaf → spine (with switch port numbers)
   perfquery        perfquery [-x] LID PORT output             [--switch NAME]  switch port counters (errors, xmit wait, data)
   ibqueryerrors    ibqueryerrors                              switch ports with error counters, fabric-wide
@@ -94,7 +100,7 @@ Sources (SOURCE):
   storage          JSON lines {t, target, op, node?, job?, ops?, bytes?, latMs?}   anything else (S3 clients, loaders)
   racks            CSV: node,rack,row,pdu,site
   kernel-log       journalctl -k -o short-iso | dmesg -T | dmesg | syslog   [--node N] [--boot T] [--year Y] [--utc-offset H]
-                   XID, NVLink, PCIe AER, AMD RAS, MCE, IB link, NFS/Lustre, OOM (GPU index from nvidia-smi-q imports)
+                   XID, NVLink, PCIe AER, AMD RAS, MCE, IB link, NFS/Lustre, OOM (GPU index from nvidia-smi-q / amd-smi-static imports)
   app-log          NCCL / PyTorch job output                 [--node N] [--job J] [--t T]
   k8s-events       kubectl get events -A -o json             cordon/reboot/scale changes; NotReady/OOM/mount/evict logs
   helm-history     helm history REL -n NS -o json            [--release R] [--namespace NS]
@@ -261,7 +267,7 @@ const read = f => fs.readFileSync(f, 'utf8');
 const time = v => (v == null || v === true ? undefined : toEpoch(/^\d{4}-\d{2}-\d{2}$/.test(v) ? v + 'T00:00:00Z' : v));
 const fmt = t => (Number.isFinite(t) ? new Date(t * 1000).toISOString().replace('.000', '') : '–');
 
-// PCI address → GPU index per node, from the latest nvidia-smi -q inventory in the store (for kernel logs).
+// PCI address → GPU index per node, from the latest nvidia-smi -q or amd-smi static inventory in the store (for kernel logs).
 function pciMap(store) {
   const m = {};
   for (const r of store.scan('inventory', { where: r => Array.isArray(r.gpus) })) { m[r.node] = m[r.node] || {}; for (const g of r.gpus) if (g.pci) m[r.node][g.pci] = g.gpu; }
@@ -287,11 +293,14 @@ function importSource(store, src, files, o) {
       case 'exporter': put('device', Live.exporterScrape(read(f), { vendor: o.vendor !== true ? o.vendor : undefined, t: o.t ? time(o.t) : Math.floor(fs.statSync(f).mtimeMs / 1000), site: o.site })); break;
       case 'vllm': put('serving', [Live.vllmSnapshot(read(f), { before: o.before ? read(o.before) : undefined, windowS: o.window ? +o.window : undefined, t: o.t ? time(o.t) : Math.floor(fs.statSync(f).mtimeMs / 1000), pool: o.pool || 'default', model: o.model, gpu: o.gpu })]); break;
       case 'prom-range': if (!o.field) throw new Error('prom-range needs --field'); put('serving', Live.promRange(read(f), { field: o.field, pool: o.pool })); break;
-      case 'k8s-nodes': putInventory(Live.k8sNodes(read(f), { t: tOf(f) })); put('topology', Live.k8sNodeTopology(read(f), { t: tOf(f) })); break;
+      case 'k8s-nodes': putInventory(Live.k8sNodes(read(f), { t: tOf(f) })); put('topology', Live.k8sNodeTopology(read(f), { t: tOf(f) })); put('log', Live.k8sNodeConditions(read(f), { t: tOf(f) })); break;
       case 'k8s-pods': put('placement', Live.k8sPods(read(f))); break;
       case 'slurm-nodes': putInventory(Live.slurmNodes(read(f), { t: tOf(f) })); break;
       case 'nvidia-smi-q': putInventory([Topo.nvidiaSmiQ(read(f), { node: nodeOf(f), t: tOf(f) }).inventory]); break;
       case 'nvidia-topo': put('topology', Topo.nvidiaTopo(read(f), { node: nodeOf(f), t: tOf(f) })); break;
+      case 'amd-smi-static': putInventory([Topo.amdSmiStatic(read(f), { node: nodeOf(f), t: tOf(f), rocm: o.rocm }).inventory]); break;
+      case 'amd-smi-topology': put('topology', Topo.amdSmiTopology(read(f), { node: nodeOf(f), t: tOf(f) })); break;
+      case 'cloud-monitoring': put('device', Live.cloudMonitoring(read(f), { site: o.site })); break;
       case 'ibnetdiscover': put('topology', Topo.ibnetdiscover(read(f), { t: tOf(f) })); break;
       case 'perfquery': put('port', Fabric.perfquery(read(f), { switch: o.switch, t: tOf(f) })); break;
       case 'ibqueryerrors': put('port', Fabric.ibqueryerrors(read(f), { t: tOf(f) })); break;
@@ -387,7 +396,7 @@ async function importBundle(store, target, o = {}) {
       if (!e.source) { files.push({ path: e.path, source: null, skipped: 'not recognized' }); continue; }
       try {
         const opts = Object.assign({}, e.opts);
-        if (['kernel-log', 'nvidia-smi-q', 'nvidia-topo', 'app-log'].includes(e.source) && !opts.node && p.manifest && p.manifest.host) opts.node = p.manifest.host;
+        if (['kernel-log', 'nvidia-smi-q', 'nvidia-topo', 'amd-smi-static', 'amd-smi-topology', 'app-log'].includes(e.source) && !opts.node && p.manifest && p.manifest.host) opts.node = p.manifest.host;
         if (opts.t != null) opts.t = String(opts.t);
         const by = importSource(store, e.source, [e.abs], opts);
         for (const [k, b] of Object.entries(by)) totals[k] = (totals[k] || 0) + b.written;
@@ -467,6 +476,18 @@ function demo(store, o) {
   say('try:'); next.forEach(c => say('  ' + c));
 }
 
+// read-only procurement lookups: the cloud's own command listing what can be bought (src/procure.mjs)
+async function procureCmd(cmd, o) {
+  const opt = k => (o[k] != null && o[k] !== true ? o[k] : undefined), num = k => (opt(k) != null ? +opt(k) : undefined);
+  const from = opt('from') ? time(opt('from')) : undefined;
+  let r;
+  if (cmd === 'aws-blocks') r = Procure.awsCapacityBlocks({ chip: opt('gpu'), instanceType: opt('instance-type'), gpus: num('gpus'), days: num('days'), from, windowDays: num('window-days') });
+  else if (cmd === 'gcp-calendar') r = Procure.gcpCalendarMode({ chip: opt('gpu'), machineType: opt('machine-type'), gpus: num('gpus') ?? num('chips'), days: num('days'), region: opt('region'), from, windowDays: num('window-days'), workload: opt('workload') });
+  else throw new Error('fleetops procure aws-blocks --gpu H100|--instance-type T --gpus N --days N [--from DATE] [--window-days 14]\n       fleetops procure gcp-calendar --gpu H200|TPU-v6e|--machine-type T --gpus N|--chips N --days N --region R [--from DATE]');
+  if (J) { OUT.procure = r; return; }
+  const what = r.instanceType ? `${r.instances} × ${r.instanceType} (${r.gpusPerInstance} GPUs each)` : r.machineType ? `${r.vms} × ${r.machineType} (${r.gpusPerVm} GPUs each)` : `${r.chips} ${r.chip} chips`;
+  say(`${what} for ${r.days} day(s). To see what is on offer:\n\n  ${r.argv.join(' ')}\n\n${r.notes.map(n => `- ${n}`).join('\n')}`);
+}
 async function main() {
   const o = args(process.argv.slice(2));
   J = !!o.json;
@@ -474,6 +495,7 @@ async function main() {
   if (!area || o.help || area === 'help') return console.log(HELP);
   if (o['on-prem'] && process.env.FLEETOPS_EGRESS_ALLOW == null) process.env.FLEETOPS_EGRESS_ALLOW = typeof o['on-prem'] === 'string' ? o['on-prem'] : '';
   if (area === 'token') return tokenCmd(cmd, o);
+  if (area === 'procure') return procureCmd(cmd, o);
   if (area === 'send') return sendCmd(o);
   const store = await openStore(o.store && o.store !== true ? o.store : 'fleet-data', { backend: o.backend && o.backend !== true ? o.backend : undefined });
   // the hourly rollup answers long lookbacks (root-cause "day before") when it exists

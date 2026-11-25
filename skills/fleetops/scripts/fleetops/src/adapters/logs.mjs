@@ -96,23 +96,26 @@ export function kernelLog(text, { node, boot, year, utcOffset = 0, pciMap = {}, 
   return out;
 }
 
-// NCCL and PyTorch distributed logs (stdout of a training job) → log records. Lines usually look like
+// NCCL, RCCL and PyTorch distributed logs (stdout of a training job) → log records. Lines usually look like
 //   host:pid:tid [rank] NCCL WARN …           or, with `kubectl logs --timestamps`, an ISO time first.
+// RCCL (ROCm) keeps NCCL's prefixes; it reports its version as "RCCL version : X-hash" and HIP errors as "HIP error".
 // NCCL's own lines carry no time: pass `t` (the log's start or the job end) for those.
 const APP = [
   { re: /Watchdog caught collective operation timeout: WorkNCCL\(SeqNum=(\d+), OpType=(\w+).*?ran for (\d+) milliseconds/, f: m => ({ code: 'nccl_timeout', class: 'network', severity: 'hard', op: m[2], seq: +m[1], ms: +m[3] }) },
-  { re: /NCCL WARN NET\/IB.*(?:Got completion|error)\D*(\d+)?/i, f: m => ({ code: 'nccl_ib_error', class: 'network', severity: 'hard', status: m[1] != null ? +m[1] : undefined }) },
+  // NCCL/RCCL: "NET/IB: Got completion from peer … with status=12 opcode=…" (older: "… with error 12, opcode …")
+  { re: /NCCL WARN NET\/IB.*?(?:Got completion|error)(?:.*?(?:status=|with error )(\d+))?/i, f: m => ({ code: 'nccl_ib_error', class: 'network', severity: 'hard', status: m[1] != null ? +m[1] : undefined }) },
   { re: /NCCL WARN .*(?:Connection (?:closed|reset|refused)|socket|remote process exited)/i, f: () => ({ code: 'nccl_peer_lost', class: 'network', severity: 'soft' }) },
   { re: /NCCL WARN Cuda failure '([^']+)'/, f: m => ({ code: 'nccl_cuda_failure', class: /ECC|uncorrectable/i.test(m[1]) ? 'ecc' : 'app', severity: 'hard', detail: m[1] }) },
   { re: /(?:NCCL error|ncclInternalError|ncclSystemError|unhandled system error)/i, f: () => ({ code: 'nccl_system_error', class: 'network', severity: 'soft' }) },
-  { re: /CUDA error: uncorrectable ECC error/i, f: () => ({ code: 'cuda_ecc_uncorrectable', class: 'ecc', severity: 'hard' }) },
+  { re: /(?:CUDA|HIP) error: uncorrectable ECC error/i, f: () => ({ code: 'cuda_ecc_uncorrectable', class: 'ecc', severity: 'hard' }) },
   // mixed-precision loss scaling skips steps whose gradients overflowed: normal, not corruption
   { re: /(?:overflow|skipping (?:step|update|batch)|loss scale|grad(?:ient)? scaler)/i, f: () => ({ code: 'loss_scale_overflow', class: 'app', severity: 'ignore' }) },
   // non-finite loss or gradients (PyTorch anomaly detection, Megatron / DeepSpeed loss checks, trainer logs)
   { re: /(?:(?:loss|grad(?:ient)?s?(?: norm)?)\b[^\n]{0,24}?\b(?:is |= ?|: ?)(?:nan|inf)\b|Function '\w+' returned nan values|found (?:nan|inf) in|non-finite (?:loss|grad))/i, f: () => ({ code: 'non_finite', class: 'app', severity: 'soft' }) },
-  { re: /CUDA error: an illegal memory access/i, f: () => ({ code: 'cuda_illegal_access', class: 'app', severity: 'soft' }) },
-  { re: /(?:torch\.(?:cuda\.)?OutOfMemoryError|CUDA out of memory)/, f: () => ({ code: 'cuda_oom', class: 'app', severity: 'soft' }) },
-  { re: /NCCL INFO NCCL version (\S+)/, f: m => ({ code: 'nccl_version', class: 'info', severity: 'info', version: m[1].replace(/\+.*/, '') }) },
+  { re: /(?:CUDA|HIP) error: an illegal memory access/i, f: () => ({ code: 'cuda_illegal_access', class: 'app', severity: 'soft' }) },
+  { re: /(?:torch\.(?:cuda\.)?OutOfMemoryError|(?:CUDA|HIP) out of memory)/, f: () => ({ code: 'cuda_oom', class: 'app', severity: 'soft' }) },
+  { re: /NCCL INFO NCCL version (\S+)/, f: m => ({ code: 'nccl_version', class: 'info', severity: 'info', lib: 'nccl', version: m[1].replace(/\+.*/, '') }) },
+  { re: /RCCL version\s*:\s*(\d+\.\d+\.\d+)/, f: m => ({ code: 'nccl_version', class: 'info', severity: 'info', lib: 'rccl', version: m[1] }) },
 ];
 export function ncclLog(text, { node, job, t: t0, keepInfo = true } = {}) {
   const out = [];

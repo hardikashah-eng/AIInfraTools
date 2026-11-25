@@ -5,6 +5,7 @@
 // commands without running them.
 import { spawnSync } from 'node:child_process';
 import { executorFor } from './vendors.mjs';
+import { nodeVars } from './platforms.mjs';
 
 export const SAFE = /^[A-Za-z0-9][A-Za-z0-9._:\/=-]{0,252}$/;
 
@@ -18,7 +19,7 @@ export function fill(template, vars) {
   }));
 }
 
-export const varsOf = a => Object.assign({ node: a.node, gpu: a.gpu, job: a.job, vendor: a.vendor, reason: a.reasonCode }, a.params || {});
+export const varsOf = (a, cfg) => Object.assign({ node: a.node, gpu: a.gpu, job: a.job, vendor: a.vendor, reason: a.reasonCode }, nodeVars(cfg, a.node, a), a.params || {});
 
 export function message(a, howTo) {
   const target = [a.job && `job ${a.job}`, a.node && `${a.node}${a.gpu != null ? '/' + (a.vendor && a.vendor !== 'nvidia' && a.vendor !== 'amd' ? 'dev' : 'gpu') + a.gpu : ''}`].filter(Boolean).join(' on ');
@@ -26,11 +27,15 @@ export function message(a, howTo) {
 }
 
 export function plan(a, cfg) {
-  const t = executorFor(cfg, a.vendor, a.kind);
+  const t = executorFor(cfg, a.vendor, a.kind, a.node);
   if (!t) throw new Error(`no executor configured for ${a.kind}${a.vendor ? ` (${a.vendor})` : ''}`);
   if (t === 'webhook') return { webhook: true, text: message(a) };
   if (t.webhook) return { webhook: true, text: message(a, t.webhook) }; // a step a person does: post what to do
-  return { commands: t.map(argv => fill(argv, varsOf(a))) };
+  try { return { commands: t.map(argv => fill(argv, varsOf(a, cfg))) }; } catch (e) {
+    // a cloud executor needs the instance: say where it comes from
+    if (/\{(instance|zone|project)\}/.test(e.message)) throw new Error(`${e.message} for ${a.node}: set nodes.${a.node}.${e.message.match(/\{(\w+)\}/)[1]} in the config, or nodesFrom: a \`kubectl get nodes -o json\` file (its spec.providerID)`);
+    throw e;
+  }
 }
 
 const isLark = u => /(feishu\.cn|larksuite\.com|larkoffice\.com)/.test(u);
