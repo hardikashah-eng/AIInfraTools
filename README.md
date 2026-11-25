@@ -13,6 +13,18 @@ Tools that help capacity building in AIInfra. Each tool lives in its own folder 
 
 Where this is going, from four utilities to one Observe → Diagnose → Simulate → Approve → Optimize → Verify loop: [ROADMAP.md](ROADMAP.md).
 
+## Install
+
+Node.js 20+ and nothing else:
+
+```bash
+npx aiinfra-tools --help                                  # every tool, one entry point
+npx aiinfra-tools sizer --model llama33-70b --gpu H100    # or: npm i -g aiinfra-tools, then `aiinfra sizer …`
+```
+
+The package also installs each tool's own command (`fleetops`, `gpu-health`, `gpu-ledger`, `inference-sizer`,
+`fleetscope`, `fix-skew`). Or clone the repository and run any tool from its folder.
+
 ## Use with LLMs (skills)
 
 Each tool is also packaged as an [Agent Skill](https://agentskills.io/specification) in [skills/](skills/). A skill tells a model when to use the tool, what to ask the user, which command to run and how to read the JSON it returns. A model can then answer questions like "how many H200s for Llama 70B at 25 ms TPOT?", "what if the cloud link drops to 25 Gbps?", "why do our cross-site traces look out of order?" "which GPUs should we pull before they fail?" or "why did half the training jobs fail last night?" by running the tools itself.

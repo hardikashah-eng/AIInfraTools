@@ -1,0 +1,68 @@
+{
+  "name": "aiinfra-tools",
+  "version": "0.2.0",
+  "description": "Open tools for running GPU fleets: size inference, simulate capacity, find root causes, cap power, deploy on llm-d, and charge back GPU-hours. No dependencies.",
+  "license": "Apache-2.0",
+  "type": "module",
+  "author": "hardikashah-eng",
+  "homepage": "https://github.com/hardikashah-eng/AIInfraTools#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/hardikashah-eng/AIInfraTools.git"
+  },
+  "bugs": {
+    "url": "https://github.com/hardikashah-eng/AIInfraTools/issues"
+  },
+  "keywords": [
+    "gpu",
+    "llm-inference",
+    "capacity-planning",
+    "finops",
+    "kubernetes",
+    "vllm",
+    "llm-d",
+    "root-cause-analysis",
+    "chargeback",
+    "agent-skills"
+  ],
+  "engines": {
+    "node": ">=20"
+  },
+  "bin": {
+    "aiinfra-tools": "bin/aiinfra.mjs",
+    "aiinfra": "bin/aiinfra.mjs",
+    "fleetops": "fleetops/tools/fleetops.mjs",
+    "gpu-health": "gpu-health/tools/gpu-health.mjs",
+    "gpu-ledger": "gpu-ledger/tools/ledger.mjs",
+    "inference-sizer": "inference-sizer/tools/size.mjs",
+    "fleetscope": "fleetscope/tools/fleetscope.mjs",
+    "fix-skew": "hybrid-tracing/tools/fix-skew.mjs"
+  },
+  "files": [
+    "bin/",
+    "LICENSE",
+    "NOTICE",
+    "README.md",
+    "fleetops/",
+    "gpu-health/",
+    "gpu-ledger/",
+    "inference-sizer/",
+    "fleetscope/",
+    "hybrid-tracing/",
+    "!**/tests/**",
+    "!**/node_modules/**",
+    "!fleetops/fleet-data/**",
+    "!**/*.test.mjs",
+    "!**/docs/img/**",
+    "!**/*.png",
+    "!**/*.gif"
+  ],
+  "scripts": {
+    "test": "node --test tests/*.test.mjs",
+    "test:all": "for t in fleetops gpu-health fleetscope inference-sizer hybrid-tracing gpu-ledger; do (cd $t && npm test) || exit 1; done"
+  },
+  "publishConfig": {
+    "access": "public",
+    "provenance": true
+  }
+}

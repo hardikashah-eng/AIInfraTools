@@ -1,5 +1,6 @@
-# Keeps the Agent Skills in skills/ in step with the tools, checks they work from an isolated copy, validates the
-# Claude Code plugin, and publishes the skill zips as an artifact.
+# Builds the Agent Skills in skills/ from the tools, checks every SKILL.md and that the skills work from an isolated
+# copy, validates the Claude Code plugin, and publishes the skill zips as an artifact. Pull requests don't need to
+# commit the generated copies: skills-sync.yml regenerates them on main.
 name: Skills
 on:
   pull_request:
@@ -30,8 +31,8 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 22
-      - name: Generated files are up to date and every SKILL.md is valid
-        run: node scripts/build-skills.mjs --check
+      - name: Build the skills from this commit's tools; every SKILL.md is valid
+        run: node scripts/build-skills.mjs
       - name: Skills work from an isolated copy
         run: node --test scripts/test-skills.mjs
       - name: Claude Code plugin manifest validates
