@@ -9,7 +9,8 @@ and a person approves every change. Each tool is also an Agent Skill.
 [FleetScope](https://hardikashah-eng.github.io/AIInfraTools/fleetscope/) ·
 **Install:** `npx aiinfra-tools --help`
 
-Each tool lives in its own folder with its own README.
+Each tool lives in its own folder with its own README. What has been checked against real data, and what it found:
+[docs/RESULTS.md](docs/RESULTS.md).
 
 | Tool | What it is |
 | --- | --- |
