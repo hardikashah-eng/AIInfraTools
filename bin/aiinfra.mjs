@@ -19,6 +19,7 @@ export const TOOLS = {
   'workload-profile': { file: 'fleetops/tools/workload-profile.mjs', what: 'profile and synthesize application workloads (agents, chat, RAG…)' },
   'fix-skew': { file: 'hybrid-tracing/tools/fix-skew.mjs', what: 'estimate and remove clock skew from OTLP traces' },
   'skew-corrector': { file: 'hybrid-tracing/tools/skew-corrector.mjs', what: 'run the skew-corrector service' },
+  mcp: { file: 'mcp/server.mjs', what: 'run every tool as an MCP server over stdio (for Claude, Cursor and other MCP clients)' },
 };
 const ALIASES = { 'inference-sizer': 'sizer', 'gpu-ledger': 'ledger', tracing: 'fix-skew', 'hybrid-tracing': 'fix-skew' };
 const version = () => JSON.parse(fs.readFileSync(path.join(ROOT, 'package.json'), 'utf8')).version;
