@@ -87,8 +87,10 @@ test('no mocks: ethtool and the collector on this host as it is', async () => {
   const d = tmp(), c = spawnSync('bash', [path.join(here, '..', 'tools', 'collect.sh'), '--no-gpu', '--no-kernel', '--dcgm', 'http://127.0.0.1:1/none', '--out', path.join(d, 'b')], { encoding: 'utf8', timeout: 120000 });
   assert.equal(c.status, 0, c.stderr);
   const mf = JSON.parse(fs.readFileSync(path.join(d, 'b', 'manifest.json'), 'utf8'));
-  const ib = fs.existsSync('/sys/class/infiniband') && fs.readdirSync('/sys/class/infiniband').length;
-  assert.equal(mf.files.some(f => f.source === 'ib-sysfs'), !!ib, 'IB counters exactly when the host has IB devices');
+  // the collector reads ports that have counters/ or hw_counters/ (some hosts list RDMA devices without readable ports)
+  const ports = dev => { try { return fs.readdirSync(`/sys/class/infiniband/${dev}/ports`); } catch { return []; } };
+  const ib = fs.existsSync('/sys/class/infiniband') && fs.readdirSync('/sys/class/infiniband').some(dev => ports(dev).some(p => ['counters', 'hw_counters'].some(x => fs.existsSync(`/sys/class/infiniband/${dev}/ports/${p}/${x}`))));
+  assert.equal(mf.files.some(f => f.source === 'ib-sysfs'), !!ib, 'IB counters exactly when the host has IB ports with counters');
   if (mf.files.length) {
     const r = JSON.parse((await run(process.execPath, [cli, 'data', 'import', 'bundle', path.join(d, 'b.tar.gz'), '--store', path.join(d, 's'), '--json'])).stdout).bundle;
     assert.ok(r.totals);
