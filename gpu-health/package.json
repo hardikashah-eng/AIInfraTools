@@ -12,6 +12,6 @@
     "serve": "node tools/gpu-health.mjs serve"
   },
   "engines": {
-    "node": ">=20"
+    "node": ">=22"
   }
 }

@@ -27,8 +27,8 @@ jobs:
   skills:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
         with:
           node-version: 22
       - name: Build the skills from this commit's tools; every SKILL.md is valid
@@ -39,7 +39,7 @@ jobs:
         run: npx -y @anthropic-ai/claude-code plugin validate .
       - name: Package
         run: node scripts/build-skills.mjs --zip dist/skills
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v6
         with:
           name: skills
           path: dist/skills/*.zip

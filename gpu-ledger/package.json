@@ -7,5 +7,5 @@
   "type": "module",
   "bin": { "gpu-ledger": "tools/ledger.mjs" },
   "scripts": { "test": "node --test tests/*.test.mjs", "demo": "node tools/ledger.mjs demo" },
-  "engines": { "node": ">=20" }
+  "engines": { "node": ">=22" }
 }

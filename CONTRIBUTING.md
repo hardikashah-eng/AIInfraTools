@@ -4,7 +4,7 @@ Thanks for helping. Issues and pull requests are welcome.
 
 ## Ground rules
 
-- **No run-time dependencies.** Every tool runs on Node.js 20+ alone. Tests use `node:test`. (`yaml` is an optional
+- **No run-time dependencies.** Every tool runs on Node.js 22+ alone. Tests use `node:test`. (`yaml` is an optional
   test helper in fleetops.)
 - **Safe by default.** Anything that changes infrastructure is a dry run unless `--live` and the config both allow
   it, and goes through the approval queue. See [SECURITY.md](SECURITY.md).

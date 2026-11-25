@@ -210,7 +210,7 @@ Coding-agent traffic. Each candidate model and reasoning level is right-sized to
 
 ```bash
 cd fleetscope
-npm test          # engine tests (Node 20+, no dependencies)
+npm test          # engine tests (Node 22+, no dependencies)
 npm run build     # inline src/ into dist/index.html
 ```
 

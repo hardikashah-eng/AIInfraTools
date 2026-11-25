@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 // aiinfra: one entry point for every AIInfraTools command. `aiinfra <tool> [args…]` runs that tool's CLI with the
-// same Node.js, so `npx aiinfra-tools sizer --help` works with nothing installed but Node 20+.
+// same Node.js, so `npx aiinfra-tools sizer --help` works with nothing installed but Node 22+.
 import { spawnSync } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';

@@ -2,7 +2,7 @@
 
 The shared layer under the AIInfraTools utilities. It is one store of everything the fleet emits, which the other tools read and later steps build on. See [ROADMAP.md](../ROADMAP.md) for the plan: calibration, root-cause analysis and optimization are built on top of it.
 
-Plain JSON lines, no database, no dependencies beyond Node 20+.
+Plain JSON lines, no database, no dependencies beyond Node 22+.
 
 ## The data layer
 

@@ -8,7 +8,7 @@ license: Apache-2.0 (see LICENSE.txt)
 
 A discrete-event simulator for hybrid GPU fleets. Results are **uncalibrated spec-sheet estimates**. Say so when presenting them, and treat them as directional until calibrated against telemetry (see [references/CALIBRATION.md](references/CALIBRATION.md)).
 
-Requires Node.js 20+. Paths below are relative to this skill's folder. The CLI is `scripts/fleetscope/tools/fleetscope.mjs`; every command takes `--json`.
+Requires Node.js 22+. Paths below are relative to this skill's folder. The CLI is `scripts/fleetscope/tools/fleetscope.mjs`; every command takes `--json`.
 
 ## Pick a starting fleet
 

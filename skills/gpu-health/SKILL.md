@@ -8,7 +8,7 @@ license: Apache-2.0 (see LICENSE.txt)
 
 Analyzes GPU telemetry, explains what is wrong or wasted, and manages an approval queue of fixes.
 
-Requires Node.js 20+. Paths below are relative to this skill's folder. The CLI is `scripts/gpu-health/tools/gpu-health.mjs`; every command takes `--json`. State (the action queue, audit log and last analysis) is kept in `--state DIR`, default `./gpu-health-state`. Use the same `--state` for every command in a session.
+Requires Node.js 22+. Paths below are relative to this skill's folder. The CLI is `scripts/gpu-health/tools/gpu-health.mjs`; every command takes `--json`. State (the action queue, audit log and last analysis) is kept in `--state DIR`, default `./gpu-health-state`. Use the same `--state` for every command in a session.
 
 ## Rules for acting on a cluster (always)
 

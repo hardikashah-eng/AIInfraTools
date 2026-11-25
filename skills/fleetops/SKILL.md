@@ -9,7 +9,7 @@ license: Apache-2.0 (see LICENSE.txt)
 A shared store for GPU fleet data, and the root-cause analysis, incident workflow, calibration and optimization built on
 it.
 
-Requires Node.js 20+. Paths are relative to this skill's folder. The CLI is `scripts/fleetops/tools/fleetops.mjs`
+Requires Node.js 22+. Paths are relative to this skill's folder. The CLI is `scripts/fleetops/tools/fleetops.mjs`
 (written `fleetops` below: run it as `node scripts/fleetops/tools/fleetops.mjs`). Every command takes `--json` and
 `--store DIR` (default `./fleet-data`); use the same `--store` for the whole session. Times are ISO dates or epoch
 seconds.
