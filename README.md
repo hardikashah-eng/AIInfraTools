@@ -1,6 +1,15 @@
 # AIInfraTools
 
-Tools that help capacity building in AIInfra. Each tool lives in its own folder with its own README.
+**Open tools for running GPU fleets.** Size LLM inference, simulate capacity on a hybrid fleet, find why jobs fail or
+slow down, cap power, deploy on llm-d, and charge back every GPU-hour. Node.js and nothing else; dry run by default,
+and a person approves every change. Each tool is also an Agent Skill.
+
+**Try it in your browser:** [Inference Sizer](https://hardikashah-eng.github.io/AIInfraTools/sizer/) ·
+[What fits on my GPUs](https://hardikashah-eng.github.io/AIInfraTools/sizer/#fit) ·
+[FleetScope](https://hardikashah-eng.github.io/AIInfraTools/fleetscope/) ·
+**Install:** `npx aiinfra-tools --help`
+
+Each tool lives in its own folder with its own README.
 
 | Tool | What it is |
 | --- | --- |
