@@ -8,6 +8,7 @@ const here = dirname(fileURLToPath(import.meta.url));
 const read = p => readFileSync(join(here, p), 'utf8');
 
 const inlined = {
+  '/*ACCELERATORS*/': read('src/accelerators.js'),
   '/*CATALOG*/': read('src/catalog.js'),
   '/*MODEL*/': read('src/model.js'),
   '/*FLEETSCOPE*/': read('src/fleetscope.js'),

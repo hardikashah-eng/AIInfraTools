@@ -9,6 +9,7 @@ const read = p => readFileSync(join(here, p), 'utf8');
 
 const page = read('src/index.src.html');
 const inlined = {
+  '/*ACCELERATORS*/': readFileSync(join(here, '../inference-sizer/src/accelerators.js'), 'utf8'),
   '/*ENGINE*/': read('src/engine.js'),
   '/*TEMPLATES*/': read('src/templates.js'),
   '/*INGEST*/': read('src/ingest.js'),

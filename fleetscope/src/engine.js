@@ -24,17 +24,16 @@
   }
   const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
 
-  // Approximate public spec-sheet figures (dense TFLOPS, HBM GB, HBM TB/s). Prices are placeholders, $/GPU-hour.
-  const GPUS = {
-    A100: { label: 'A100 80GB', hbm: 80, bw: 2.0, bf16: 312, fp8: 312, onprem: 0.9, rent: 1.6, tdpW: 400 },
-    L40S: { label: 'L40S 48GB', hbm: 48, bw: 0.864, bf16: 362, fp8: 733, onprem: 0.7, rent: 1.1, tdpW: 350 },
-    H100: { label: 'H100 80GB', hbm: 80, bw: 3.35, bf16: 989, fp8: 1979, onprem: 1.4, rent: 2.4, tdpW: 700 },
-    H200: { label: 'H200 141GB', hbm: 141, bw: 4.8, bf16: 989, fp8: 1979, onprem: 2.0, rent: 3.5, tdpW: 700 },
-    MI300X: { label: 'MI300X 192GB', hbm: 192, bw: 5.3, bf16: 1307, fp8: 2615, onprem: 1.5, rent: 2.6, tdpW: 750 },
-    B200: { label: 'B200 180GB', hbm: 180, bw: 8.0, bf16: 2250, fp8: 4500, onprem: 3.2, rent: 5.5, tdpW: 1000 },
-    B300: { label: 'B300 262GB', hbm: 262, bw: 8.0, bf16: 2250, fp8: 4500, onprem: 4.0, rent: 7.0, tdpW: 1100 },
-    GB200: { label: 'GB200 186GB (NVL72)', hbm: 186, bw: 8.0, bf16: 2500, fp8: 5000, onprem: 3.6, rent: 6.0, tdpW: 1200 }
-  };
+  // Spec-sheet figures (dense TFLOPS, HBM GB, HBM TB/s) from the shared accelerator registry
+  // (inference-sizer/src/accelerators.js). Prices are placeholders, $/GPU-hour.
+  const REG = (typeof module !== 'undefined' && module.exports) ? require('../../inference-sizer/src/accelerators.js') : root.AIInfraAccelerators;
+  const GPU_ORDER = ['A100', 'L40S', 'H100', 'H200', 'MI300X', 'B200', 'B300', 'GB200', 'GB300', 'MI325X', 'MI355X'];
+  const GPUS = {};
+  for (const k of GPU_ORDER.concat(REG.ACCELERATORS.map(a => a.short || a.id))) {
+    const a = REG.byId(k); if (!a || GPUS[k]) continue;
+    GPUS[k] = { label: `${k} ${a.hbmGB}GB${a.domain >= 72 ? ` (NVL${a.domain})` : ''}`, hbm: a.hbmGB, bw: a.hbmTBs, bf16: a.tfBf16, fp8: a.tfFp8 || a.tfBf16,
+      onprem: a.onprem, rent: a.price, tdpW: a.tdpW, vendor: a.vendorKey, kind: a.kind };
+  }
   // Approximate architecture figures. kvDim = per-token, per-layer K+V width (2 x kv_heads x head_dim, or MLA latent).
   const MODELS = {
     'llama-8b': { label: 'Llama 3.1 8B', params: 8, active: 8, layers: 32, kvHeads: 8, headDim: 128, mla: 0 },

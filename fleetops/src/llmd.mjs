@@ -6,11 +6,15 @@
 // a3ae49a (November 2026): DisaggregatedSet from LeaderWorkerSet ≥ 0.11.1 with enableDisaggregatedSet, the router
 // chart oci://ghcr.io/llm-d/charts/llm-d-router-standalone, InferencePool CRDs from the Gateway API Inference
 // Extension, pods selected by the label llm-d.ai/guide = the router's release name.
+import { createRequire } from 'node:module';
+const REG = createRequire(import.meta.url)('../../inference-sizer/src/accelerators.js');
+
 export const LLMD = {
   ref: 'llm-d/llm-d guides/pd-disaggregation @ a3ae49a',
   lwsVersion: '1.0.0', routerChart: 'oci://ghcr.io/llm-d/charts/llm-d-router-standalone', routerVersion: 'v0',
   sidecar: 'ghcr.io/llm-d/llm-d-router-disagg-sidecar:v1.0.0',
-  vllm: { nvidia: 'docker.io/vllm/vllm-openai:v0.31.0', amd: 'docker.io/vllm/vllm-openai-rocm:v0.31.0' },
+  // the vLLM image the guide validates, per vendor (from the accelerator registry)
+  vllm: Object.fromEntries(Object.entries(REG.VENDORS).filter(([, v]) => v.images.llmdVllm).map(([k, v]) => [k, v.images.llmdVllm])),
   crds: { ds: 'disaggregatedsets.disaggregatedset.x-k8s.io', pool: 'inferencepools.inference.networking.k8s.io' },
 };
 
@@ -43,9 +47,9 @@ schedulingProfiles:
 `;
 
 // p: { name, namespace, model (served id), repo, vendor, gpuResource, image, hfSecret, hfSecretKey, maxLen, gpuMemoryUtilization,
-//      kvDtype, prefill: { tp, replicas }, decode: { tp, replicas, maxNumSeqs }, cachePvc }
+//      kvBufferDevice, kvDtype, prefill: { tp, replicas }, decode: { tp, replicas, maxNumSeqs }, cachePvc }
 export function render(p) {
-  const kv = role => JSON.stringify({ kv_connector: 'NixlConnector', kv_role: role, kv_buffer_device: p.vendor === 'amd' ? 'cpu' : 'cuda', kv_connector_extra_config: { backends: ['UCX'] } });
+  const kv = role => JSON.stringify({ kv_connector: 'NixlConnector', kv_role: role, kv_buffer_device: p.kvBufferDevice || (REG.VENDORS[p.vendor] || {}).kvBufferDevice || 'cuda', kv_connector_extra_config: { backends: ['UCX'] } });
   const labels = role => ({ 'llm-d.ai/inference-serving': 'true', 'llm-d.ai/guide': p.name, 'llm-d.ai/model': p.model, 'llm-d.ai/role': role, 'llm-d.ai/engine-type': 'vllm',
     app: p.name, 'fleetops.aiinfra/pool': p.name, 'gpu-health.aiinfra/serving': 'true' });
   const env = [{ name: 'VLLM_NIXL_SIDE_CHANNEL_HOST', valueFrom: { fieldRef: { fieldPath: 'status.podIP' } } }, { name: 'VLLM_HTTP_TIMEOUT_KEEP_ALIVE', value: '120' }, { name: 'HF_HOME', value: '/cache/huggingface' }, { name: 'VLLM_NO_USAGE_STATS', value: '1' }];

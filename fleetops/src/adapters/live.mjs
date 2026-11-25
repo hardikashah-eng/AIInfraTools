@@ -6,6 +6,7 @@ import { toEpoch } from './time.mjs';
 
 const require = createRequire(import.meta.url);
 const Cal = require('../../../fleetscope/src/calibrate.js');
+const REG = require('../../../inference-sizer/src/accelerators.js');
 
 // DCGM, AMD or SambaNova exporter text → device samples (gpu-health's parser; the vendor is detected from metric names).
 export const exporterScrape = (text, opts = {}) => samplesFromExporter(text, opts).map(s => Object.assign(s, { source: opts.source || `exporter:${s.vendor}` }));
@@ -30,8 +31,9 @@ export function promRange(json, { field, pool, label = 'model_name' } = {}) {
   return out;
 }
 
-const GPU_RESOURCES = { 'nvidia.com/gpu': ['nvidia', 'gpu'], 'amd.com/gpu': ['amd', 'gpu'], 'google.com/tpu': ['tpu', 'tpu'] };
-const SKU_LABELS = ['nvidia.com/gpu.product', 'amd.com/gpu.product-name', 'cloud.google.com/gke-tpu-accelerator', 'node.kubernetes.io/instance-type'];
+// accelerator resources and product labels from the shared registry's vendor adapters
+const GPU_RESOURCES = Object.assign({ 'google.com/tpu': ['tpu', 'tpu'] }, ...Object.entries(REG.VENDORS).map(([k, v]) => ({ [v.k8sResource]: [k, v.kind] })));
+const SKU_LABELS = [...new Set(Object.values(REG.VENDORS).flatMap(v => v.productLabels).concat(['cloud.google.com/gke-tpu-accelerator', 'node.kubernetes.io/instance-type']))];
 // `kubectl get nodes -o json` → inventory;  `kubectl get pods -A -o json` → placements for pods that request accelerators.
 export function k8sNodes(json, { t = Math.floor(Date.now() / 1000) } = {}) {
   const j = typeof json === 'string' ? JSON.parse(json) : json;

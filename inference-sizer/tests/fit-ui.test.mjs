@@ -20,7 +20,7 @@ test('dist inlines the fit engine and the view, with no markers left', () => {
 test('fit.js runs as a browser global next to the catalog', () => {
   const ctx = { console }; ctx.self = ctx; ctx.window = ctx;
   vm.createContext(ctx);
-  for (const f of ['catalog.js', 'model.js', 'fit.js']) vm.runInContext(fs.readFileSync(path.join(root, 'src', f), 'utf8'), ctx, { filename: f });
+  for (const f of ['accelerators.js', 'catalog.js', 'model.js', 'fit.js']) vm.runInContext(fs.readFileSync(path.join(root, 'src', f), 'utf8'), ctx, { filename: f });
   assert.ok(ctx.SizerFit && typeof ctx.SizerFit.fitModels === 'function');
   const r = ctx.SizerFit.fitModels({ gpu: 'H100', nodes: 2 }, { isl: 2000, osl: 400, rate: 5 }, { ttftS: 2, tpotS: 0.05 }, { rank: 'largest' });
   assert.ok(r.rows.length > 5);
@@ -36,7 +36,7 @@ test('no mocks: headless Chrome opens dist/index.html#fit and renders a row per 
   execFileSync(process.execPath, ['build.mjs'], { cwd: root });
   const url = 'file://' + path.join(root, 'dist/index.html') + '#fit';
   const dom = execFileSync(CHROME, ['--headless=new', '--no-sandbox', '--disable-gpu', '--virtual-time-budget=5000', '--dump-dom', url], { encoding: 'utf8', timeout: 60000, stdio: ['ignore', 'pipe', 'ignore'] });
-  const ctx = { console }; ctx.self = ctx; vm.createContext(ctx); vm.runInContext(fs.readFileSync(path.join(root, 'src', 'catalog.js'), 'utf8'), ctx);
+  const ctx = { console }; ctx.self = ctx; vm.createContext(ctx); for (const f of ['accelerators.js', 'catalog.js']) vm.runInContext(fs.readFileSync(path.join(root, 'src', f), 'utf8'), ctx);
   const res = dom.slice(dom.indexOf('id="fit-results"'), dom.indexOf('</main>', dom.indexOf('id="fit-results"'))); // the rendered results, not the inlined script
   const rows = [...res.matchAll(/<tr[^>]*data-model="([^"]+)"/g)].map(m => m[1]);
   assert.deepEqual(rows.slice().sort(), JSON.parse(JSON.stringify(ctx.SizerCatalog.MODELS.map(m => m.id))).sort(), 'one row per built-in model');
