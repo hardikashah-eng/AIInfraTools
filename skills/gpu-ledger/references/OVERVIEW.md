@@ -1,7 +1,7 @@
 # gpu-ledger
 
 GPU billing and waste for any cluster: who used which GPUs, what it cost, how much of it was useful work, and where
-to save. It runs on its own (Node.js 20+, no dependencies, no other tool from this repo needed) against what a cluster
+to save. It runs on its own (Node.js 22+, no dependencies, no other tool from this repo needed) against what a cluster
 already has: Kubernetes, DCGM and vLLM metrics in Prometheus, Slurm accounting, OpenCost, or a CSV.
 
 ```

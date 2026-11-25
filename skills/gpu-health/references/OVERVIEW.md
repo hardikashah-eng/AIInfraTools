@@ -13,7 +13,7 @@ Over time it also answers a fifth: **which GPUs keep coming back broken?** The [
 
 Every finding becomes an **action** in a queue. Your policy decides whether an action runs automatically, waits for a person to approve it, or is shown only as a suggestion. Approved actions run as fixed commands (no shell). They are dry-run by default, and every step is written to an audit log.
 
-No dependencies: Node 20+.
+No dependencies: Node 22+.
 
 ## Try it
 

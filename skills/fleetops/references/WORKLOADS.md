@@ -1,6 +1,6 @@
 # Workload Intelligence (first increment)
 
-Profile application-shaped inference demand and replay representative sessions through FleetScope. This module **does not** estimate GPU capacity itself; it generates requests and measurements that existing capacity tools can consume. Requires Node.js 20+.
+Profile application-shaped inference demand and replay representative sessions through FleetScope. This module **does not** estimate GPU capacity itself; it generates requests and measurements that existing capacity tools can consume. Requires Node.js 22+.
 
 ## Try the six synthetic presets
 
