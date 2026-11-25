@@ -120,9 +120,10 @@ npx aiinfra-tools ledger demo</pre>
   </div>
   <div>
     <h2>Use with agents</h2>
-    <p class="sub">Each tool is an Agent Skill. In Claude Code:</p>
+    <p class="sub">Each tool is an Agent Skill and an MCP tool. In Claude Code:</p>
 <pre>/plugin marketplace add hardikashah-eng/AIInfraTools
-/plugin install aiinfra-tools@aiinfra-tools</pre>
+/plugin install aiinfra-tools@aiinfra-tools
+claude mcp add aiinfra -- npx -y aiinfra-tools mcp</pre>
   </div>
 </section>
 

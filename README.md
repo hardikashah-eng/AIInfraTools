@@ -48,6 +48,9 @@ Each tool is also packaged as an [Agent Skill](https://agentskills.io/specificat
 | [gpu-ledger](skills/gpu-ledger/SKILL.md) | Chargeback and showback, useful vs idle vs lost GPU-hours per team and person, ranked savings, cost per million tokens, FOCUS export |
 | [fleetops](skills/fleetops/SKILL.md) | Root-cause analysis of job failures, latency and training slowdowns; a live agent that mitigates within approval guardrails, with a live dashboard; incidents, postmortems, accuracy backtests and game days; installers |
 
+**MCP.** Every tool is also an MCP tool, for Claude Desktop, Cursor and any other MCP client:
+`claude mcp add aiinfra -- npx -y aiinfra-tools mcp`. It only reads, simulates and plans. See [mcp/README.md](mcp/README.md).
+
 **Claude Code.** The repo is a plugin marketplace:
 
 ```

@@ -36,10 +36,12 @@
     "gpu-ledger": "gpu-ledger/tools/ledger.mjs",
     "inference-sizer": "inference-sizer/tools/size.mjs",
     "fleetscope": "fleetscope/tools/fleetscope.mjs",
-    "fix-skew": "hybrid-tracing/tools/fix-skew.mjs"
+    "fix-skew": "hybrid-tracing/tools/fix-skew.mjs",
+    "aiinfra-mcp": "mcp/server.mjs"
   },
   "files": [
     "bin/",
+    "mcp/",
     "schemas/",
     "LICENSE",
     "NOTICE",
