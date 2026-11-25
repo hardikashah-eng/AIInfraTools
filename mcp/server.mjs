@@ -77,6 +77,12 @@ export const TOOLS = [
     description: 'Ranked savings (idle timeouts, wrong GPU type, oversized serving, commitments…), each with an owner and how it was worked out.',
     input: { type: 'object', required: ['usage', 'config'], properties: { usage: str('Path to usage.jsonl'), config: str('Path to the ledger config JSON') } },
     cli: i => ['ledger', 'insights', '--usage', i.usage, '--config', i.config, '--json'] },
+  { name: 'harness_waste', title: 'Where agents waste tokens and money', annotations: T,
+    description: 'Reads Claude Code transcripts, Codex rollouts, OpenTelemetry GenAI/OpenInference spans or Langfuse exports and reports avoidable tokens and cost by cause (cache misses, oversized and repeated tool output, retry loops, unused tools), harness, tool and session, with fixes. Optional vLLM traces charge self-hosted calls their GPU time. Keeps counts only.',
+    input: { type: 'object', required: ['paths'], properties: { paths: str('Files or folders, comma-separated'), prices: str('Price file ($/M tokens per model); examples are used without it'),
+      engine: str('vLLM OTLP traces, for GPU time'), replicas: str('Replica GPUs and $/GPU-h (JSON)'), outcomes: str('Session outcomes (JSON or CSV)'), since: str('Only calls after this, e.g. 7d') } },
+    cli: i => ['harness-ledger', 'report', ...String(i.paths).split(',').map(s => s.trim()).filter(Boolean)]
+      .concat(...[['prices', i.prices], ['engine', i.engine], ['replicas', i.replicas], ['outcomes', i.outcomes], ['since', i.since]].filter(([, v]) => v).map(([k, v]) => [`--${k}`, String(v)]), '--json') },
   { name: 'rca_diagnose', title: 'Root cause of an incident', schema: 'fleetops.rca.diagnose', annotations: T,
     description: 'Ranks root-cause hypotheses for job failures, a latency regression or device faults in a window, with the evidence for each.',
     input: { type: 'object', required: ['store', 'symptom', 'from', 'to'], properties: { store: str('fleetops store folder'),

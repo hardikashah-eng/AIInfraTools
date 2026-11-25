@@ -86,6 +86,15 @@ test('gpu-health: demo, analyze digest, approval needs a name, execute is a dry 
   assert.ok(!mixed.openActions.some(a => a.id.startsWith('gpu-reset:t1/')));
 });
 
+test('harness-ledger: demo across three harnesses finds every planted cause and joins vLLM GPU time', () => {
+  const d = isolate('harness-ledger'), cli = 'scripts/harness-ledger/tools/harness-ledger.mjs';
+  const r = json(d, [cli, 'demo', '--json']);
+  for (const c of ['cache-miss', 'cache-expired', 'tool-output-bloat', 'repeated-tool-call', 'error-loop', 'unused-tools']) assert.ok(r.byCause.some(x => x.cause === c), c);
+  assert.equal(r.gpu.matched, 21);
+  run(d, 'node', [cli, 'demo', '--html', 'h.html']);
+  assert.match(fs.readFileSync(path.join(d, 'h.html'), 'utf8'), /Avoidable cost by cause/);
+});
+
 test('gpu-ledger: demo → report finds the planted waste, FOCUS export, slurm import, serving sizing through the vendored sizer', () => {
   const d = isolate('gpu-ledger'), cli = 'scripts/gpu-ledger/tools/ledger.mjs';
   run(d, 'node', [cli, 'demo', '--out', 'ld']);

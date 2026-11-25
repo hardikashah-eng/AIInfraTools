@@ -19,6 +19,7 @@ Each tool lives in its own folder with its own README. What has been checked aga
 | [gpu-health](gpu-health/) | Health checks, utilization and savings for GPU fleets, with suggested fixes that run once approved |
 | [hybrid-tracing](hybrid-tracing/) | One trace view across on-prem and neocloud: shared clock reference (PTP/chrony), collector tiers, and clock-skew correction for traces |
 | [gpu-ledger](gpu-ledger/) | GPU billing and waste for any cluster: GPU-hours and cost by org, team, person and use case, split into useful, idle and lost; where to save, with an owner; serving cost per token; FOCUS export. Runs on its own against Kubernetes, DCGM, vLLM, Slurm, OpenCost or CSV |
+| [harness-ledger](harness-ledger/) | Where agent harnesses waste model resources, across harnesses: reads Claude Code and Codex logs, OpenTelemetry GenAI and OpenInference spans and Langfuse exports into one record per model call, then finds cache misses, bloated and repeated tool output, retry loops and unused tools, in tokens, dollars and (with vLLM traces) GPU time; cost per successful task. Keeps counts only, never prompt or tool text |
 | [fleetops](fleetops/) | The shared data layer under the tools: one store of device telemetry, inventory, jobs, serving metrics and changes, with adapters for exporters, Kubernetes, Slurm, change feeds and public traces. On top of it: root-cause analysis, incidents, and a live agent and dashboard that mitigate training and inference issues in real time within approval guardrails |
 
 Where this is going, from four utilities to one Observe → Diagnose → Simulate → Approve → Optimize → Verify loop: [ROADMAP.md](ROADMAP.md).
@@ -33,7 +34,7 @@ npx aiinfra-tools --help                                  # every tool, one entr
 npx aiinfra-tools sizer --model llama33-70b --gpu H100    # or: npm i -g aiinfra-tools, then `aiinfra sizer …`
 ```
 
-Every command takes `--json`; the output of the ones agents rely on is described by [JSON Schemas](schemas/README.md). Or open the repository in a Codespace ([.devcontainer](.devcontainer/devcontainer.json)): `aiinfra` is ready on the path. The package also installs each tool's own command (`fleetops`, `gpu-health`, `gpu-ledger`, `inference-sizer`,
+Every command takes `--json`; the output of the ones agents rely on is described by [JSON Schemas](schemas/README.md). Or open the repository in a Codespace ([.devcontainer](.devcontainer/devcontainer.json)): `aiinfra` is ready on the path. The package also installs each tool's own command (`fleetops`, `gpu-health`, `gpu-ledger`, `harness-ledger`, `inference-sizer`,
 `fleetscope`, `fix-skew`). Or clone the repository and run any tool from its folder.
 
 ## The loop in one command
@@ -56,6 +57,7 @@ Each tool is also packaged as an [Agent Skill](https://agentskills.io/specificat
 | [hybrid-tracing](skills/hybrid-tracing/SKILL.md) | Clock-skew correction for traces, clock checks, and collector, chrony and PTP configs |
 | [gpu-health](skills/gpu-health/SKILL.md) | Health, efficiency and savings analysis, with an approval queue the model may not approve on its own |
 | [gpu-ledger](skills/gpu-ledger/SKILL.md) | Chargeback and showback, useful vs idle vs lost GPU-hours per team and person, ranked savings, cost per million tokens, FOCUS export |
+| [harness-ledger](skills/harness-ledger/SKILL.md) | Where Claude Code, Codex and OTel- or Langfuse-traced agents waste tokens and money, by cause, harness, tool and session, with fixes; GPU time for self-hosted models |
 | [fleetops](skills/fleetops/SKILL.md) | Root-cause analysis of job failures, latency and training slowdowns; a live agent that mitigates within approval guardrails, with a live dashboard; incidents, postmortems, accuracy backtests and game days; installers |
 
 **MCP.** Every tool is also an MCP tool, for Claude Desktop, Cursor and any other MCP client:

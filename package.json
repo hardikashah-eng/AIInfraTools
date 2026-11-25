@@ -23,6 +23,7 @@
     "llm-d",
     "root-cause-analysis",
     "chargeback",
+    "agent-harness",
     "agent-skills"
   ],
   "engines": {
@@ -37,7 +38,8 @@
     "inference-sizer": "inference-sizer/tools/size.mjs",
     "fleetscope": "fleetscope/tools/fleetscope.mjs",
     "fix-skew": "hybrid-tracing/tools/fix-skew.mjs",
-    "aiinfra-mcp": "mcp/server.mjs"
+    "aiinfra-mcp": "mcp/server.mjs",
+    "harness-ledger": "harness-ledger/tools/harness-ledger.mjs"
   },
   "files": [
     "bin/",
@@ -53,6 +55,7 @@
     "inference-sizer/",
     "fleetscope/",
     "hybrid-tracing/",
+    "harness-ledger/",
     "!**/tests/**",
     "!**/node_modules/**",
     "!fleetops/fleet-data/**",
@@ -66,7 +69,7 @@
   ],
   "scripts": {
     "test": "node --test tests/*.test.mjs",
-    "test:all": "for t in fleetops gpu-health fleetscope inference-sizer hybrid-tracing gpu-ledger; do (cd $t && npm test) || exit 1; done"
+    "test:all": "for t in fleetops gpu-health fleetscope inference-sizer hybrid-tracing gpu-ledger harness-ledger; do (cd $t && npm test) || exit 1; done"
   },
   "publishConfig": {
     "access": "public",

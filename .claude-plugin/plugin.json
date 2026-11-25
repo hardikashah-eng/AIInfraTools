@@ -2,7 +2,7 @@
   "name": "aiinfra-tools",
   "displayName": "AI Infra Tools",
   "version": "0.1.0",
-  "description": "GPU inference sizing, hybrid fleet simulation, cross-site tracing with clock-skew correction, GPU health checks with an approval queue for fixes, GPU billing and waste (chargeback, FOCUS), and fleet root-cause analysis and incident management.",
+  "description": "GPU inference sizing, hybrid fleet simulation, cross-site tracing with clock-skew correction, GPU health checks with an approval queue for fixes, GPU billing and waste (chargeback, FOCUS), agent-harness token and cost waste across Claude Code, Codex and OpenTelemetry, and fleet root-cause analysis and incident management.",
   "author": { "name": "hardikashah-eng", "url": "https://github.com/hardikashah-eng" },
   "repository": "https://github.com/hardikashah-eng/AIInfraTools",
   "homepage": "https://github.com/hardikashah-eng/AIInfraTools",

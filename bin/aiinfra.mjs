@@ -15,6 +15,7 @@ export const TOOLS = {
   'convert-trace': { file: 'fleetscope/tools/convert-trace.mjs', what: 'convert public traces to FleetScope workloads' },
   'gpu-health': { file: 'gpu-health/tools/gpu-health.mjs', what: 'health checks, utilization and savings, fixes behind an approval queue' },
   ledger: { file: 'gpu-ledger/tools/ledger.mjs', what: 'GPU-hours and cost by org, team and person: useful, idle, lost; FOCUS export' },
+  'harness-ledger': { file: 'harness-ledger/tools/harness-ledger.mjs', what: 'where agent harnesses (Claude Code, Codex, OTel, Langfuse) waste tokens, dollars and GPU time' },
   fleetops: { file: 'fleetops/tools/fleetops.mjs', what: 'shared data layer, root-cause analysis, incidents, tuning, power, admission, serving' },
   'workload-profile': { file: 'fleetops/tools/workload-profile.mjs', what: 'profile and synthesize application workloads (agents, chat, RAG…)' },
   'fix-skew': { file: 'hybrid-tracing/tools/fix-skew.mjs', what: 'estimate and remove clock skew from OTLP traces' },
@@ -22,7 +23,7 @@ export const TOOLS = {
   mcp: { file: 'mcp/server.mjs', what: 'run every tool as an MCP server over stdio (for Claude, Cursor and other MCP clients)' },
 };
 TOOLS.demo = { file: 'fleetops/tools/loop-demo.mjs', what: 'the whole loop on a real week of a GPU cluster: observe → diagnose → simulate → approve → optimize → verify' };
-const ALIASES = { 'inference-sizer': 'sizer', 'gpu-ledger': 'ledger', tracing: 'fix-skew', 'hybrid-tracing': 'fix-skew' };
+const ALIASES = { 'inference-sizer': 'sizer', 'gpu-ledger': 'ledger', harness: 'harness-ledger', tracing: 'fix-skew', 'hybrid-tracing': 'fix-skew' };
 const version = () => JSON.parse(fs.readFileSync(path.join(ROOT, 'package.json'), 'utf8')).version;
 
 function help() {

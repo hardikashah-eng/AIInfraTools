@@ -49,7 +49,7 @@ test('handshake: negotiates the protocol, names the server, answers ping; notifi
 
 test('tools/list: 15 tools, valid input and output schemas, nothing that acts on infrastructure', async () => {
   tools = (await c.send('tools/list')).result.tools;
-  assert.equal(tools.length, 15); assert.equal(new Set(tools.map(t => t.name)).size, 15);
+  assert.equal(tools.length, 16); assert.equal(new Set(tools.map(t => t.name)).size, 16);
   for (const t of tools) {
     assert.match(t.name, /^[a-z_]+$/); assert.ok(t.description.length > 30, t.name);
     assert.equal(t.inputSchema.type, 'object');
@@ -89,6 +89,8 @@ test('calls on data: GPU health, the ledger, root cause, power, trace skew', { t
   cli('ledger', 'demo', '--out', path.join(dir, 'l'));
   const L = { usage: path.join(dir, 'l/usage.jsonl'), config: path.join(dir, 'l/ledger.json') };
   checked('ledger_report', await call('ledger_report', L)); checked('ledger_insights', await call('ledger_insights', L));
+  const hw = await call('harness_waste', { paths: path.join(ROOT, 'harness-ledger/tests/fixtures') });
+  assert.ok(!hw.isError, hw.content[0].text); assert.equal(hw.structuredContent.totals.calls, 6);
   const demo = JSON.parse(cli('fleetops', 'demo', '--store', path.join(dir, 'f'), '--json')).demo;
   const d = checked('rca_diagnose', await call('rca_diagnose', { store: path.join(dir, 'f'), symptom: demo.incident.symptom, from: String(demo.incident.from), to: String(demo.incident.to) }));
   assert.ok(JSON.stringify(d).length > 100);

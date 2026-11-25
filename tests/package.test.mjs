@@ -38,7 +38,7 @@ test('installed from the packed tarball, every bin runs through its npm symlink'
   // each CLI prints its help, or does real work, when called through the symlink (fleetops and gpu-health didn't
   // before: they compared argv[1], the link, with their own path)
   for (const [n, args, want] of [
-    ['fleetops', ['--help'], /fleetops data import/], ['gpu-health', ['--help'], /gpu-health/i], ['gpu-ledger', ['--help'], /gpu-ledger/],
+    ['fleetops', ['--help'], /fleetops data import/], ['gpu-health', ['--help'], /gpu-health/i], ['gpu-ledger', ['--help'], /gpu-ledger/], ['harness-ledger', ['--help'], /harness-ledger/],
     ['fleetscope', ['--help'], /FleetScope/], ['inference-sizer', ['--model', 'llama33-70b', '--gpu', 'H100'], /Llama 3\.3 70B on NVIDIA H100/],
     ['fix-skew', ['--help'], /skew/i]]) {
     const r = run(n, args); assert.match(r.out, want, `${n}: ${r.out.slice(0, 300)}`);
