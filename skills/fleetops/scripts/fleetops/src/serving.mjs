@@ -15,6 +15,7 @@ import { createRequire } from 'node:module';
 import * as LLMD from './llmd.mjs';
 
 const require = createRequire(import.meta.url);
+const REG = require('../../inference-sizer/src/accelerators.js');
 const SC = require('../../inference-sizer/src/catalog.js'), SM = require('../../inference-sizer/src/model.js'), FIT = require('../../inference-sizer/src/fit.js');
 
 // Models whose published weights are already quantized (no --quantization flag needed for the sizer's precision).
@@ -91,9 +92,9 @@ export function planDeployment(opts) {
   // the context the sizer planned memory for (its default 32K, or the workload's p99 prompt + output if longer)
   const maxLen = opts.maxModelLen || Math.min(m.maxCtx || 131072, Math.max(SM.SETTINGS.ctx, (wl.islP99 || wl.isl * 4) + (wl.oslP99 || wl.osl * 4)));
   const seqs = Math.max(8, Math.ceil(lay.concurrency / lay.instances * 1.25 / 8) * 8);
-  const vendor = (g.vendor || '').toUpperCase() === 'AMD' ? 'amd' : 'nvidia';
-  const image = opts.image || (vendor === 'amd' ? 'rocm/vllm:latest' : 'vllm/vllm-openai:latest');
-  if (!opts.image) notes.push(`Image ${image} is a moving tag: pin a version (--image ${vendor === 'amd' ? 'rocm/vllm' : 'vllm/vllm-openai'}:vX.Y.Z) for production.`);
+  const V = REG.vendor(g), vendor = V.key;
+  const image = opts.image || `${V.images.vllm}:latest`;
+  if (!opts.image) notes.push(`Image ${image} is a moving tag: pin a version (--image ${V.images.vllm}:vX.Y.Z) for production.`);
   const args = [repo, '--served-model-name', m.id, '--port', '8000', '--tensor-parallel-size', String(multiNode ? per : lay.tp), '--max-model-len', String(maxLen),
     '--gpu-memory-utilization', String(opts.gpuMemoryUtilization || 0.9), '--max-num-seqs', String(seqs), '--kv-cache-dtype', opts.kvDtype || 'fp8', '--enable-prefix-caching'];
   if (multiNode || lay.pp > 1) args.push('--pipeline-parallel-size', String(multiNode ? nodesPer : lay.pp));
@@ -101,7 +102,7 @@ export function planDeployment(opts) {
   if (wprec === 'fp8' && !NATIVE_LOWP.has(m.id) && !/fp8/i.test(repo)) args.push('--quantization', 'fp8');
   if (wprec === 'fp4' && !NATIVE_LOWP.has(m.id) && !opts.hf) notes.push(`The plan assumes fp4 weights: pass --hf with an fp4 checkpoint of ${m.id}, or --weights fp8 to re-plan.`);
   if (m.experts > 0 && multiNode) args.push('--enable-expert-parallel');
-  const gpuRes = vendor === 'amd' ? 'amd.com/gpu' : 'nvidia.com/gpu', perPod = multiNode ? per : tpp;
+  const gpuRes = V.k8sResource, perPod = multiNode ? per : tpp;
   const labels = { app: name, 'fleetops.aiinfra/pool': name, 'gpu-health.aiinfra/serving': 'true' };
   const env = [{ name: 'HF_HOME', value: '/cache/huggingface' }, { name: 'VLLM_NO_USAGE_STATS', value: '1' }];
   if (opts.hfSecret) env.push({ name: 'HF_TOKEN', valueFrom: { secretKeyRef: { name: opts.hfSecret, key: opts.hfSecretKey || 'token' } } });
@@ -162,14 +163,15 @@ function planDisagg({ m, g, per, wl, tg, wprec, dis, agg, opts, name, ns }) {
   for (const [k, r] of [['prefill', P], ['decode', D]]) if (r.gpusPerInstance > per) throw new Error(`the ${k} instances need ${r.gpusPerInstance} GPUs, more than a node's ${per}: multi-node P/D roles are not rendered yet; use --mode agg`);
   if (P.pp > 1 || D.pp > 1) notes.push('The sizer used pipeline parallelism in a role; rendered as tensor parallelism over the same GPUs.');
   const repo = opts.hf || hfRepo(m); if (!repo) throw new Error(`no Hugging Face repo for ${m.id}; pass --hf ORG/NAME`);
-  const vendor = (g.vendor || '').toUpperCase() === 'AMD' ? 'amd' : 'nvidia', gpuRes = vendor === 'amd' ? 'amd.com/gpu' : 'nvidia.com/gpu';
+  const V = REG.vendor(g), vendor = V.key, gpuRes = V.k8sResource;
+  if (!V.images.llmdVllm) throw new Error(`llm-d's P/D guide has no validated vLLM image for ${V.name}: use --mode agg`);
   const maxLen = opts.maxModelLen || Math.min(m.maxCtx || 131072, Math.max(SM.SETTINGS.ctx, (wl.islP99 || wl.isl * 4) + (wl.oslP99 || wl.osl * 4)));
   const seqs = Math.max(8, Math.ceil(L.concurrency / D.instances * 1.25 / 8) * 8);
   const quantization = wprec === 'fp8' && !NATIVE_LOWP.has(m.id) && !/fp8/i.test(repo) ? 'fp8' : null;
-  const r = LLMD.render({ name, namespace: ns, model: m.id, repo, vendor, gpuResource: gpuRes, image: opts.image || LLMD.LLMD.vllm[vendor], hfSecret: opts.hfSecret, hfSecretKey: opts.hfSecretKey,
+  const r = LLMD.render({ name, namespace: ns, model: m.id, repo, vendor, gpuResource: gpuRes, kvBufferDevice: V.kvBufferDevice, image: opts.image || V.images.llmdVllm, hfSecret: opts.hfSecret, hfSecretKey: opts.hfSecretKey,
     maxLen, gpuMemoryUtilization: opts.gpuMemoryUtilization, kvDtype: opts.kvDtype || 'fp8', quantization, cachePvc: opts.cachePvc, sidecar: opts.sidecarImage,
     prefill: { tp: P.gpusPerInstance, replicas: P.instances }, decode: { tp: D.gpusPerInstance, replicas: D.instances, maxNumSeqs: seqs } });
-  if (!opts.image) notes.push(`Image ${LLMD.LLMD.vllm[vendor]} is the vLLM release llm-d's P/D guide validates (${LLMD.LLMD.ref}).`);
+  if (!opts.image) notes.push(`Image ${V.images.llmdVllm} is the vLLM release llm-d's P/D guide validates (${LLMD.LLMD.ref}).`);
   notes.push('NIXL moves the KV cache over UCX: RDMA (InfiniBand, RoCE, EFA) between the prefill and decode nodes is strongly recommended; over TCP it works but slowly.');
   notes.push('The router\'s prefix-cache affinity gate is left out: calibrate peakPrefillThroughput for this model and GPU (llm-d guides/recipes/router/calibration) and add it.');
   if (agg) notes.push(`auto: disaggregated ${wl.rate ? `needs ${dis.nodes} node(s) against ${agg.nodes} aggregated` : `carries ${dis.rate.toFixed(1)} req/s against ${agg.rate.toFixed(1)} aggregated`}.`);
@@ -177,7 +179,7 @@ function planDisagg({ m, g, per, wl, tg, wprec, dis, agg, opts, name, ns }) {
   if (!opts.hfSecret) notes.push(`No --hf-secret: gated models (${repo}) need a Hugging Face token in a Secret.`);
   const gpus = P.instances * P.gpusPerInstance + D.instances * D.gpusPerInstance, routerYaml = toYaml(r.routerValues);
   return {
-    name, namespace: ns, model: m.id, hf: repo, hfSecretName: opts.hfSecret || null, gpu: g.id, vendor, image: opts.image || LLMD.LLMD.vllm[vendor], kind: 'DisaggregatedSet', mode: 'disagg', multiNode: false, nodesPerInstance: 1,
+    name, namespace: ns, model: m.id, hf: repo, hfSecretName: opts.hfSecret || null, gpu: g.id, vendor, image: opts.image || V.images.llmdVllm, kind: 'DisaggregatedSet', mode: 'disagg', multiNode: false, nodesPerInstance: 1,
     layout: { mode: 'disagg', prefill: { tp: P.gpusPerInstance, instances: P.instances }, decode: { tp: D.gpusPerInstance, instances: D.instances, maxNumSeqs: seqs }, gpus, concurrency: L.concurrency, maxModelLen: maxLen, instances: P.instances + D.instances },
     sized: { basis: dis.rate && !wl.rate ? `all of the hardware: up to ${dis.rate.toFixed(1)} req/s within the targets` : `sized for ${wl.rate} req/s`, nodes: dis.nodes, gpus: dis.gpus, rate: dis.rate }, targets: tg, workload: wl, notes,
     docs: r.docs, yaml: r.docs.map(x => toYaml(x)).join('---\n'), router: { chart: LLMD.LLMD.routerChart, version: opts.routerVersion || LLMD.LLMD.routerVersion, release: name, values: r.routerValues, yaml: routerYaml }, service: r.service, servicePort: r.servicePort,

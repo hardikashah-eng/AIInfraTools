@@ -31,13 +31,13 @@ node tools/size.mjs --model llama33-70b --gpu H200 --set conc=800 --calibration 
 
 **What fits on my GPUs.** The page has a second view (the button at the top right, or `dist/index.html#fit`). Pick a GPU and a node count, the median prompt and output length, the TTFT and TPOT targets and, optionally, a request rate. It lists every catalog model with the requests per second it carries in production (15% headroom, an N+1 spare node, 10% inside the targets) and flat out, output tokens per second, dollars per million output tokens and the layout. Models too big for the hardware say why. Click one for its concurrency, the longest prompt that still meets the target, and the `fleetops serving deploy` command for it. Rank by size (a stand-in for capability, not a quality score) or by throughput. The same engine is `fleetops serving fit` and `fleetops serving capacity` on the command line.
 
-**How accurate is it?** Against 125 measured InferenceX runs of DeepSeek-R1 (B200, B300, H200, MI300X), the defaults are off by a median 42–46% and optimistic; calibrated per GPU on one workload shape, 13–14% on the others. Details, by GPU, framework and concurrency: [docs/VALIDATION-INFERENCEX.md](docs/VALIDATION-INFERENCEX.md); rerun with `node tools/validate-inferencex.mjs`.
+**How accurate is it?** Against 198 measured InferenceX runs of DeepSeek-R1 (B200, B300, H200, MI300X, MI325X, MI355X), the defaults are off by a median 46–47% and optimistic; calibrated per GPU on one workload shape, 17–18% on the others (6–16% on NVIDIA, 11–38% on AMD). Details, by GPU, framework and concurrency: [docs/VALIDATION-INFERENCEX.md](docs/VALIDATION-INFERENCEX.md); rerun with `node tools/validate-inferencex.mjs`.
 
 Develop: `npm test`, then `npm run build` to rebuild `dist/index.html` from `src/`.
 
 ## What it covers
 
-- **GPUs:** B200, B300, GB200 NVL72, H200, H100, A100, L40S and MI300X built in. The model reads everything from a spec sheet: HBM size and bandwidth; BF16, FP8 and FP4 dense TFLOPS; link speeds; GPUs per scale-up domain (8 for HGX, 72 for NVL72); power; price.
+- **GPUs:** B200, B300, GB200 NVL72, GB300 NVL72, H200, H100, A100, L40S, MI300X, MI325X and MI355X built in, from the shared [accelerator registry](ACCELERATORS.md). The model reads everything from a spec sheet: HBM size and bandwidth; BF16, FP8 and FP4 dense TFLOPS; link speeds; GPUs per scale-up domain (8 for HGX, 72 for NVL72); power; price.
 - **Models:** 12 built in, dense and MoE, including GQA, MLA (DeepSeek, Kimi) and sliding-window attention (gpt-oss, Llama 4). From 8B to the 1T-parameter Kimi K2.
 - **Precision:** BF16, FP8 or FP4 weights; BF16 or FP8 KV cache. A GPU without FP4 or FP8 tensor cores keeps the memory saving but computes at the next precision up.
 - **Context window:** it caps the longest request, and one full-length request must fit an instance. With *reserve the full context per session*, the window sets KV memory for every session.

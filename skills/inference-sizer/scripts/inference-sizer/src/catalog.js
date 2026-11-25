@@ -45,26 +45,13 @@
   ];
 
   // ---------- built-in GPUs ----------
-  // Per-GPU dense figures. HGX/DGX system totals divided by 8 (or 72 for NVL72); "with sparsity" figures halved.
-  // Prices are placeholder on-demand rents (matching FleetScope's table where it has the GPU), not quotes.
-  const GPUS = [
-    { id: 'B200', label: 'NVIDIA B200 (HGX, 8-GPU)', vendor: 'NVIDIA', hbmGB: 180, hbmTBs: 8, tfBf16: 2250, tfFp8: 4500, tfFp4: 9000, scaleUpGBs: 900, domain: 8, nicGbps: 400, nodeKW: 14.3, price: 5.5,
-      source: 'https://www.nvidia.com/en-us/data-center/dgx-b200/' },
-    { id: 'B300', label: 'NVIDIA B300 (HGX, 8-GPU)', vendor: 'NVIDIA', hbmGB: 262, hbmTBs: 8, tfBf16: 2250, tfFp8: 4500, tfFp4: 13500, scaleUpGBs: 900, domain: 8, nicGbps: 800, nodeKW: 14.5, price: 7.0,
-      source: 'https://www.nvidia.com/en-us/data-center/hgx/' },
-    { id: 'GB200-NVL72', label: 'NVIDIA GB200 NVL72 (72-GPU rack)', vendor: 'NVIDIA', hbmGB: 186, hbmTBs: 8, tfBf16: 2500, tfFp8: 5000, tfFp4: 10000, scaleUpGBs: 900, domain: 72, nicGbps: 400, nodeKW: 120, price: 6.0,
-      source: 'https://www.nvidia.com/en-us/data-center/gb200-nvl72/' },
-    { id: 'H200', label: 'NVIDIA H200 SXM (8-GPU)', vendor: 'NVIDIA', hbmGB: 141, hbmTBs: 4.8, tfBf16: 989, tfFp8: 1979, tfFp4: 0, scaleUpGBs: 450, domain: 8, nicGbps: 400, nodeKW: 10.2, price: 3.5,
-      source: 'https://www.nvidia.com/en-us/data-center/h200/' },
-    { id: 'H100', label: 'NVIDIA H100 SXM (8-GPU)', vendor: 'NVIDIA', hbmGB: 80, hbmTBs: 3.35, tfBf16: 989, tfFp8: 1979, tfFp4: 0, scaleUpGBs: 450, domain: 8, nicGbps: 400, nodeKW: 10.2, price: 2.4,
-      source: 'https://www.nvidia.com/en-us/data-center/h100/' },
-    { id: 'A100', label: 'NVIDIA A100 80GB SXM (8-GPU)', vendor: 'NVIDIA', hbmGB: 80, hbmTBs: 2.0, tfBf16: 312, tfFp8: 0, tfFp4: 0, scaleUpGBs: 300, domain: 8, nicGbps: 200, nodeKW: 6.5, price: 1.6,
-      source: 'https://www.nvidia.com/en-us/data-center/a100/' },
-    { id: 'L40S', label: 'NVIDIA L40S (PCIe, 8 per server)', vendor: 'NVIDIA', hbmGB: 48, hbmTBs: 0.864, tfBf16: 362, tfFp8: 733, tfFp4: 0, scaleUpGBs: 32, domain: 8, nicGbps: 200, nodeKW: 5, price: 1.1,
-      source: 'https://www.nvidia.com/en-us/data-center/l40s/' },
-    { id: 'MI300X', label: 'AMD Instinct MI300X (8-GPU)', vendor: 'AMD', hbmGB: 192, hbmTBs: 5.3, tfBf16: 1307, tfFp8: 2615, tfFp4: 0, scaleUpGBs: 448, domain: 8, nicGbps: 400, nodeKW: 10, price: 2.6,
-      source: 'https://www.amd.com/en/products/accelerators/instinct/mi300/mi300x.html' },
-  ];
+  // From the shared accelerator registry (accelerators.js): per-GPU dense figures, HGX/DGX system totals divided by 8
+  // (or 72 for NVL72), "with sparsity" figures halved. Prices are placeholder on-demand rents, not quotes.
+  const REG = (typeof module !== 'undefined' && module.exports) ? require('./accelerators.js') : root.AIInfraAccelerators;
+  const ORDER = ['B200', 'B300', 'GB200-NVL72', 'GB300-NVL72', 'H200', 'H100', 'A100', 'L40S', 'MI300X', 'MI325X', 'MI355X'];
+  const KEEP = ['id', 'kind', 'vendorKey'].concat(GPU_FIELDS.map(f => f.k));
+  const GPUS = REG.ACCELERATORS.slice().sort((a, b) => (ORDER.indexOf(a.id) + 1 || 99) - (ORDER.indexOf(b.id) + 1 || 99))
+    .map(g => Object.fromEntries(KEEP.filter(k => g[k] !== undefined).map(k => [k, g[k]])));
 
   // ---------- built-in models ----------
   const MLA = { attn: 'mla', kvHeads: 1, headDim: 128, mlaLatent: 512, mlaRope: 64, mlaNope: 128, mlaV: 128 };
