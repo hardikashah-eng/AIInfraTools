@@ -17,6 +17,8 @@
 // Metric names follow each vendor's published exporter. Check them against the versions you run and override any of
 // them in the config file.
 
+import { platformProfile } from './platforms.mjs';
+
 export const VENDORS = {
   nvidia: {
     name: 'NVIDIA', kind: 'gpu',
@@ -147,17 +149,22 @@ export function faultDef(cfg, vendor, code) {
 // What to call one device in messages.
 export const noun = kind => ({ tpu: 'TPU chip', rdu: 'RDU' }[kind] || 'GPU');
 
-export const supports = (cfg, vendor, kind) => !((vendorOf(cfg, vendor) || {}).unsupported || []).includes(kind);
+// node (optional): the node's platform can rule out more (no reseat on a cloud instance)
+export const supports = (cfg, vendor, kind, node) => !((vendorOf(cfg, vendor) || {}).unsupported || []).includes(kind)
+  && !((platformProfile(cfg, node) || {}).unsupported || []).includes(kind);
 
 // Repair ladder for a fault class on a vendor, with steps the platform can't do left out.
-export function ladderFor(cfg, vendor, cls) {
+export function ladderFor(cfg, vendor, cls, node) {
   const v = vendorOf(cfg, vendor) || {}, vl = v.ladder || {};
-  const l = (vl[cls] || vl.default || cfg.ladder[cls] || cfg.ladder.default).filter(k => supports(cfg, vendor, k));
+  const l = (vl[cls] || vl.default || cfg.ladder[cls] || cfg.ladder.default).filter(k => supports(cfg, vendor, k, node));
   return l.length ? l : ['rma'];
 }
 
-// Executor for an action: the vendor's own if it has one, else the global one.
-export function executorFor(cfg, vendor, kind) {
+// Executor for an action: the node's platform's (reboot or replace a cloud instance), else the vendor's own, else the
+// global one.
+export function executorFor(cfg, vendor, kind, node) {
+  const p = platformProfile(cfg, node), v0 = vendorOf(cfg, vendor);
+  if (p && p.executors && p.executors[kind] != null && !(p.skipKinds || []).includes((v0 || {}).kind)) return p.executors[kind];
   const v = vendorOf(cfg, vendor);
   if (v && v.executors && v.executors[kind] != null) return v.executors[kind];
   return cfg.executors[kind];

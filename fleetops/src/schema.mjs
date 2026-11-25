@@ -24,10 +24,11 @@
 //   step records may add loss, gradNorm (the rank's local gradient norm) and n (steps covered, for every-N-steps logs)
 //   collective one NCCL operation (NCCL Inspector): { op, job?, node, rank?, gpu?, comm, nranks, sn?, bytes?, msgSize?, execS, busbw, algobw? }
 //   port       a switch or NIC port's counters (totals): { switch, port, symbolErrors?, linkRecovery?, linkDowned?, rcvErrors?, xmitDiscards?,
-//              fecUncorrected?, xmitWait?, pfcPause?, ecnMarked?, cnpSent?, outOfBuffer?, rxBytes?, txBytes? }   (src/adapters/fabric.mjs)
+//              fecUncorrected?, xmitWait?, pfcPause?, ecnMarked?, cnpSent?, outOfBuffer?, rxBytes?, txBytes?,
+//              EFA: rxDrops?, rdmaErrors?, unresponsiveRemote?, retransPkts?, retransTimeouts?, impairedConns?, efa? }   (src/adapters/fabric.mjs)
 //   storage    I/O against one storage target over a window: { target, op: read|write|meta, node?, job?, ops?, bytes?, latMs?, windowS? }
 //   inventory records may carry versions: { driver, cuda, vbios, inforom, firmware, kernel, os, runtime, kubelet, image }
-//   check      a node check before admission (tools/admit-node.sh): { node, check: dcgm-diag|nccl-allreduce|burn-in|pcie|gpu-count, ok?, value?, unit?, detail? }
+//   check      a node check before admission (tools/admit-node.sh): { node, check: dcgm-diag|rvs-diag|nccl-allreduce|burn-in|pcie|gpu-count, ok?, value?, unit?, detail? }
 //   admission  a node's admission verdict: { node, verdict: admit|reject|incomplete, failed, missing, by? }
 //   rollout    a step of a version rollout: { id, event: applied|verified|rolled-back|halted, stage, field, version, nodes }
 // Later PRs add calibration, drift, incident and optimization records.

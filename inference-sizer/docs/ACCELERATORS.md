@@ -33,10 +33,30 @@ Then add a gpu-health vendor profile, which maps the exporter's metrics, fault c
 that meets a vendor without an adapter stops with an error that lists the vendors it knows. It never falls back to
 NVIDIA.
 
+## Cloud TPUs
+
+TPU v6e (Trillium), v5p and TPU7x (Ironwood) are in the registry with `kind: 'tpu'`, from Google's TPU pages. Their
+figures are adjusted to the sizer's model:
+- ICI bandwidth is halved to per direction.
+- `domain` is the chips on one TPU VM host: 8 on v6e, 4 on v5p and TPU7x. The sizer treats ICI between hosts in a
+  slice as data-center network, so tensor parallelism beyond one host is costed pessimistically.
+- TPUs publish no board power, so FleetScope's power model leaves them out.
+- Prices are on-demand $ per chip-hour.
+
+## Cloud instance types
+
+`INSTANCES` maps machine types to a chip and a count, so bills and node labels name the GPU:
+- AWS: P4, P5, P6, G4dn, G5, G6, G6e.
+- GCP: A2, A3, A4, A4X, G2, and the TPU machine types (`ct6e-…`, `ct5p-…`, `tpu7x-…`, `ct5lp-…`).
+
+`tpuTopology(chip, n)` gives GKE's slice topology for `n` chips (`2x4`, `2x2x1`, …).
+
 ## Sources for the newer chips
 
 | Chip | Figures | Source |
 | --- | --- | --- |
 | MI355X | 288 GB HBM3E, 8 TB/s, 2516.6 / 5033.2 / 10066.3 dense BF16 / FP8 / FP4 TFLOPS, 7 × 144 GB/s Infinity Fabric (504 GB/s per direction), 1400 W | [AMD product page](https://www.amd.com/en/products/accelerators/instinct/mi350/mi355x.html), [brochure](https://www.amd.com/content/dam/amd/en/documents/instinct-tech-docs/product-briefs/amd-instinct-mi355x-gpu-brochure.pdf) |
 | MI325X | 256 GB HBM3E, 6 TB/s, 1307.4 / 2614.9 dense BF16 / FP8 TFLOPS, 896 GB/s peer-to-peer (448 per direction), 1000 W | [AMD product page](https://www.amd.com/en/products/accelerators/instinct/mi300/mi325x.html), [datasheet](https://www.amd.com/content/dam/amd/en/documents/instinct-tech-docs/product-briefs/instinct-mi325x-datasheet.pdf) |
+| TPU v6e | 32 GB HBM, 1.64 TB/s, 918 BF16 TFLOPS, ICI 800 GB/s bidirectional, 8 chips per host, 4 × 200 Gbps NICs per host | [Cloud TPU v6e](https://docs.cloud.google.com/tpu/docs/v6e) |
+| TPU v5p, TPU7x | v5p: 95 GiB, 2765 GB/s, 459 TFLOPS. TPU7x: 192 GiB, 7.37 TB/s, 2307 BF16 / 4614 FP8 TFLOPS. ICI 1200 GB/s bidirectional for both | [TPU7x (Ironwood)](https://docs.cloud.google.com/tpu/docs/tpu7x) |
 | GB300 NVL72 | rack: 20 TB HBM3e and 576 TB/s, 360 / 720 PFLOPS BF16 / FP8 (with sparsity), 1080 PFLOPS FP4 dense, 1.8 TB/s NVLink per GPU; ÷ 72 per GPU. Board power 1400 W from [InferenceX](https://inferencex.semianalysis.com/chips/gb300-nvl72) | [NVIDIA GB300 NVL72](https://www.nvidia.com/en-us/data-center/gb300-nvl72/) |

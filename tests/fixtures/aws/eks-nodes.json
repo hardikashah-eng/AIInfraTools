@@ -1,0 +1,129 @@
+{
+ "apiVersion": "v1",
+ "kind": "List",
+ "items": [
+  {
+   "metadata": {
+    "name": "ip-10-0-1-11.ec2.internal",
+    "labels": {
+     "node.kubernetes.io/instance-type": "p5.48xlarge",
+     "topology.kubernetes.io/region": "us-east-1",
+     "topology.kubernetes.io/zone": "us-east-1a",
+     "eks.amazonaws.com/nodegroup": "p5-train",
+     "nvidia.com/gpu.product": "NVIDIA-H100-80GB-HBM3"
+    }
+   },
+   "spec": {
+    "providerID": "aws:///us-east-1a/i-0a1b2c3d4e5f60711"
+   },
+   "status": {
+    "capacity": {
+     "nvidia.com/gpu": "8",
+     "cpu": "192"
+    },
+    "conditions": [
+     {
+      "type": "Ready",
+      "status": "True",
+      "reason": "KubeletReady",
+      "lastTransitionTime": "2026-11-20T09:00:00Z"
+     },
+     {
+      "type": "AcceleratedHardwareReady",
+      "status": "True",
+      "reason": "AcceleratedHardwareIsReady",
+      "lastTransitionTime": "2026-11-20T09:00:00Z"
+     }
+    ],
+    "nodeInfo": {
+     "kernelVersion": "6.1.115-126.197.amzn2023.x86_64",
+     "osImage": "Amazon Linux 2023",
+     "containerRuntimeVersion": "containerd://1.7.23",
+     "kubeletVersion": "v1.31.2-eks-94953ac"
+    }
+   }
+  },
+  {
+   "metadata": {
+    "name": "ip-10-0-1-12.ec2.internal",
+    "labels": {
+     "node.kubernetes.io/instance-type": "p5.48xlarge",
+     "topology.kubernetes.io/region": "us-east-1",
+     "topology.kubernetes.io/zone": "us-east-1a",
+     "eks.amazonaws.com/nodegroup": "p5-train"
+    }
+   },
+   "spec": {
+    "providerID": "aws:///us-east-1a/i-0a1b2c3d4e5f60712"
+   },
+   "status": {
+    "capacity": {
+     "nvidia.com/gpu": "8",
+     "cpu": "192"
+    },
+    "conditions": [
+     {
+      "type": "Ready",
+      "status": "True",
+      "reason": "KubeletReady",
+      "lastTransitionTime": "2026-11-20T09:00:00Z"
+     },
+     {
+      "type": "AcceleratedHardwareReady",
+      "status": "False",
+      "reason": "NvidiaXID79Error",
+      "message": "GPU has fallen off the bus",
+      "lastTransitionTime": "2026-11-20T10:15:00Z"
+     }
+    ],
+    "nodeInfo": {
+     "kernelVersion": "6.1.115-126.197.amzn2023.x86_64",
+     "osImage": "Amazon Linux 2023",
+     "containerRuntimeVersion": "containerd://1.7.23",
+     "kubeletVersion": "v1.31.2-eks-94953ac"
+    }
+   }
+  },
+  {
+   "metadata": {
+    "name": "ip-10-0-1-13.ec2.internal",
+    "labels": {
+     "node.kubernetes.io/instance-type": "p5en.48xlarge",
+     "topology.kubernetes.io/region": "us-east-1",
+     "topology.kubernetes.io/zone": "us-east-1a",
+     "eks.amazonaws.com/nodegroup": "p5-train"
+    }
+   },
+   "spec": {
+    "providerID": "aws:///us-east-1a/i-0a1b2c3d4e5f60713"
+   },
+   "status": {
+    "capacity": {
+     "nvidia.com/gpu": "8",
+     "cpu": "192"
+    },
+    "conditions": [
+     {
+      "type": "Ready",
+      "status": "True",
+      "reason": "KubeletReady",
+      "lastTransitionTime": "2026-11-20T09:00:00Z"
+     },
+     {
+      "type": "KernelDeadlock",
+      "status": "True",
+      "reason": "DockerHung",
+      "message": "task docker:7 blocked for more than 120 seconds",
+      "lastTransitionTime": "2026-11-20T11:00:00Z"
+     }
+    ],
+    "nodeInfo": {
+     "kernelVersion": "6.1.115-126.197.amzn2023.x86_64",
+     "osImage": "Amazon Linux 2023",
+     "containerRuntimeVersion": "containerd://1.7.23",
+     "kubeletVersion": "v1.31.2-eks-94953ac"
+    }
+   }
+  }
+ ]
+}

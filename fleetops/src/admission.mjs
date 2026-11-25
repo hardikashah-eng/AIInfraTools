@@ -3,18 +3,19 @@
 // Checks (each pass, fail or missing):
 //   burn-in      hours under real load (device samples above burnInLoad) with no hard fault, no new uncorrectable ECC,
 //                no pending row remap and temperatures within limits; or a burn-in check from tools/admit-node.sh
-//   dcgm-diag    `dcgmi diag -r 3` passed (check record from admit-node.sh)
+//   diag         the vendor's GPU diagnostic passed: `dcgmi diag -r 3` on NVIDIA, ROCm Validation Suite on AMD
+//                (check record dcgm-diag or rvs-diag from admit-node.sh; `dcgm-diag` in a policy means this check)
 //   sdc-canary   tools/sdc-canary.py on every GPU, all agreeing with their peers / the golden values
 //   nccl         all-reduce bus bandwidth within ncclFrac of the same SKU's admitted nodes (or a reference)
-//   topology     as many GPUs, NVLink links and the same PCIe link as the same SKU's other nodes
-//   versions     driver, CUDA, firmware, VBIOS, NCCL, kernel equal to the fleet's baseline for the SKU
+//   topology     as many GPUs, scale-up links (NVLink, XGMI) and the same PCIe link as the same SKU's other nodes
+//   versions     driver, CUDA or ROCm, firmware, VBIOS/IFWI, NCCL or RCCL, kernel equal to the fleet's baseline for the SKU
 // Any fail rejects; otherwise anything missing leaves the node waiting (incomplete) with what to run.
 const H = 3600, DAY = 86400;
 export const ADMISSION_POLICY = {
   lookbackS: 3 * DAY, burnInS: 6 * H, burnInLoad: 0.5, maxTempC: 87, maxMemTempC: 95,
-  require: ['burn-in', 'dcgm-diag', 'sdc-canary', 'nccl', 'topology', 'versions'],
+  require: ['burn-in', 'diag', 'sdc-canary', 'nccl', 'topology', 'versions'],
   ncclFrac: 0.9, ncclRef: {},               // { sku: GB/s } when the fleet has no admitted peers yet
-  versionFields: ['driver', 'cuda', 'firmware', 'vbios', 'nccl', 'kernel'], golden: {},   // { sku: { driver: '…' } }
+  versionFields: ['driver', 'cuda', 'rocm', 'firmware', 'vbios', 'nccl', 'rccl', 'kernel'], golden: {},   // { sku: { driver: '…' } }
 };
 const median = a => { const s = a.filter(Number.isFinite).sort((x, y) => x - y); return s.length ? s[Math.floor(s.length / 2)] : NaN; };
 const mode = a => { const m = new Map(); for (const v of a) if (v != null) m.set(String(v), (m.get(String(v)) || 0) + 1); let b = null, n = 0; for (const [k, c] of m) if (c > n) { b = k; n = c; } return b; };
@@ -43,8 +44,13 @@ export function pending(store, { now = Math.floor(Date.now() / 1000), policy = {
   return out.sort((a, b) => a.node.localeCompare(b.node));
 }
 
+// diagnostics, scale-up links and the tools that produce them, per vendor
+const DIAG = { nvidia: ['dcgm-diag', 'dcgmi diag -r 3'], amd: ['rvs-diag', 'the ROCm Validation Suite (rvs)'] };
+const LINK = { nvidia: 'NVLink', amd: 'XGMI' };
 export function evaluate(store, node, { now = Math.floor(Date.now() / 1000), policy = {} } = {}) {
-  const P = Object.assign({}, ADMISSION_POLICY, policy), from = now - P.lookbackS, inv = latestInventory(store, now), me = inv.get(node);
+  const P = Object.assign({}, ADMISSION_POLICY, policy);
+  P.require = [...new Set((P.require || []).map(r => (r === 'dcgm-diag' ? 'diag' : r)))];
+  const from = now - P.lookbackS, inv = latestInventory(store, now), me = inv.get(node);
   if (!me) throw new Error(`${node} is not in the inventory (import kubectl nodes, nvidia-smi or the admit-node.sh results first)`);
   const sku = me.sku, peers = [...inv.values()].filter(r => r.node !== node && r.sku === sku), adm = lastAdmissions(store, now);
   const admittedPeers = peers.filter(r => (adm.get(r.node) || {}).verdict === 'admit');
@@ -71,10 +77,11 @@ export function evaluate(store, node, { now = Math.floor(Date.now() / 1000), pol
     else if ((b.value || 0) < P.burnInS) add('burn-in', 'missing', `${((b.value || 0) / H).toFixed(1)} h of ${P.burnInS / H} h`, `tools/admit-node.sh --burn-in ${P.burnInS / H}h`);
     else add('burn-in', 'pass', `${(b.value / H).toFixed(1)} h${b.maxTempC ? `, max ${b.maxTempC}°C` : ''} (admit-node.sh)`);
   }
-  // dcgm diag
-  const d = chk('dcgm-diag').pop();
-  if (!d) add('dcgm-diag', 'missing', 'no DCGM diagnostic in the window', 'tools/admit-node.sh (runs dcgmi diag -r 3)');
-  else add('dcgm-diag', d.ok ? 'pass' : 'fail', d.detail || (d.ok ? 'level 3 passed' : 'failed'));
+  // the vendor's diagnostic (DCGM on NVIDIA, RVS on AMD; any `diag` check record counts)
+  const vendor = me.vendor || 'nvidia', [diagName, diagTool] = DIAG[vendor] || ['diag', "the vendor's GPU diagnostic"];
+  const d = ['dcgm-diag', 'rvs-diag', 'diag'].flatMap(chk).sort((a, b) => a.t - b.t).pop();
+  if (!d) add('diag', 'missing', `no ${diagName} result in the window`, `tools/admit-node.sh (runs ${diagTool})`);
+  else add('diag', d.ok ? 'pass' : 'fail', `${d.check}: ${d.detail || (d.ok ? 'passed' : 'failed')}`);
   // SDC canary on every GPU
   const can = store.query('sdc_check', { from, to: now, where: c => c.node === node && c.check === 'canary' });
   const gpusExpected = me.devices || median(peers.map(p => p.devices)) || null, gpusCovered = new Set(can.map(c => String(c.gpu))).size;
@@ -94,21 +101,22 @@ export function evaluate(store, node, { now = Math.floor(Date.now() / 1000), pol
   const seenGpus = new Set(dev.map(x => String(x.gpu))).size || (chk('gpu-count').pop() || {}).value || me.devices;
   const peerGpus = median(peers.map(p => p.devices));
   if (seenGpus != null && Number.isFinite(peerGpus) && seenGpus < peerGpus) topo.push(`${seenGpus} GPUs, the same SKU has ${peerGpus}`);
-  const links = n => store.query('topology', { to: now, where: e => e.kind === 'nvlink' && String(e.from).startsWith(`${n}/`) }).length;
+  const linkWord = LINK[vendor] || 'scale-up';
+  const links = n => store.query('topology', { to: now, where: e => (e.kind === 'nvlink' || e.kind === 'xgmi') && e.enabled !== false && String(e.from).startsWith(`${n}/`) }).length;
   const myLinks = links(node), peerLinks = median(peers.map(p => links(p.node)).filter(x => x > 0));
-  if (Number.isFinite(peerLinks) && myLinks < peerLinks) topo.push(`${myLinks} NVLink links, the same SKU has ${peerLinks}`);
+  if (Number.isFinite(peerLinks) && myLinks < peerLinks) topo.push(`${myLinks} ${linkWord} links, the same SKU has ${peerLinks}`);
   const pcie = chk('pcie').pop(), peerPcie = mode(store.query('check', { to: now, where: c => c.check === 'pcie' && peers.some(p => p.node === c.node) }).map(c => c.value));
   if (pcie && peerPcie && String(pcie.value) !== peerPcie) topo.push(`PCIe ${pcie.value}, the same SKU runs ${peerPcie}`);
   const anyTopo = seenGpus != null || myLinks > 0 || pcie;
   if (topo.length) add('topology', 'fail', topo.join('; '));
-  else if (!anyTopo) add('topology', 'missing', 'no GPU count, NVLink or PCIe data', 'tools/admit-node.sh (nvidia-smi topo, nvlink, PCIe link)');
-  else add('topology', 'pass', [seenGpus != null && `${seenGpus} GPUs`, myLinks && `${myLinks} NVLink links`, pcie && `PCIe ${pcie.value}`].filter(Boolean).join(', '));
+  else if (!anyTopo) add('topology', 'missing', `no GPU count, ${linkWord} or PCIe data`, `tools/admit-node.sh (${vendor === 'amd' ? 'amd-smi topology, PCIe link' : 'nvidia-smi topo, nvlink, PCIe link'})`);
+  else add('topology', 'pass', [seenGpus != null && `${seenGpus} GPUs`, myLinks && `${myLinks} ${linkWord} links`, pcie && `PCIe ${pcie.value}`].filter(Boolean).join(', '));
   // versions against the baseline: the policy's golden set, else what most of the same SKU's admitted (or all) nodes run
   const base = Object.assign({}, ...P.versionFields.map(f => { const g = (P.golden[sku] || {})[f]; const m = g ?? mode((admittedPeers.length ? admittedPeers : peers).map(p => p.versions[f])); return m != null ? { [f]: m } : {}; }));
   const mine = me.versions || {}, diff = Object.entries(base).filter(([f, v]) => mine[f] != null && String(mine[f]) !== String(v)), unknown = Object.keys(base).filter(f => mine[f] == null);
   if (!Object.keys(base).length) add('versions', 'missing', 'no baseline: no golden versions and no peers of the same SKU', `set golden.${sku} in the policy`);
   else if (diff.length) add('versions', 'fail', diff.map(([f, v]) => `${f} ${mine[f]}, baseline ${v}`).join('; '), 'align the versions (or roll the new one out with fleetops rollout, canary first)');
-  else if (unknown.length === Object.keys(base).length) add('versions', 'missing', 'the node reports no versions', 'tools/admit-node.sh (records driver, CUDA, VBIOS, NCCL, kernel)');
+  else if (unknown.length === Object.keys(base).length) add('versions', 'missing', 'the node reports no versions', `tools/admit-node.sh (records ${vendor === 'amd' ? 'driver, ROCm, IFWI, RCCL' : 'driver, CUDA, VBIOS, NCCL'}, kernel)`);
   else add('versions', 'pass', Object.entries(base).filter(([f]) => mine[f] != null).map(([f, v]) => `${f} ${v}`).join(', '));
 
   const req = checks.filter(c => P.require.includes(c.name));

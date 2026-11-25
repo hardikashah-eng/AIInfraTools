@@ -63,11 +63,11 @@ test('real data (Philly, one week): tripling the failure rate on a 10% canary is
   assert.ok(rs.filter(r => r.ok === false).every(r => r.metrics.find(m => m.name === 'job failures').regression));
 });
 
-test('no mocks: admit-node.sh on this host refuses cleanly without NVIDIA tools, or records the node when it has them', () => {
+test('no mocks: admit-node.sh on this host refuses cleanly without GPU tools, or records the node when it has them', () => {
   const dir = tmp(), out = path.join(dir, 'admit.jsonl');
   const r = spawnSync('bash', [path.join(here, '..', 'tools', 'admit-node.sh'), '--node', os.hostname(), '--skip', 'burn-in,sdc,nccl,dcgm', '--out', out], { encoding: 'utf8', timeout: 300000 });
-  if (spawnSync('bash', ['-lc', 'command -v nvidia-smi']).status !== 0) {
-    assert.equal(r.status, 1); assert.match(r.stderr, /nvidia-smi not found/); assert.ok(!fs.existsSync(out) || !fs.readFileSync(out, 'utf8').trim());
+  if (spawnSync('bash', ['-lc', 'command -v nvidia-smi || command -v amd-smi']).status !== 0) {
+    assert.equal(r.status, 1); assert.match(r.stderr, /neither nvidia-smi nor amd-smi found/); assert.ok(!fs.existsSync(out) || !fs.readFileSync(out, 'utf8').trim());
   } else {
     assert.ok(r.status === 0 || r.status === 2, r.stderr); // 2: GPUs busy
     if (r.status === 0) { const recs = fs.readFileSync(out, 'utf8').trim().split('\n').map(l => JSON.parse(l)); assert.ok(recs.find(x => x.record === 'inventory').devices >= 1); }

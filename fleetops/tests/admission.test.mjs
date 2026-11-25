@@ -50,7 +50,7 @@ test('admission: each failure rejects with the evidence; missing checks leave it
   assert.equal(st(ev({ temp: 93 }), 'burn-in'), 'fail');
   assert.equal(st(ev({ links: 12 }), 'topology'), 'fail');
   assert.equal(st(ev({ pcie: 'gen4x8' }), 'topology'), 'fail');
-  assert.equal(st(ev({ diag: false }), 'dcgm-diag'), 'fail');
+  assert.equal(st(ev({ diag: false }), 'diag'), 'fail');
   const sdc = ev({ sdc: 'bad' }); assert.equal(sdc.verdict, 'reject'); assert.match(sdc.checks.find(c => c.name === 'sdc-canary').evidence, /GPU 5/);
   const short = ev({ burnH: 2 }); assert.equal(short.verdict, 'incomplete'); assert.match(short.checks.find(c => c.name === 'burn-in').fix, /--burn-in 6h/);
   const nosdc = ev({ sdc: null }); assert.deepEqual(nosdc.missing, ['sdc-canary']);

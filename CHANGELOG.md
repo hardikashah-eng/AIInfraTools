@@ -3,6 +3,40 @@
 All notable changes. Versions follow [Semantic Versioning](https://semver.org/); before 1.0, a minor version may
 change the `--json` output, and when it does the change is listed here (see [schemas/](schemas/README.md)).
 
+## Unreleased
+
+Vendor-neutral: the tools no longer assume NVIDIA.
+
+### New
+
+- **One accelerator registry** (`inference-sizer/src/accelerators.js`), read by the sizer, FleetScope, the power model,
+  serving manifests and Kubernetes inventory; vendor adapters replace the NVIDIA-or-AMD branches. MI325X, MI355X and
+  GB300 NVL72 added. InferenceX validation covers 198 runs (#66).
+- **GCP and Cloud TPU:**
+  - TPU v6e, v5p and TPU7x in the sizer.
+  - Serving on GKE TPUs: `vllm/vllm-tpu`, `google.com/tpu`, slice selected by accelerator and topology labels.
+  - GKE nodes give project, zone and instance, and scheduled host maintenance is a planned event.
+  - gpu-health `gke` and `gcp` platforms: GKE's `fault-behavior` label, `report-host-as-faulty` on Compute Engine.
+  - Cloud Monitoring accelerator metrics as telemetry.
+  - `gpu-ledger import gcp-billing`.
+  - `fleetops procure gcp-calendar`.
+- **AWS:**
+  - EFA `hw_counters` read as fabric counters. Retransmits, timeouts and impaired connections count as congestion; RDMA errors as errors.
+  - EKS nodes give their instance, zone and GPU (from the instance type); the node monitoring agent's `AcceleratedHardwareReady` conditions become faults.
+  - gpu-health platforms: reboot and replace act on the EC2 instance; reseat is never proposed. `autoRepair` leaves both to EKS.
+  - `gpu-ledger import aws-cur`: GPU-hours priced at what the CUR says was billed.
+  - Capacity Blocks and spot in FleetScope's buy-vs-rent plan. `fleetops procure aws-blocks` prints the read-only lookup.
+- **AMD at parity:**
+  - `amd-smi-static` and `amd-smi-topology` importers (inventory, IFWI, PCI → GPU map; XGMI links);
+  - `collect.sh` and `admit-node.sh` on AMD nodes (amd-smi, ROCm Validation Suite, rccl-tests);
+  - RCCL version and HIP error lines in job logs.
+
+### Changed (`--json`)
+
+- `sizer list`: `nodeKW` is optional; `kind` and `vendorKey` added.
+- `admit check`: the diagnostic check is named `diag` (was `dcgm-diag`). Its evidence names the record (`dcgm-diag` or
+  `rvs-diag`). A policy that still lists `dcgm-diag` in `require` keeps working.
+
 ## 0.2.0 (2026-11)
 
 From four utilities to one loop: Observe → Diagnose → Simulate → Approve → Optimize → Verify. First release as an npm

@@ -1,7 +1,8 @@
 // Production sources: exporter scrapes, vLLM metrics, Kubernetes and Slurm inventory, job accounting, change feeds,
 // and gpu-health's own history. Each turns what a system already emits into data-layer records.
 import { createRequire } from 'node:module';
-import { samplesFromExporter } from '../../../gpu-health/src/ingest.mjs';
+import { samplesFromExporter, samplesFromCloudMonitoring } from '../../../gpu-health/src/ingest.mjs';
+import { cloudIdentity } from '../../../gpu-health/src/platforms.mjs';
 import { toEpoch } from './time.mjs';
 
 const require = createRequire(import.meta.url);
@@ -10,6 +11,8 @@ const REG = require('../../../inference-sizer/src/accelerators.js');
 
 // DCGM, AMD or SambaNova exporter text → device samples (gpu-health's parser; the vendor is detected from metric names).
 export const exporterScrape = (text, opts = {}) => samplesFromExporter(text, opts).map(s => Object.assign(s, { source: opts.source || `exporter:${s.vendor}` }));
+// Google Cloud Monitoring accelerator metrics (GKE nodes, TPU VMs) → device samples (gpu-health's parser)
+export const cloudMonitoring = (json, opts = {}) => samplesFromCloudMonitoring(json, opts).map(s => Object.assign(s, { source: 'cloud-monitoring' }));
 
 // Two vLLM /metrics snapshots (or one with the window it covers) → one serving record for the pool.
 export function vllmSnapshot(text, { before, windowS, t, pool, model, gpu } = {}) {
@@ -34,6 +37,8 @@ export function promRange(json, { field, pool, label = 'model_name' } = {}) {
 // accelerator resources and product labels from the shared registry's vendor adapters
 const GPU_RESOURCES = Object.assign({ 'google.com/tpu': ['tpu', 'tpu'] }, ...Object.entries(REG.VENDORS).map(([k, v]) => ({ [v.k8sResource]: [k, v.kind] })));
 const SKU_LABELS = [...new Set(Object.values(REG.VENDORS).flatMap(v => v.productLabels).concat(['cloud.google.com/gke-tpu-accelerator', 'node.kubernetes.io/instance-type']))];
+// spec.providerID → the cloud's own identity for the node (aws:///zone/i-…, gce://project/zone/name): see gpu-health/src/platforms.mjs
+export { cloudIdentity };
 // `kubectl get nodes -o json` → inventory;  `kubectl get pods -A -o json` → placements for pods that request accelerators.
 export function k8sNodes(json, { t = Math.floor(Date.now() / 1000) } = {}) {
   const j = typeof json === 'string' ? JSON.parse(json) : json;
@@ -48,10 +53,36 @@ export function k8sNodes(json, { t = Math.floor(Date.now() / 1000) } = {}) {
     const versions = { driver: ver('nvidia.com/cuda.driver-version.full', 'nvidia.com/cuda.driver'), cuda: ver('nvidia.com/cuda.runtime-version.full', 'nvidia.com/cuda.runtime'),
       firmware: lab('amd.com/gpu.firmware', 'nvidia.com/gpu.firmware'), kernel: info.kernelVersion, os: info.osImage, runtime: info.containerRuntimeVersion, kubelet: info.kubeletVersion };
     for (const k of Object.keys(versions)) if (!versions[k]) delete versions[k];
-    return [{ t, node: n.metadata.name, vendor, kind, sku: SKU_LABELS.map(k => labels[k]).find(Boolean) || '', devices: +cap[res],
+    const itype = labels['node.kubernetes.io/instance-type'] || labels['beta.kubernetes.io/instance-type'], inst = REG.instanceOf(itype), cloud = cloudIdentity((n.spec || {}).providerID);
+    const sku = SKU_LABELS.filter(k => k !== 'node.kubernetes.io/instance-type').map(k => labels[k]).find(Boolean) || (inst && inst.chip) || itype || '';
+    return [{ t, node: n.metadata.name, vendor, kind, sku, devices: +cap[res],
       site: labels['topology.kubernetes.io/region'] || labels['topology.kubernetes.io/zone'] || '', rack: lab(...RACK_LABELS) || undefined,
+      ...(itype ? { instanceType: itype } : {}), ...(cloud ? { cloud } : {}),
       ...(Object.keys(versions).length ? { versions } : {}), source: 'kubernetes' }];
   });
+}
+// Node conditions that report hardware trouble, as log records: the EKS node monitoring agent's AcceleratedHardwareReady,
+// NetworkingReady, StorageReady and KernelReady (bad when False; the reason names the fault, e.g. NvidiaXID79Error),
+// and node-problem-detector's conditions on any cloud (KernelDeadlock, ReadonlyFilesystem, … bad when True).
+const STD_CONDITIONS = new Set(['Ready', 'MemoryPressure', 'DiskPressure', 'PIDPressure', 'NetworkUnavailable']);
+const COND_CLASS = { AcceleratedHardwareReady: 'hardware', NetworkingReady: 'network', StorageReady: 'storage', KernelReady: 'node' };
+export function k8sNodeConditions(json, { t: t0 = Math.floor(Date.now() / 1000) } = {}) {
+  const j = typeof json === 'string' ? JSON.parse(json) : json, out = [];
+  for (const n of j.items || []) for (const c of (n.status || {}).conditions || []) {
+    if (STD_CONDITIONS.has(c.type)) continue;
+    const bad = /Ready$/.test(c.type) ? c.status === 'False' : c.status === 'True';
+    if (!bad) continue;
+    const reason = String(c.reason || c.type), xid = reason.match(/NvidiaXID(\d+)Error/);
+    const cls = xid ? 'gpu' : /DoubleBit|ECC|PageRetire|RowRemap/i.test(reason) ? 'ecc' : /Neuron/.test(reason) ? 'hardware' : COND_CLASS[c.type] || 'node';
+    out.push({ t: toEpoch(c.lastTransitionTime || c.lastHeartbeatTime) ?? t0, node: n.metadata.name, code: xid ? `xid${xid[1]}` : `k8s_${c.type}`, class: cls, severity: 'hard',
+      reason, condition: c.type, msg: String(c.message || '').slice(0, 300), source: 'k8s-condition' });
+  }
+  // GKE: host maintenance scheduled for a GPU or TPU node (they don't live-migrate): planned, not a fault
+  for (const n of j.items || []) {
+    const at = +(((n.metadata || {}).labels || {})['cloud.google.com/scheduled-maintenance-time']);
+    if (at > 0) out.push({ t: t0, node: n.metadata.name, code: 'scheduled_maintenance', class: 'maintenance', severity: 'info', at, msg: `host maintenance scheduled for ${new Date(at * 1000).toISOString()}`, source: 'k8s-label' });
+  }
+  return out;
 }
 // Rack labels people use; Kubernetes has no standard one.
 export const RACK_LABELS = ['topology.kubernetes.io/rack', 'node.kubernetes.io/rack', 'rack', 'topology.aiinfra/rack'];

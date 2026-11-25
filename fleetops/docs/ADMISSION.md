@@ -19,15 +19,15 @@ fleetops admit check gpu-a17
 fleetops admit apply gpu-a17            # admit-node waits for approval; reject-node runs on its own (dry run unless --live)
 ```
 
-`admit-node.sh` changes nothing on the node. Each part is skipped with a note when its tool is missing:
+`admit-node.sh` changes nothing on the node. It runs on NVIDIA nodes (`nvidia-smi`) and on AMD nodes (`amd-smi`). Each part is skipped with a note when its tool is missing:
 
 | Part | Runs | Record |
 |---|---|---|
-| versions | `nvidia-smi` (driver, VBIOS, CUDA, GPU model and count), `uname -r`, NCCL through PyTorch | inventory |
-| topology | PCIe generation (maximum) and width (current) per GPU, active NVLink links | check, topology |
-| dcgm-diag | `dcgmi diag -r 3` (`--diag-level`) | check |
-| nccl | `all_reduce_perf` from nccl-tests on every GPU of the node, 1–4 GB messages | check (bus bandwidth) |
-| burn-in | with `--burn-in`: `dcgmproftester` tensor load, the hottest GPU sampled every 30 s, new XIDs counted | check |
+| versions | NVIDIA: `nvidia-smi` (driver, VBIOS, CUDA, GPU model and count). AMD: `amd-smi static` (driver, IFWI, model and count) and `/opt/rocm/.info/version`. Both: `uname -r`, NCCL or RCCL through PyTorch | inventory |
+| topology | PCIe generation (maximum) and width (current) per GPU; active NVLink links (`nvidia-smi nvlink -s`) or XGMI links (`amd-smi topology`) | check, topology |
+| diag | NVIDIA: `dcgmi diag -r 3` (`--diag-level`), recorded as `dcgm-diag`. AMD: the ROCm Validation Suite, `rvs -c CONF` (`--rvs-conf`; default `gst_single.conf`), recorded as `rvs-diag` | check |
+| nccl | `all_reduce_perf` from nccl-tests (NVIDIA) or rccl-tests (AMD) on every GPU of the node, 1–4 GB messages | check (bus bandwidth) |
+| burn-in | with `--burn-in`, NVIDIA only: `dcgmproftester` tensor load, the hottest GPU sampled every 30 s, new XIDs counted. On AMD, run your own load: the check counts hours under load from the exporter's samples | check |
 | sdc-canary | `tools/sdc-canary.py` | sdc_check |
 
 `fleetops admit check NODE` judges six checks:
@@ -35,11 +35,11 @@ fleetops admit apply gpu-a17            # admit-node waits for approval; reject-
 | Check | Passes when | Compared with |
 |---|---|---|
 | burn-in | `burnInS` (6 h) at ≥ 50% load with no hard fault, no new uncorrectable ECC error, no pending row remap, GPU ≤ 87 °C, HBM ≤ 95 °C | DCGM samples from the store (preferred), or the script's burn-in record |
-| dcgm-diag | the diagnostic passed | — |
+| diag | the vendor's diagnostic passed (`dcgm-diag` or `rvs-diag`; a policy that lists `dcgm-diag` means this check) | — |
 | sdc-canary | every GPU ran the canary and agreed with its peers or the golden values | — |
 | nccl | all-reduce bus bandwidth ≥ 90% of the reference | the median of the same SKU's admitted nodes (at least 3), or `ncclRef` in the policy |
-| topology | as many GPUs and NVLink links, and the same PCIe link, as the same SKU's other nodes | peers |
-| versions | driver, CUDA, firmware, VBIOS, NCCL and kernel equal to the baseline | `golden` in the policy, or what most admitted nodes of the SKU run |
+| topology | as many GPUs and scale-up links (NVLink or XGMI), and the same PCIe link, as the same SKU's other nodes | peers |
+| versions | driver, CUDA or ROCm, firmware, VBIOS or IFWI, NCCL or RCCL, and kernel equal to the baseline | `golden` in the policy, or what most admitted nodes of the SKU run |
 
 The verdict:
 - **reject** if any required check fails, with the evidence;

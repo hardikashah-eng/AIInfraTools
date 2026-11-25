@@ -14,12 +14,15 @@ step it saw exporter counters, job outcomes and serving metrics. It now also see
 | `auto` | any of the files below | recognized by content (`fleetops data import auto FILE…`); a bundle from `tools/collect.sh` is imported with `data import bundle` ([TUNE.md](TUNE.md)) |
 | `requests` | gateway or proxy request logs: LiteLLM, OpenAI-style usage, OTLP gen_ai spans, CSV of t, isl, osl, ttft, e2e | `request` (token counts and latencies only) |
 | `kernel-log` | `journalctl -k -o short-iso`, `dmesg -T` (`--utc-offset`), `dmesg` (`--boot`), syslog (`--year`) | `log` |
-| `app-log` | NCCL / PyTorch job output, optionally `kubectl logs --timestamps` | `log` |
+| `app-log` | NCCL, RCCL or PyTorch job output (CUDA or HIP errors), optionally `kubectl logs --timestamps` | `log` |
 | `nvidia-smi-q` | `nvidia-smi -q` | `inventory` with versions, GPU serials, UUIDs and the PCI → GPU map |
 | `nvidia-topo` | `nvidia-smi topo -m` | `topology`: NVLink pairs, GPU ↔ NIC PCIe path |
+| `cloud-monitoring` | Google Cloud Monitoring `timeSeries.list` JSON: `kubernetes.io/node/accelerator/*` on GKE, or TPU VM accelerator metrics | `device`: duty cycle (SM), TensorCore utilization, memory bandwidth, memory used and total; GPU or TPU from the metric's `make` |
+| `amd-smi-static` | `amd-smi static --json` (`--rocm V`) | `inventory` with driver, IFWI (VBIOS) per GPU, ROCm, power limit and the PCI → GPU map |
+| `amd-smi-topology` | `amd-smi topology --json` (both layouts amd-smi has shipped) | `topology`: XGMI links and PCIe peer links with hops |
 | `ibnetdiscover` | `ibnetdiscover` | `topology`: host → leaf → spine |
 | `racks` | CSV `node,rack,row,pdu,site` | `topology` |
-| `k8s-nodes` | `kubectl get nodes -o json` | `inventory` with versions (GPU feature discovery labels, node info); rack/zone edges |
+| `k8s-nodes` | `kubectl get nodes -o json` | `inventory` with versions (GPU feature discovery labels, node info), the cloud instance, zone and project from `spec.providerID`, and the GPU from the instance type when there are no GPU labels; rack/zone edges; `log` records for hardware conditions (the EKS node monitoring agent's `AcceleratedHardwareReady=False` with its XID, node-problem-detector conditions) and for GKE's scheduled host maintenance (`cloud.google.com/scheduled-maintenance-time`, a planned event) |
 | `slurm-nodes` | `scontrol show node -o` | `inventory` with the kernel version |
 | `k8s-events` | `kubectl get events -A -o json` | `change` (cordon, reboot, scaling) and `log` (NotReady, OOM, mount failures, evictions) |
 | `helm-history` | `helm history REL -n NS -o json` | `change` (one per revision) |

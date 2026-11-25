@@ -1,0 +1,426 @@
+{
+ "timeSeries": [
+  {
+   "metric": {
+    "type": "kubernetes.io/node/accelerator/duty_cycle",
+    "labels": {
+     "accelerator_id": "0",
+     "make": "tpu",
+     "model": "tpu-v6e-slice",
+     "tpu_topology": "2x4"
+    }
+   },
+   "resource": {
+    "type": "k8s_node",
+    "labels": {
+     "project_id": "acme-ml",
+     "location": "us-east5-b",
+     "cluster_name": "serve",
+     "node_name": "gke-serve-v6e-pool-5e6f7a8b-q9w1"
+    }
+   },
+   "metricKind": "GAUGE",
+   "valueType": "INT64",
+   "points": [
+    {
+     "interval": {
+      "startTime": "2026-11-20T10:01:00Z",
+      "endTime": "2026-11-20T10:01:00Z"
+     },
+     "value": {
+      "int64Value": "92"
+     }
+    },
+    {
+     "interval": {
+      "startTime": "2026-11-20T10:00:00Z",
+      "endTime": "2026-11-20T10:00:00Z"
+     },
+     "value": {
+      "int64Value": "90"
+     }
+    }
+   ]
+  },
+  {
+   "metric": {
+    "type": "kubernetes.io/node/accelerator/tensorcore_utilization",
+    "labels": {
+     "accelerator_id": "0",
+     "make": "tpu",
+     "model": "tpu-v6e-slice",
+     "tpu_topology": "2x4"
+    }
+   },
+   "resource": {
+    "type": "k8s_node",
+    "labels": {
+     "project_id": "acme-ml",
+     "location": "us-east5-b",
+     "cluster_name": "serve",
+     "node_name": "gke-serve-v6e-pool-5e6f7a8b-q9w1"
+    }
+   },
+   "metricKind": "GAUGE",
+   "valueType": "DOUBLE",
+   "points": [
+    {
+     "interval": {
+      "startTime": "2026-11-20T10:01:00Z",
+      "endTime": "2026-11-20T10:01:00Z"
+     },
+     "value": {
+      "doubleValue": 61.5
+     }
+    },
+    {
+     "interval": {
+      "startTime": "2026-11-20T10:00:00Z",
+      "endTime": "2026-11-20T10:00:00Z"
+     },
+     "value": {
+      "doubleValue": 60.0
+     }
+    }
+   ]
+  },
+  {
+   "metric": {
+    "type": "kubernetes.io/node/accelerator/memory_used",
+    "labels": {
+     "accelerator_id": "0",
+     "make": "tpu",
+     "model": "tpu-v6e-slice",
+     "tpu_topology": "2x4"
+    }
+   },
+   "resource": {
+    "type": "k8s_node",
+    "labels": {
+     "project_id": "acme-ml",
+     "location": "us-east5-b",
+     "cluster_name": "serve",
+     "node_name": "gke-serve-v6e-pool-5e6f7a8b-q9w1"
+    }
+   },
+   "metricKind": "GAUGE",
+   "valueType": "INT64",
+   "points": [
+    {
+     "interval": {
+      "startTime": "2026-11-20T10:01:00Z",
+      "endTime": "2026-11-20T10:01:00Z"
+     },
+     "value": {
+      "int64Value": "29000000000"
+     }
+    },
+    {
+     "interval": {
+      "startTime": "2026-11-20T10:00:00Z",
+      "endTime": "2026-11-20T10:00:00Z"
+     },
+     "value": {
+      "int64Value": "29000000000"
+     }
+    }
+   ]
+  },
+  {
+   "metric": {
+    "type": "kubernetes.io/node/accelerator/memory_total",
+    "labels": {
+     "accelerator_id": "0",
+     "make": "tpu",
+     "model": "tpu-v6e-slice",
+     "tpu_topology": "2x4"
+    }
+   },
+   "resource": {
+    "type": "k8s_node",
+    "labels": {
+     "project_id": "acme-ml",
+     "location": "us-east5-b",
+     "cluster_name": "serve",
+     "node_name": "gke-serve-v6e-pool-5e6f7a8b-q9w1"
+    }
+   },
+   "metricKind": "GAUGE",
+   "valueType": "INT64",
+   "points": [
+    {
+     "interval": {
+      "startTime": "2026-11-20T10:01:00Z",
+      "endTime": "2026-11-20T10:01:00Z"
+     },
+     "value": {
+      "int64Value": "34359738368"
+     }
+    },
+    {
+     "interval": {
+      "startTime": "2026-11-20T10:00:00Z",
+      "endTime": "2026-11-20T10:00:00Z"
+     },
+     "value": {
+      "int64Value": "34359738368"
+     }
+    }
+   ]
+  },
+  {
+   "metric": {
+    "type": "kubernetes.io/node/accelerator/duty_cycle",
+    "labels": {
+     "accelerator_id": "1",
+     "make": "tpu",
+     "model": "tpu-v6e-slice",
+     "tpu_topology": "2x4"
+    }
+   },
+   "resource": {
+    "type": "k8s_node",
+    "labels": {
+     "project_id": "acme-ml",
+     "location": "us-east5-b",
+     "cluster_name": "serve",
+     "node_name": "gke-serve-v6e-pool-5e6f7a8b-q9w1"
+    }
+   },
+   "metricKind": "GAUGE",
+   "valueType": "INT64",
+   "points": [
+    {
+     "interval": {
+      "startTime": "2026-11-20T10:01:00Z",
+      "endTime": "2026-11-20T10:01:00Z"
+     },
+     "value": {
+      "int64Value": "12"
+     }
+    },
+    {
+     "interval": {
+      "startTime": "2026-11-20T10:00:00Z",
+      "endTime": "2026-11-20T10:00:00Z"
+     },
+     "value": {
+      "int64Value": "10"
+     }
+    }
+   ]
+  },
+  {
+   "metric": {
+    "type": "kubernetes.io/node/accelerator/tensorcore_utilization",
+    "labels": {
+     "accelerator_id": "1",
+     "make": "tpu",
+     "model": "tpu-v6e-slice",
+     "tpu_topology": "2x4"
+    }
+   },
+   "resource": {
+    "type": "k8s_node",
+    "labels": {
+     "project_id": "acme-ml",
+     "location": "us-east5-b",
+     "cluster_name": "serve",
+     "node_name": "gke-serve-v6e-pool-5e6f7a8b-q9w1"
+    }
+   },
+   "metricKind": "GAUGE",
+   "valueType": "DOUBLE",
+   "points": [
+    {
+     "interval": {
+      "startTime": "2026-11-20T10:01:00Z",
+      "endTime": "2026-11-20T10:01:00Z"
+     },
+     "value": {
+      "doubleValue": 6.5
+     }
+    },
+    {
+     "interval": {
+      "startTime": "2026-11-20T10:00:00Z",
+      "endTime": "2026-11-20T10:00:00Z"
+     },
+     "value": {
+      "doubleValue": 5.0
+     }
+    }
+   ]
+  },
+  {
+   "metric": {
+    "type": "kubernetes.io/node/accelerator/memory_used",
+    "labels": {
+     "accelerator_id": "1",
+     "make": "tpu",
+     "model": "tpu-v6e-slice",
+     "tpu_topology": "2x4"
+    }
+   },
+   "resource": {
+    "type": "k8s_node",
+    "labels": {
+     "project_id": "acme-ml",
+     "location": "us-east5-b",
+     "cluster_name": "serve",
+     "node_name": "gke-serve-v6e-pool-5e6f7a8b-q9w1"
+    }
+   },
+   "metricKind": "GAUGE",
+   "valueType": "INT64",
+   "points": [
+    {
+     "interval": {
+      "startTime": "2026-11-20T10:01:00Z",
+      "endTime": "2026-11-20T10:01:00Z"
+     },
+     "value": {
+      "int64Value": "29000000000"
+     }
+    },
+    {
+     "interval": {
+      "startTime": "2026-11-20T10:00:00Z",
+      "endTime": "2026-11-20T10:00:00Z"
+     },
+     "value": {
+      "int64Value": "29000000000"
+     }
+    }
+   ]
+  },
+  {
+   "metric": {
+    "type": "kubernetes.io/node/accelerator/memory_total",
+    "labels": {
+     "accelerator_id": "1",
+     "make": "tpu",
+     "model": "tpu-v6e-slice",
+     "tpu_topology": "2x4"
+    }
+   },
+   "resource": {
+    "type": "k8s_node",
+    "labels": {
+     "project_id": "acme-ml",
+     "location": "us-east5-b",
+     "cluster_name": "serve",
+     "node_name": "gke-serve-v6e-pool-5e6f7a8b-q9w1"
+    }
+   },
+   "metricKind": "GAUGE",
+   "valueType": "INT64",
+   "points": [
+    {
+     "interval": {
+      "startTime": "2026-11-20T10:01:00Z",
+      "endTime": "2026-11-20T10:01:00Z"
+     },
+     "value": {
+      "int64Value": "34359738368"
+     }
+    },
+    {
+     "interval": {
+      "startTime": "2026-11-20T10:00:00Z",
+      "endTime": "2026-11-20T10:00:00Z"
+     },
+     "value": {
+      "int64Value": "34359738368"
+     }
+    }
+   ]
+  },
+  {
+   "metric": {
+    "type": "kubernetes.io/node/accelerator/duty_cycle",
+    "labels": {
+     "accelerator_id": "0",
+     "make": "nvidia",
+     "model": "NVIDIA H200 141GB"
+    }
+   },
+   "resource": {
+    "type": "k8s_node",
+    "labels": {
+     "project_id": "acme-ml",
+     "location": "us-east5-b",
+     "cluster_name": "serve",
+     "node_name": "gke-train-a3u-pool-1a2b3c4d-x7k2"
+    }
+   },
+   "metricKind": "GAUGE",
+   "valueType": "INT64",
+   "points": [
+    {
+     "interval": {
+      "startTime": "2026-11-20T10:01:00Z",
+      "endTime": "2026-11-20T10:01:00Z"
+     },
+     "value": {
+      "int64Value": "97"
+     }
+    }
+   ]
+  },
+  {
+   "metric": {
+    "type": "kubernetes.io/node/accelerator/memory_used",
+    "labels": {
+     "accelerator_id": "0",
+     "make": "nvidia",
+     "model": "NVIDIA H200 141GB"
+    }
+   },
+   "resource": {
+    "type": "k8s_node",
+    "labels": {
+     "project_id": "acme-ml",
+     "location": "us-east5-b",
+     "cluster_name": "serve",
+     "node_name": "gke-train-a3u-pool-1a2b3c4d-x7k2"
+    }
+   },
+   "metricKind": "GAUGE",
+   "valueType": "INT64",
+   "points": [
+    {
+     "interval": {
+      "startTime": "2026-11-20T10:01:00Z",
+      "endTime": "2026-11-20T10:01:00Z"
+     },
+     "value": {
+      "int64Value": "120000000000"
+     }
+    }
+   ]
+  },
+  {
+   "metric": {
+    "type": "kubernetes.io/node/cpu/allocatable_utilization",
+    "labels": {}
+   },
+   "resource": {
+    "type": "k8s_node",
+    "labels": {
+     "node_name": "gke-train-a3u-pool-1a2b3c4d-x7k2"
+    }
+   },
+   "points": [
+    {
+     "interval": {
+      "endTime": "2026-11-20T10:01:00Z"
+     },
+     "value": {
+      "doubleValue": 0.4
+     }
+    }
+   ]
+  }
+ ]
+}

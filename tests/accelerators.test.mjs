@@ -18,7 +18,9 @@ test('registry: every chip is a valid sizer entry, ids are unique, every vendor 
   for (const a of R.ACCELERATORS) {
     const v = C.validateGPU(a);
     assert.ok(v.ok, `${a.id}: ${v.errors.join('; ')}`);
-    for (const k of ['tdpW', 'match', 'vendorKey', 'kind', 'source']) assert.ok(a[k], `${a.id} has ${k}`);
+    for (const k of ['match', 'vendorKey', 'kind', 'source']) assert.ok(a[k], `${a.id} has ${k}`);
+    if (a.kind === 'gpu') assert.ok(a.tdpW > 0, `${a.id} has board power`);
+    if (a.kind === 'tpu') assert.ok(a.gkeAccelerator, `${a.id} has its GKE accelerator label`);
     assert.ok(/^https:\/\//.test(a.source));
   }
   for (const a of R.ACCELERATORS.concat(R.OTHER_SKUS)) {
@@ -44,7 +46,7 @@ test('registry: telemetry SKU names resolve to the most specific chip (power fal
   assert.equal(tdpOf('AMD Instinct MI355X'), 1400);
   assert.equal(tdpOf(null), null);
   assert.equal(R.vendorKeyOf('AMD'), 'amd'); assert.equal(R.vendorKeyOf('NVIDIA H100 80GB HBM3'), 'nvidia'); assert.equal(R.vendorKeyOf({ id: 'MI355X' }), 'amd');
-  assert.throws(() => R.vendor('acme-npu'), /no vendor adapter for acme-npu; known: nvidia, amd/);
+  assert.throws(() => R.vendor('acme-npu'), /no vendor adapter for acme-npu; known: nvidia, amd, tpu/);
 });
 
 test('registry: the sizer catalog and FleetScope read it (same figures for the chips they had, plus the new ones)', () => {

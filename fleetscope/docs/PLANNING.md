@@ -21,12 +21,14 @@ On the Hybrid chat burst graph (57% SLO met today), a 95% target is met by movin
 
 ## Buy vs rent
 
-This costs three ways to supply growing peak GPU demand over a horizon (24 months by default):
+This costs five ways to supply growing peak GPU demand over a horizon (24 months by default):
 - **Rent on demand:** pay for average use at on-demand prices.
 - **Reserve the base:** reserved prices for the base load, on demand for the peaks.
+- **Reserve the base, capacity blocks for the peaks:** short-term blocks for the peaks, such as AWS EC2 Capacity Blocks for ML or GCP calendar-mode reservations. They are bought in whole days, so the peak hours are assumed to come as one run of days (a training run or a launch); `blockPerGpuH` sets the price. To see what is actually on offer, `fleetops procure aws-blocks --gpu H100 --gpus 64 --days 7` prints the read-only AWS command; `fleetops procure gcp-calendar --gpu H200 --gpus 64 --days 7 --region us-central1` (or `--gpu TPU-v6e --chips 64`) prints GCP's calendar-mode advice command.
+- **Reserve the base, spot for the peaks:** the peak hours on spot (`spotPerGpuH`), plus the share redone after interruptions (`spotRework`, 10% by default).
 - **Buy the base, rent the peaks:** order on-prem GPUs so that, after the lead time, owned capacity covers the base load. Pay capex on delivery, plus power (kW per GPU × PUE × $/kWh) and operations, and rent the rest on demand. Hardware keeps its undepreciated value at the end.
 
-The result gives cumulative cost curves, the cheapest strategy, the month buying pays back against renting, and the order schedule. At the defaults (16 GPUs today, +4% a month): buying the base costs $751k net of residual value, against $826k reserved and $1.18M rented, and pays back by month 21. This is a rough model, not financial advice.
+The result gives cumulative cost curves, the cheapest strategy, the month buying pays back against renting, and the order schedule. At the defaults (16 GPUs today, +4% a month): buying the base costs $751k net of residual value, against $826k reserved and $1.18M rented, and pays back by month 21. The block and spot prices are placeholders; set your own. This is a rough model, not financial advice.
 
 ## MIG
 
