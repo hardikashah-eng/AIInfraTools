@@ -1,0 +1,10 @@
+RCCL version : 2.22.3-7a84c5a
+HIP version  : 6.3.42131-fa1d09cbd
+ROCm version : 6.3.1.0-48-ffc3b44
+Hostname     : mi300-a01
+Librccl path : /opt/rocm/lib/librccl.so.1
+mi300-a01:51234:51234 [0] NCCL INFO Bootstrap : Using eth0:10.0.0.11<0>
+mi300-a01:51234:51234 [0] NCCL INFO NET/IB : Using [0]mlx5_0:1/RoCE [1]mlx5_1:1/RoCE ; OOB eth0:10.0.0.11<0>
+mi300-a01:51234:51301 [3] transport/net_ib.cc:1652 NCCL WARN NET/IB: Got completion from peer 10.0.0.12<41923> with status=12 opcode=0 len=0 vendor err 129 (Recv) localGid ::ffff:10.0.0.11 remoteGid ::ffff:10.0.0.12 hca mlx5_1
+mi300-a01:51234:51301 [3] proxy.cc:1500 NCCL WARN [Service thread] Connection closed by localRank 3
+[rank3]: torch.OutOfMemoryError: HIP out of memory. Tried to allocate 2.00 GiB. GPU 3 has a total capacity of 191.98 GiB of which 1.20 GiB is free.

@@ -1,0 +1,48 @@
+[
+ {
+  "gpu": 0,
+  "link_accessibility": {
+   "gpu_0": "ENABLED",
+   "gpu_1": "DISABLED"
+  },
+  "weight": {
+   "gpu_0": 0,
+   "gpu_1": 40
+  },
+  "hops": {
+   "gpu_0": 0,
+   "gpu_1": 2
+  },
+  "link_type": {
+   "gpu_0": "SELF",
+   "gpu_1": "PCIE"
+  },
+  "numa_bandwidth": {
+   "gpu_0": "N/A",
+   "gpu_1": "N/A"
+  }
+ },
+ {
+  "gpu": 1,
+  "link_accessibility": {
+   "gpu_0": "DISABLED",
+   "gpu_1": "ENABLED"
+  },
+  "weight": {
+   "gpu_0": 40,
+   "gpu_1": 0
+  },
+  "hops": {
+   "gpu_0": 2,
+   "gpu_1": 0
+  },
+  "link_type": {
+   "gpu_0": "PCIE",
+   "gpu_1": "SELF"
+  },
+  "numa_bandwidth": {
+   "gpu_0": "N/A",
+   "gpu_1": "N/A"
+  }
+ }
+]
