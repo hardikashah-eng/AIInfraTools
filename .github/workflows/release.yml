@@ -1,0 +1,46 @@
+# Release: push a tag vX.Y.Z on main (git tag v0.2.0 && git push origin v0.2.0). This workflow checks that the tag
+# matches package.json, runs the tests, creates the GitHub release with that version's CHANGELOG section, and
+# publishes aiinfra-tools to npm with provenance.
+#
+# npm, one-time setup (by the repository owner on npmjs.com):
+#   - first publish: `npm publish` from a clone, signed in as yourself (trusted publishing needs the package to exist);
+#   - then on the package page: Settings → Trusted publishing → GitHub Actions: repository
+#     hardikashah-eng/AIInfraTools, workflow release.yml. No token is stored anywhere after that.
+# Until then the npm step can use an NPM_TOKEN repository secret instead (a granular, publish-only token); without
+# either, the release is still created and the npm step is skipped.
+name: Release
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+permissions:
+  contents: write
+  id-token: write
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          registry-url: https://registry.npmjs.org
+      - name: The tag matches package.json
+        if: github.ref_type == 'tag'
+        run: test "v$(node -p 'require("./package.json").version')" = "$GITHUB_REF_NAME"
+      - run: npm test
+      - name: Release notes from CHANGELOG.md
+        run: node scripts/release-notes.mjs "$(node -p 'require("./package.json").version')" > notes.md
+      - name: GitHub release
+        if: github.ref_type == 'tag'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1 || gh release create "$GITHUB_REF_NAME" --title "$GITHUB_REF_NAME" --notes-file notes.md --verify-tag
+      - name: Publish to npm
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: |
+          npm install -g npm@latest
+          V=$(node -p 'require("./package.json").version')
+          if npm view "aiinfra-tools@$V" version >/dev/null 2>&1; then echo "aiinfra-tools@$V is already on npm"; exit 0; fi
+          npm publish --provenance --access public || { echo "::warning::npm publish failed: set up trusted publishing or an NPM_TOKEN secret (see the top of release.yml)"; exit 0; }
