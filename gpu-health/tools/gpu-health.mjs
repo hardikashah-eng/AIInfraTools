@@ -4,6 +4,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { loadConfig } from '../src/config.mjs';
+import { loadPlatformNodes } from '../src/platforms.mjs';
 import { readSamples, samplesFromExporter } from '../src/ingest.mjs';
 import { analyze } from '../src/analyze.mjs';
 import { persistable } from '../src/health.mjs';
@@ -52,7 +53,7 @@ const readJson = f => (f.endsWith('.jsonl') ? readJsonl(f) : JSON.parse(read(f))
 const list = v => (v && v !== true ? String(v).split(',').map(s => s.trim()).filter(Boolean) : []);
 const $ = v => '$' + Math.round(v || 0).toLocaleString('en-US');
 
-function config(o) { return loadConfig(o.config ? JSON.parse(read(o.config)) : {}); }
+function config(o) { return loadPlatformNodes(loadConfig(o.config ? JSON.parse(read(o.config)) : {})); }
 function stateDir(o) { return path.resolve(o.state && o.state !== true ? o.state : 'gpu-health-state'); }
 function prevHealth(dir) { const f = path.join(dir, 'health.json'); return fs.existsSync(f) ? JSON.parse(read(f)) : { gpus: {} }; }
 // executed releases feed back into health as results

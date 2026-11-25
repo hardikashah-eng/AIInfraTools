@@ -95,11 +95,14 @@
   // rent on demand, rent reserved (1-year commitments) with on-demand burst, and hybrid (buy on-prem for the
   // base load with a lead time, reserve nothing, burst the rest on demand). On-prem cost: capex (paid at
   // delivery), power at PUE, and operations; hardware keeps its residual value at the end.
-  const CAP_DEFAULTS = { months: 24, gpusNow: 64, growthPct: 4, baseShare: 0.6, peakHoursShare: 0.35, gpuCapex: 32000, amortMonths: 48, kwPerGpu: 1.1, pue: 1.3, kwhPrice: 0.09, opsPerGpuMonth: 120, leadMonths: 3, reservedPerGpuH: 2.2, onDemandPerGpuH: 3.5, onPremStart: 0 };
+  // Two cloud ways to buy the peak on top of a reserved base: short-term blocks (AWS EC2 Capacity Blocks for ML,
+  // GCP calendar-mode reservations), bought in whole days, so the peak hours are assumed to come as one run of days;
+  // and spot, with a share of the spot hours redone after interruptions. Prices are placeholders: set your own.
+  const CAP_DEFAULTS = { months: 24, gpusNow: 64, growthPct: 4, baseShare: 0.6, peakHoursShare: 0.35, gpuCapex: 32000, amortMonths: 48, kwPerGpu: 1.1, pue: 1.3, kwhPrice: 0.09, opsPerGpuMonth: 120, leadMonths: 3, reservedPerGpuH: 2.2, onDemandPerGpuH: 3.5, onPremStart: 0, blockPerGpuH: 2.8, spotPerGpuH: 1.9, spotRework: 0.1 };
   function capacityPlan(o) {
     o = Object.assign({}, CAP_DEFAULTS, o || {});
     const H = 730, months = [];
-    const strat = { demand: [], rent: [], reserved: [], hybrid: [], owned: [] };
+    const strat = { demand: [], rent: [], reserved: [], hybrid: [], owned: [] }, DAYS = H / 24;
     let owned = o.onPremStart;
     const deliveries = [];
     for (let m = 0; m < o.months; m++) {
@@ -108,6 +111,9 @@
       const avgUse = base + (peak - base) * o.peakHoursShare;
       const rent = avgUse * H * o.onDemandPerGpuH;
       const reserved = base * H * o.reservedPerGpuH + (peak - base) * o.peakHoursShare * H * o.onDemandPerGpuH;
+      const blockDays = Math.min(DAYS, Math.ceil(o.peakHoursShare * DAYS - 1e-9));
+      const blocks = base * H * o.reservedPerGpuH + (peak - base) * blockDays * 24 * o.blockPerGpuH;
+      const spot = base * H * o.reservedPerGpuH + (peak - base) * o.peakHoursShare * H * o.spotPerGpuH * (1 + o.spotRework);
       // hybrid: order on-prem GPUs so that, after the lead time, owned capacity covers the base load
       const futureBase = o.gpusNow * Math.pow(1 + o.growthPct / 100, m + o.leadMonths) * o.baseShare;
       const pipeline = deliveries.filter(d => d.at >= m).reduce((a, d) => a + d.n, 0);
@@ -118,12 +124,12 @@
       const onprem = owned * (o.kwPerGpu * o.pue * H * o.kwhPrice + o.opsPerGpuMonth);
       const uncovered = Math.max(0, base - owned) * H + (peak - Math.max(base, Math.min(owned, peak))) * o.peakHoursShare * H;
       const hybrid = capex + onprem + Math.max(0, uncovered) * o.onDemandPerGpuH;
-      months.push({ m, peak, base, owned, order, capex, rent, reserved, hybrid });
+      months.push({ m, peak, base, owned, order, capex, rent, reserved, hybrid, blocks, spot, blockDays });
     }
     const residual = owned => owned * o.gpuCapex * Math.max(0, 1 - o.months / o.amortMonths);
     const sum = k => months.reduce((a, x) => a + x[k], 0);
-    const totals = { rent: sum('rent'), reserved: sum('reserved'), hybrid: sum('hybrid') - residual(owned), hybridCash: sum('hybrid') };
-    const ranked = Object.entries({ rent: totals.rent, reserved: totals.reserved, hybrid: totals.hybrid }).sort((a, b) => a[1] - b[1]);
+    const totals = { rent: sum('rent'), reserved: sum('reserved'), hybrid: sum('hybrid') - residual(owned), hybridCash: sum('hybrid'), blocks: sum('blocks'), spot: sum('spot') };
+    const ranked = Object.entries({ rent: totals.rent, reserved: totals.reserved, hybrid: totals.hybrid, blocks: totals.blocks, spot: totals.spot }).sort((a, b) => a[1] - b[1]);
     // break-even: first month where cumulative hybrid cash spend falls below cumulative renting
     let cr = 0, ch = 0, breakEven = null;
     for (const x of months) { cr += x.rent; ch += x.hybrid; if (breakEven == null && x.owned > 0 && ch <= cr) breakEven = x.m; }

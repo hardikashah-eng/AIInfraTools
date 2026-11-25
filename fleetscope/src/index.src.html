@@ -2269,10 +2269,10 @@ function renderPlanPanel() {
     num('target', 'SLO attainment target (%)', PL.target, 50, 99.9, 0.5) + num('n1', 'N-1 floor: SLO with the largest pool down (%, 0 = off)', PL.n1, 0, 99, 1) +
     '<div class="ctl check"><label><input type="checkbox" data-pl="gpuSwap"' + (PL.gpuSwap ? ' checked' : '') + '>Try other GPU types (H100, H200, B200)</label></div>' + num('evals', 'Simulation budget', PL.evals, 10, 200, 10) +
     '<div class="btnrow"><button class="btn primary" type="button" data-act="plOpt">Find the cheapest setup</button></div>';
-  else if (PL.tab === 'cap') { const c = PL.cap; h += '<div class="sub">Costs three ways to supply growing GPU demand over ' + c.months + ' months: rent on demand, reserve the base load, or buy on-prem for the base load (with a lead time) and rent the peaks.</div>' +
+  else if (PL.tab === 'cap') { const c = PL.cap; h += '<div class="sub">Costs five ways to supply growing GPU demand over ' + c.months + ' months: rent on demand; reserve the base load and rent the peaks on demand, as capacity blocks (EC2 Capacity Blocks, GCP calendar-mode reservations) or on spot; or buy on-prem for the base load (with a lead time) and rent the peaks.</div>' +
     num('gpusNow', 'Peak GPUs needed today', c.gpusNow, 1, 100000, 1, 'cap') + num('growthPct', 'Growth per month (%)', c.growthPct, -10, 50, 0.5, 'cap') + num('baseShare', 'Base load as a share of peak', c.baseShare, 0.1, 1, 0.05, 'cap') + num('peakHoursShare', 'Share of hours above base', c.peakHoursShare, 0.05, 1, 0.05, 'cap') +
     num('gpuCapex', 'On-prem $ per GPU (with server share)', c.gpuCapex, 1000, 200000, 500, 'cap') + num('leadMonths', 'Lead time (months)', c.leadMonths, 0, 18, 1, 'cap') + num('amortMonths', 'Depreciation (months)', c.amortMonths, 12, 84, 6, 'cap') + num('kwhPrice', 'Power $/kWh', c.kwhPrice, 0.01, 1, 0.01, 'cap') +
-    num('reservedPerGpuH', 'Reserved $/GPU-hour', c.reservedPerGpuH, 0.1, 20, 0.05, 'cap') + num('onDemandPerGpuH', 'On-demand $/GPU-hour', c.onDemandPerGpuH, 0.1, 20, 0.05, 'cap') + num('months', 'Horizon (months)', c.months, 6, 60, 6, 'cap') +
+    num('reservedPerGpuH', 'Reserved $/GPU-hour', c.reservedPerGpuH, 0.1, 20, 0.05, 'cap') + num('onDemandPerGpuH', 'On-demand $/GPU-hour', c.onDemandPerGpuH, 0.1, 20, 0.05, 'cap') + num('blockPerGpuH', 'Capacity block $/GPU-hour', c.blockPerGpuH, 0.1, 20, 0.05, 'cap') + num('spotPerGpuH', 'Spot $/GPU-hour', c.spotPerGpuH, 0.1, 20, 0.05, 'cap') + num('spotRework', 'Spot hours redone after interruptions', c.spotRework, 0, 1, 0.05, 'cap') + num('months', 'Horizon (months)', c.months, 6, 60, 6, 'cap') +
     '<div class="btnrow"><button class="btn primary" type="button" data-act="plCap">Compare</button></div>'; }
   else h += '<div class="sub">Packs small models onto MIG slices instead of whole GPUs. Each line: name, GPU memory in GB, replicas. Memory gets 30% headroom for KV cache.</div>' +
     '<div class="ctl"><textarea data-pl="migText" rows="6" style="width:100%;font-family:var(--font-mono);font-size:12px">' + esc(PL.migText) + '</textarea></div>' +
@@ -2315,9 +2315,10 @@ function optCard(A) {
 function capCard(A) {
   const r = A.res, M = r.months, W = 980, H = 190, L = 56, k = 1000;
   const cum = key => { let c = 0; return M.map(x => (c += x[key])); };
-  const series = { rent: cum('rent'), reserved: cum('reserved'), hybrid: cum('hybrid') };
+  const series = { rent: cum('rent'), reserved: cum('reserved'), blocks: cum('blocks'), spot: cum('spot'), hybrid: cum('hybrid') };
   const vmax = Math.max(...Object.values(series).map(a => a[a.length - 1])) * 1.05, X = m => L + (W - L - 10) * m / (M.length - 1), Y = v => 8 + (H - 30) * (1 - v / vmax);
-  const col = { rent: 'var(--crit)', reserved: 'var(--warn)', hybrid: 'var(--accent)' }, lab = { rent: 'Rent on demand', reserved: 'Reserve the base', hybrid: 'Buy the base, rent the peaks' };
+  const col = { rent: 'var(--crit)', reserved: 'var(--warn)', blocks: 'var(--neo)', spot: 'var(--muted)', hybrid: 'var(--accent)' },
+    lab = { rent: 'Rent on demand', reserved: 'Reserve the base', blocks: 'Reserve the base, capacity blocks for the peaks', spot: 'Reserve the base, spot for the peaks', hybrid: 'Buy the base, rent the peaks' };
   let svg = '<svg viewBox="0 0 ' + W + ' ' + H + '" style="width:100%;height:auto" role="img" aria-label="Cumulative cost by strategy">';
   for (const key in series) svg += '<path d="' + series[key].map((v, i) => (i ? 'L' : 'M') + X(i).toFixed(1) + ' ' + Y(v).toFixed(1)).join('') + '" fill="none" stroke="' + col[key] + '" stroke-width="2"/>';
   for (let m = 0; m < M.length; m += 6) svg += '<text x="' + X(m) + '" y="' + (H - 6) + '" font-size="10" fill="var(--muted)" text-anchor="middle">month ' + m + '</text>';
@@ -2327,7 +2328,7 @@ function capCard(A) {
     (r.best === 'hybrid' ? 'Buying pays back against renting by month ' + (r.breakEven == null ? '—' : r.breakEven) + ', and leaves ' + fInt(r.ownedEnd) + ' GPUs worth about ' + fUsd(r.residual) + ' after depreciation.' : 'At these prices and growth, owning does not pay back within the horizon.') + '</p>' + svg +
     '<div class="glegend">' + Object.keys(series).map(key => '<span><i style="background:' + col[key] + '"></i>' + lab[key] + ': ' + fUsd(r.totals[key] / 1) + (key === 'hybrid' ? ' net of residual value (' + fUsd(r.totals.hybridCash) + ' cash)' : '') + '</span>').join('') + '</div>' +
     (orders.length ? '<h3 class="sec">On-prem orders</h3><ul class="plain">' + orders.map(o => '<li>' + o + '</li>').join('') + '</ul>' : '') +
-    '<div class="sub">Rough model: average utilisation from base and peak shares, power at ' + r.opt.kwPerGpu + ' kW per GPU and PUE ' + r.opt.pue + ', operations ' + fUsd(r.opt.opsPerGpuMonth) + ' per GPU-month. Not financial advice.</div>';
+    '<div class="sub">Rough model: average utilisation from base and peak shares; capacity blocks bought in whole days (' + M[0].blockDays + ' a month), spot hours plus ' + fPct(r.opt.spotRework) + ' redone after interruptions; power at ' + r.opt.kwPerGpu + ' kW per GPU and PUE ' + r.opt.pue + ', operations ' + fUsd(r.opt.opsPerGpuMonth) + ' per GPU-month. Not financial advice.</div>';
 }
 function migCard(A) {
   const r = A.res;

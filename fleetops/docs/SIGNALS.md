@@ -21,7 +21,7 @@ step it saw exporter counters, job outcomes and serving metrics. It now also see
 | `amd-smi-topology` | `amd-smi topology --json` (both layouts amd-smi has shipped) | `topology`: XGMI links and PCIe peer links with hops |
 | `ibnetdiscover` | `ibnetdiscover` | `topology`: host → leaf → spine |
 | `racks` | CSV `node,rack,row,pdu,site` | `topology` |
-| `k8s-nodes` | `kubectl get nodes -o json` | `inventory` with versions (GPU feature discovery labels, node info); rack/zone edges |
+| `k8s-nodes` | `kubectl get nodes -o json` | `inventory` with versions (GPU feature discovery labels, node info), the cloud instance, zone and project from `spec.providerID`, and the GPU from the instance type when there are no GPU labels; rack/zone edges; `log` records for hardware conditions (the EKS node monitoring agent's `AcceleratedHardwareReady=False` with its XID, node-problem-detector conditions) |
 | `slurm-nodes` | `scontrol show node -o` | `inventory` with the kernel version |
 | `k8s-events` | `kubectl get events -A -o json` | `change` (cordon, reboot, scaling) and `log` (NotReady, OOM, mount failures, evictions) |
 | `helm-history` | `helm history REL -n NS -o json` | `change` (one per revision) |
