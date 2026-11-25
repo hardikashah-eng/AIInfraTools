@@ -8,6 +8,8 @@ Thanks for helping. Issues and pull requests are welcome.
   test helper in fleetops.)
 - **Safe by default.** Anything that changes infrastructure is a dry run unless `--live` and the config both allow
   it, and goes through the approval queue. See [SECURITY.md](SECURITY.md).
+- **New chips and vendors go in one place:** `inference-sizer/src/accelerators.js` (see
+  [ACCELERATORS.md](inference-sizer/docs/ACCELERATORS.md)). Every tool reads it.
 - **Every number needs a source.** A new GPU spec, efficiency or default cites where it came from. Validation on real
   data goes in `fleetops/tests/fixtures/real/` with its source and license in that folder's README.
 - **Say what is and isn't validated.** Docs state what was tested on synthetic data, on real data, and on a real

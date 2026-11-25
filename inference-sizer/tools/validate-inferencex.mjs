@@ -27,7 +27,7 @@ export const SOURCE = {
   repo: 'https://github.com/SemiAnalysisAI/InferenceX-app', commit: '187628924b6ec899b1f3f771617655dd4cd61d8c',
   path: 'packages/app/cypress/fixtures/api/benchmarks.json', sha256: 'f46823a76cb63248705329f327e1494df02b4dfa4df0898b7ee084c75c20bd52',
 };
-export const GPU = { b200: 'B200', b300: 'B300', h200: 'H200', h100: 'H100', mi300x: 'MI300X' };
+export const GPU = { b200: 'B200', b300: 'B300', h200: 'H200', h100: 'H100', mi300x: 'MI300X', mi325x: 'MI325X', mi355x: 'MI355X', gb200: 'GB200-NVL72', gb300: 'GB300-NVL72' };
 const MODEL = { dsr1: 'deepseek-v3' }; // DeepSeek-R1 has DeepSeek-V3's architecture
 
 export function fetchData(cache = path.join(os.homedir(), '.cache', 'aiinfra-tools', 'inferencex', SOURCE.commit.slice(0, 12))) {
@@ -86,7 +86,7 @@ export function run(rows) {
   const calTest = test.filter(r => fits[r.hardware]);
   const res = {
     source: SOURCE, rows: rows.length, used: all.length, train: train.length, test: calTest.length,
-    dates: [q(all.map(r => r.date), 0), q(all.map(r => r.date), 1)],
+    dates: [all.map(r => r.date).sort()[0], all.map(r => r.date).sort().pop()],
     overall: { roofline: summary(score(all, ROOF)), defaults: summary(score(all)), defaultsTest: summary(score(calTest)), calibratedTest: summary(score(calTest, cal)), calibratedTrain: summary(score(train, cal)) },
     byGpu: {}, byFramework: {}, byConc: {}, fits,
   };

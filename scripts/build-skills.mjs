@@ -26,8 +26,8 @@ function docRefs(tool) {
 }
 
 const SKILLS = {
-  'inference-sizer': { tool: 'inference-sizer', code: ['src', 'tools', 'package.json'], refs: { 'README.md': 'OVERVIEW.md', 'docs/METHOD.md': 'METHOD.md', 'docs/SPEC-SHEETS.md': 'SPEC-SHEETS.md' }, assets: { 'specs/example.json': 'example.json' } },
-  'fleetscope': { tool: 'fleetscope', code: ['src', 'tools', 'package.json'], refs: { 'docs/ASK.md': 'ASK.md', 'docs/TRACES.md': 'TRACES.md', 'docs/CI.md': 'CI.md', 'docs/CALIBRATION.md': 'CALIBRATION.md' }, assets: { 'scenarios/hybrid-chat': 'scenarios/hybrid-chat' }, generate: { 'references/NODE-TYPES.md': fleetNodeTypes } },
+  'inference-sizer': { tool: 'inference-sizer', code: ['src', 'tools', 'package.json'], refs: { 'README.md': 'OVERVIEW.md', 'docs/METHOD.md': 'METHOD.md', 'docs/SPEC-SHEETS.md': 'SPEC-SHEETS.md', 'docs/ACCELERATORS.md': 'ACCELERATORS.md' }, assets: { 'specs/example.json': 'example.json' } },
+  'fleetscope': { tool: 'fleetscope', code: ['src', 'tools', 'package.json'], with: { 'inference-sizer': ['src/accelerators.js', 'package.json'] }, refs: { 'docs/ASK.md': 'ASK.md', 'docs/TRACES.md': 'TRACES.md', 'docs/CI.md': 'CI.md', 'docs/CALIBRATION.md': 'CALIBRATION.md' }, assets: { 'scenarios/hybrid-chat': 'scenarios/hybrid-chat' }, generate: { 'references/NODE-TYPES.md': fleetNodeTypes } },
   'hybrid-tracing': { tool: 'hybrid-tracing', code: ['src', 'tools', 'clock', 'collector', 'deploy', 'package.json'], refs: { 'README.md': 'OVERVIEW.md', 'docs/CLOCKS.md': 'CLOCKS.md' }, assets: {} },
   'fleetops': { tool: 'fleetops', code: ['src', 'tools', 'deploy', 'install', 'examples', 'Dockerfile', 'package.json'],
     // fleetops imports these tools' code through ../../<tool>/src, so they sit next to it under scripts/
