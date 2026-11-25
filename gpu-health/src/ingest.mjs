@@ -87,6 +87,33 @@ export function samplesFromExporter(text, opts = {}) {
 }
 
 // JSON lines of samples (already normalized) -> array; validates the essentials.
+// Google Cloud Monitoring timeSeries.list JSON (projects.timeSeries.list, or `gcloud monitoring time-series list
+// --format=json`) → samples, for GKE node accelerators (kubernetes.io/node/accelerator/*, resource k8s_node) and TPU
+// VMs (…/accelerator/* on tpu_worker or gce_instance). Duty cycle stands in for SM activity, TensorCore utilization for
+// tensor activity, memory bandwidth utilization for HBM activity; values in % become fractions, bytes become GB.
+// make = nvidia → vendor nvidia, kind gpu; otherwise (a TPU model or a TPU resource) vendor tpu, kind tpu.
+const CM_FIELDS = { duty_cycle: ['sm', 100], tensorcore_utilization: ['tensor', 100], memory_bandwidth_utilization: ['dram', 100], memory_used: ['memUsedGB', 1e9], memory_total: ['memTotalGB', 1e9] }; // [field, divisor]
+export function samplesFromCloudMonitoring(json, { site } = {}) {
+  const j = typeof json === 'string' ? JSON.parse(json) : json, list = Array.isArray(j) ? j : (j.timeSeries || []), by = new Map();
+  for (const ts of list) {
+    const type = (ts.metric || {}).type || '', f = CM_FIELDS[(type.match(/accelerator\/(\w+)$/) || [])[1]];
+    if (!f) continue;
+    const ml = (ts.metric || {}).labels || {}, rl = (ts.resource || {}).labels || {}, rtype = (ts.resource || {}).type || '';
+    const node = rl.node_name || ml.instance_name || rl.instance_name || (rl.node_id ? `${rl.node_id}${rl.worker_id != null ? '-w' + rl.worker_id : ''}` : rl.instance_id);
+    if (!node) continue;
+    const make = String(ml.make || '').toLowerCase(), model = ml.model || '', tpu = make ? make !== 'nvidia' : /tpu/i.test(rtype + ' ' + model);
+    for (const pt of ts.points || []) {
+      const t = Math.floor(Date.parse((pt.interval || {}).endTime) / 1000), v = pt.value || {};
+      const x = v.doubleValue != null ? +v.doubleValue : v.int64Value != null ? +v.int64Value : null;
+      if (!Number.isFinite(t) || x == null || !Number.isFinite(x)) continue;
+      const k = `${node}|${ml.accelerator_id ?? 0}|${t}`;
+      if (!by.has(k)) by.set(k, { t, ...(site ? { site } : {}), node, gpu: String(ml.accelerator_id ?? 0), vendor: tpu ? 'tpu' : 'nvidia', kind: tpu ? 'tpu' : 'gpu', sku: model || (tpu ? 'TPU' : ''), ...(ml.tpu_topology ? { topology: ml.tpu_topology } : {}) });
+      by.get(k)[f[0]] = x / f[1];
+    }
+  }
+  return [...by.values()].sort((a, b) => a.t - b.t || a.node.localeCompare(b.node));
+}
+
 export function readSamples(text) {
   const out = [];
   String(text).split(/\r?\n/).forEach((l, i) => {

@@ -5,7 +5,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { loadConfig } from '../src/config.mjs';
 import { loadPlatformNodes } from '../src/platforms.mjs';
-import { readSamples, samplesFromExporter } from '../src/ingest.mjs';
+import { readSamples, samplesFromExporter, samplesFromCloudMonitoring } from '../src/ingest.mjs';
 import { analyze } from '../src/analyze.mjs';
 import { persistable } from '../src/health.mjs';
 import { Store } from '../src/actions.mjs';
@@ -19,7 +19,7 @@ const HELP = `gpu-health — GPU health, efficiency and savings, with an approva
   gpu-health demo [--out DIR] [--mixed]            build a demo fleet with planted problems and analyze it
                                                    (--mixed: AMD, SambaNova and Cloud TPU nodes instead)
   gpu-health analyze --samples F[,F] --jobs F      analyze; writes STATE/analysis.json and updates the action queue
-        [--prom F[,F]] [--vendor nvidia|amd|sambanova] [--steps F] [--probes F] [--results F] [--cluster F] [--config F] [--days 7] [--now EPOCH]
+        [--prom F[,F]] [--cloud-monitoring F[,F]] [--vendor nvidia|amd|sambanova] [--steps F] [--probes F] [--results F] [--cluster F] [--config F] [--days 7] [--now EPOCH]
         [--execute [--live]]                       also run actions the policy approves automatically
   gpu-health actions list [--status open|all|proposed|approved|executed|rejected]
   gpu-health actions approve ID... --by NAME
@@ -147,7 +147,8 @@ async function main() {
     for (const f of list(o.samples)) samples.push(...readSamples(read(f)));
     const cfgIn = config(o);
     for (const f of list(o.prom)) samples.push(...samplesFromExporter(read(f), { t: o.now ? +o.now : undefined, vendor: o.vendor && o.vendor !== true ? o.vendor : undefined, vendors: cfgIn.vendors, mappings: cfgIn.ingest.mappings }));
-    if (!samples.length) throw new Error('give --samples (JSONL) and/or --prom (exporter text)');
+    for (const f of list(o['cloud-monitoring'])) samples.push(...samplesFromCloudMonitoring(read(f)));
+    if (!samples.length) throw new Error('give --samples (JSONL), --prom (exporter text) and/or --cloud-monitoring (Google Cloud Monitoring timeSeries JSON)');
     const input = { samples, jobs: o.jobs ? readJson(o.jobs) : [], steps: o.steps ? readJsonl(o.steps) : [], probes: o.probes ? readJsonl(o.probes) : [],
       results: o.results ? readJsonl(o.results) : [], cluster: o.cluster ? readJson(o.cluster) : null };
     const { a, store, cfg } = runAnalysis(o, input);

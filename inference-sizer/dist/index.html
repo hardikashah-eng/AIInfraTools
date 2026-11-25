@@ -235,7 +235,9 @@ nav.views .chip { font-size: 12.5px; padding: 4px 12px; }
      hbmGB, hbmTBs, tfBf16, tfFp8, tfFp4   per chip, dense (sparsity figures halved; rack or system totals divided)
      scaleUpGBs   chip-to-chip link, per direction (NVLink, Infinity Fabric, ICI); domain: chips per scale-up domain
      nicGbps      scale-out network per chip; nodeKW: max power per domain where the vendor publishes it
-     tdpW         board power on the spec sheet (TBP/TDP); match: regex for the SKU names telemetry reports
+     tdpW         board power on the spec sheet (TBP/TDP; none for cloud-only chips that don't publish it); match: regex
+                  for the SKU names telemetry, Kubernetes labels and bills report
+     gkeAccelerator  GKE's cloud.google.com/gke-tpu-accelerator value, for TPU node selectors
      price, onprem  placeholder $/chip-hour (rent, and amortized on-prem cost for FleetScope), not quotes
      short        FleetScope's key and short label, where it differs from id; source: spec sheet URL
    OTHER_SKUS    chips seen in telemetry but not sized (only power and vendor): id, vendorKey, kind, tdpW, match
@@ -248,7 +250,7 @@ nav.views .chip { font-size: 12.5px; padding: 4px 12px; }
 
   const VENDORS = {
     nvidia: {
-      name: 'NVIDIA', kind: 'gpu', k8sResource: 'nvidia.com/gpu', productLabels: ['nvidia.com/gpu.product'],
+      name: 'NVIDIA', kind: 'gpu', k8sResource: 'nvidia.com/gpu', productLabels: ['nvidia.com/gpu.product', 'cloud.google.com/gke-accelerator'],
       smi: 'nvidia-smi', exporter: 'dcgm-exporter', collectives: 'NCCL', kvBufferDevice: 'cuda',
       images: { vllm: 'vllm/vllm-openai', llmdVllm: 'docker.io/vllm/vllm-openai:v0.31.0' },
     },
@@ -258,6 +260,13 @@ nav.views .chip { font-size: 12.5px; padding: 4px 12px; }
       // NIXL's UCX path on ROCm stages the KV cache through host memory in llm-d's P/D guide
       kvBufferDevice: 'cpu',
       images: { vllm: 'rocm/vllm', llmdVllm: 'docker.io/vllm/vllm-openai-rocm:v0.31.0' },
+    },
+    // Cloud TPU on GKE: chips requested as google.com/tpu, the slice chosen by accelerator and topology node labels.
+    // vLLM on TPU: the vllm/vllm-tpu image (GKE's Trillium tutorial). No llm-d P/D image validated for TPU here.
+    tpu: {
+      name: 'Google Cloud TPU', kind: 'tpu', k8sResource: 'google.com/tpu', productLabels: ['cloud.google.com/gke-tpu-accelerator'],
+      topologyLabel: 'cloud.google.com/gke-tpu-topology', smi: 'tpu-info', exporter: 'Cloud Monitoring (accelerator metrics) or libtpu', collectives: 'XLA collectives over ICI',
+      images: { vllm: 'vllm/vllm-tpu' },
     },
   };
 
@@ -286,6 +295,16 @@ nav.views .chip { font-size: 12.5px; padding: 4px 12px; }
     A({ id: 'MI325X', label: 'AMD Instinct MI325X (8-GPU)', vendor: 'AMD', vendorKey: 'amd', hbmGB: 256, hbmTBs: 6, tfBf16: 1307.4, tfFp8: 2614.9, scaleUpGBs: 448, domain: 8, nicGbps: 400, tdpW: 1000, price: 2.9, onprem: 1.7, match: 'MI325',
       // platform peer-to-peer I/O 896 GB/s bidirectional = 448 GB/s per direction
       source: 'https://www.amd.com/en/products/accelerators/instinct/mi300/mi325x.html' }),
+    // Cloud TPU: per chip, from cloud.google.com/tpu/docs (v6e, tpu7x pages). ICI figures are bidirectional there, halved
+    // here. domain = chips per TPU VM host; ICI across hosts in a slice is modelled as the data-center network, so
+    // tensor parallelism beyond one host is costed pessimistically. Prices: on-demand $/chip-hour, us-east1/us-central1.
+    A({ id: 'TPU7x', label: 'Google TPU7x (Ironwood), 4 per host', vendor: 'Google', vendorKey: 'tpu', kind: 'tpu', hbmGB: 192, hbmTBs: 7.37, tfBf16: 2307, tfFp8: 4614, scaleUpGBs: 600, domain: 4, nicGbps: 100, price: 12.0, gkeAccelerator: 'tpu7x', match: 'tpu7x|ironwood|TpuV7',
+      source: 'https://docs.cloud.google.com/tpu/docs/tpu7x' }),
+    A({ id: 'TPU-v6e', short: 'v6e', label: 'Google TPU v6e (Trillium), 8 per host', vendor: 'Google', vendorKey: 'tpu', kind: 'tpu', hbmGB: 32, hbmTBs: 1.64, tfBf16: 918, tfFp8: 918, scaleUpGBs: 400, domain: 8, nicGbps: 100, price: 2.7, gkeAccelerator: 'tpu-v6e-slice', match: 'v6e|trillium',
+      source: 'https://docs.cloud.google.com/tpu/docs/v6e' }),
+    A({ id: 'TPU-v5p', short: 'v5p', label: 'Google TPU v5p, 4 per host', vendor: 'Google', vendorKey: 'tpu', kind: 'tpu', hbmGB: 102, hbmTBs: 2.765, tfBf16: 459, tfFp8: 459, scaleUpGBs: 600, domain: 4, nicGbps: 50, price: 4.2, gkeAccelerator: 'tpu-v5p-slice', match: 'v5p',
+      // 95 GiB HBM per chip
+      source: 'https://docs.cloud.google.com/tpu/docs/tpu7x' }),
     A({ id: 'MI300X', label: 'AMD Instinct MI300X (8-GPU)', vendor: 'AMD', vendorKey: 'amd', hbmGB: 192, hbmTBs: 5.3, tfBf16: 1307, tfFp8: 2615, scaleUpGBs: 448, domain: 8, nicGbps: 400, nodeKW: 10, tdpW: 750, price: 2.6, onprem: 1.5, match: 'MI300X',
       source: 'https://www.amd.com/en/products/accelerators/instinct/mi300/mi300x.html' }),
   ];
@@ -302,6 +321,7 @@ nav.views .chip { font-size: 12.5px; padding: 4px 12px; }
     { id: 'V100', vendorKey: 'nvidia', kind: 'gpu', tdpW: 300, match: 'V100' },
     { id: 'MI350X', vendorKey: 'amd', kind: 'gpu', tdpW: 1000, match: 'MI350' },
     { id: 'MI250', vendorKey: 'amd', kind: 'gpu', tdpW: 560, match: 'MI250' },
+    { id: 'TPU-v5e', vendorKey: 'tpu', kind: 'tpu', match: 'v5e|v5-?lite' },
   ];
 
   // ---------- cloud instance types ----------
@@ -320,7 +340,24 @@ nav.views .chip { font-size: 12.5px; padding: 4px 12px; }
   add('aws', 'L4', sizes('g6', ['xlarge', '2xlarge', '4xlarge', '8xlarge', '16xlarge'], [['12xlarge', 4], ['24xlarge', 4], ['48xlarge', 8]]));
   add('aws', 'A10G', sizes('g5', ['xlarge', '2xlarge', '4xlarge', '8xlarge', '16xlarge'], [['12xlarge', 4], ['24xlarge', 4], ['48xlarge', 8]]));
   add('aws', 'T4', sizes('g4dn', ['xlarge', '2xlarge', '4xlarge', '8xlarge', '16xlarge'], [['12xlarge', 4], ['metal', 8]]));
+  // GCP: docs.cloud.google.com/compute/docs/gpus and /compute/docs/tpus/tpu-machines; GKE TPU machine types
+  const gpuN = (fam, chip, ns) => add('gcp', chip, ns.map(n => [`${fam}-${n}g`, n]));
+  gpuN('a2-highgpu', 'A100-40GB', [1, 2, 4, 8]); add('gcp', 'A100-40GB', [['a2-megagpu-16g', 16]]);
+  gpuN('a2-ultragpu', 'A100', [1, 2, 4, 8]);
+  gpuN('a3-highgpu', 'H100', [1, 2, 4, 8]); add('gcp', 'H100', [['a3-megagpu-8g', 8], ['a3-edgegpu-8g', 8]]);
+  add('gcp', 'H200', [['a3-ultragpu-8g', 8]]);
+  add('gcp', 'B200', [['a4-highgpu-8g', 8]]);
+  add('gcp', 'GB200-NVL72', [['a4x-highgpu-4g', 4]]);
+  add('gcp', 'L4', [4, 8, 12, 16, 32].map(n => [`g2-standard-${n}`, 1]).concat([['g2-standard-24', 2], ['g2-standard-48', 4], ['g2-standard-96', 8]]));
+  add('gcp', 'TPU-v6e', [['ct6e-standard-1t', 1], ['ct6e-standard-4t', 4], ['ct6e-standard-8t', 8]]);
+  add('gcp', 'TPU-v5p', [['ct5p-hightpu-4t', 4]]);
+  add('gcp', 'TPU7x', [['tpu7x-standard-4t', 4]]);
+  add('gcp', 'TPU-v5e', [['ct5lp-hightpu-1t', 1], ['ct5lp-hightpu-4t', 4], ['ct5lp-hightpu-8t', 8]]);
   const instanceOf = type => INSTANCES[String(type || '').toLowerCase()] || null;
+  // TPU slice topology for a chip count: 2D (v5e, v6e) or 3D torus (v4, v5p, 7x), as GKE's node selector wants it
+  const TOPO2 = { 1: '1x1', 4: '2x2', 8: '2x4', 16: '4x4', 32: '4x8', 64: '8x8', 128: '8x16', 256: '16x16' };
+  const TOPO3 = { 4: '2x2x1', 8: '2x2x2', 16: '2x2x4', 32: '2x4x4', 64: '4x4x4' };
+  function tpuTopology(chip, chips) { const a = byId(chip) || match(chip); if (!a) return null; return (/v6e|v5e/i.test(a.id) ? TOPO2 : TOPO3)[chips] || null; }
 
   // telemetry SKU string ("NVIDIA H100 80GB HBM3", "AMD Instinct MI300X", …) → registry entry, most specific first
   const ORDER = (() => {
@@ -357,7 +394,7 @@ nav.views .chip { font-size: 12.5px; padding: 4px 12px; }
     return Object.assign({ key: k }, VENDORS[k]);
   }
 
-  const api = { VENDORS, ACCELERATORS, OTHER_SKUS, INSTANCES, instanceOf, match, byId, tdpOf, vendorKeyOf, vendor };
+  const api = { VENDORS, ACCELERATORS, OTHER_SKUS, INSTANCES, instanceOf, tpuTopology, match, byId, tdpOf, vendorKeyOf, vendor };
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
   else root.AIInfraAccelerators = api;
 })(typeof globalThis !== 'undefined' ? globalThis : this);
@@ -414,8 +451,8 @@ nav.views .chip { font-size: 12.5px; padding: 4px 12px; }
   // From the shared accelerator registry (accelerators.js): per-GPU dense figures, HGX/DGX system totals divided by 8
   // (or 72 for NVL72), "with sparsity" figures halved. Prices are placeholder on-demand rents, not quotes.
   const REG = (typeof module !== 'undefined' && module.exports) ? require('./accelerators.js') : root.AIInfraAccelerators;
-  const ORDER = ['B200', 'B300', 'GB200-NVL72', 'GB300-NVL72', 'H200', 'H100', 'A100', 'L40S', 'MI300X', 'MI325X', 'MI355X'];
-  const KEEP = ['id', 'kind', 'vendorKey'].concat(GPU_FIELDS.map(f => f.k));
+  const ORDER = ['B200', 'B300', 'GB200-NVL72', 'GB300-NVL72', 'H200', 'H100', 'A100', 'L40S', 'MI300X', 'MI325X', 'MI355X', 'TPU7x', 'TPU-v6e', 'TPU-v5p'];
+  const KEEP = ['id', 'kind', 'vendorKey', 'gkeAccelerator'].concat(GPU_FIELDS.map(f => f.k));
   const GPUS = REG.ACCELERATORS.slice().sort((a, b) => (ORDER.indexOf(a.id) + 1 || 99) - (ORDER.indexOf(b.id) + 1 || 99))
     .map(g => Object.fromEntries(KEEP.filter(k => g[k] !== undefined).map(k => [k, g[k]])));
 

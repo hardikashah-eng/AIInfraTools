@@ -23,6 +23,32 @@ export const PLATFORMS = {
     unsupported: OWNED_BY_PROVIDER,
     autoRepairNote: 'EKS node auto repair reboots or replaces this node itself once the node monitoring agent sets AcceleratedHardwareReady=False (after about 10 minutes): check the node condition and events.',
   },
+  // Compute Engine VMs (Slurm or VM-based clusters): reset the VM; report the host as faulty so Compute Engine repairs
+  // it (gcloud compute instances report-host-as-faulty: behaviors PERFORMANCE, SILENT_DATA_CORRUPTION,
+  // UNRECOVERABLE_GPU_ERROR, CHIP_ERROR for TPUs).
+  gcp: {
+    name: 'Google Compute Engine',
+    executors: {
+      'node-reboot': [['gcloud', 'compute', 'instances', 'reset', '{instance}', '--zone={zone}', '--project={project}']],
+      'rma': [['gcloud', 'compute', 'instances', 'report-host-as-faulty', '{instance}', '--zone={zone}', '--project={project}', '--disruption-schedule=IMMEDIATE', '--fault-reasons=behavior={behavior},description=gpu-health']],
+    },
+    behaviors: { sdc: 'SILENT_DATA_CORRUPTION', performance: 'PERFORMANCE', tpu: 'CHIP_ERROR', default: 'UNRECOVERABLE_GPU_ERROR' },
+    unsupported: OWNED_BY_PROVIDER,
+  },
+  // GKE: label the node with the fault and GKE drains it, reports the host and brings it back repaired
+  // (docs.cloud.google.com/ai-hypercomputer/docs/manage/manage-gke-clusters: PERFORMANCE, SDC, XID).
+  gke: {
+    name: 'Google Kubernetes Engine',
+    executors: {
+      'node-reboot': [['gcloud', 'compute', 'instances', 'reset', '{instance}', '--zone={zone}', '--project={project}']],
+      'rma': [['kubectl', 'label', 'node', '{node}', 'cloud.google.com/fault-behavior={behavior}', '--overwrite']],
+    },
+    behaviors: { sdc: 'SDC', performance: 'PERFORMANCE', default: 'XID' },
+    // GKE's faulty-host label is documented for GPU nodes; TPU slices keep the TPU profile's steps
+    skipKinds: ['tpu'],
+    unsupported: OWNED_BY_PROVIDER,
+    autoRepairNote: 'GKE node auto-repair recreates this node itself when it stays unhealthy (about 10 minutes); a multi-host TPU slice is recreated as a whole node pool.',
+  },
 };
 
 const platformsOf = cfg => Object.assign({}, PLATFORMS, (cfg && cfg.platforms) || {});
@@ -58,7 +84,8 @@ export function nodesFromK8s(json) {
   const j = typeof json === 'string' ? JSON.parse(json) : json, out = {};
   for (const n of j.items || []) {
     const c = cloudIdentity((n.spec || {}).providerID); if (!c) continue;
-    const r = { platform: c.provider, instance: c.instance, zone: c.zone, project: c.project };
+    const gke = c.provider === 'gcp' && Object.keys((n.metadata || {}).labels || {}).some(k => k.startsWith('cloud.google.com/gke-'));
+    const r = { platform: gke ? 'gke' : c.provider, instance: c.instance, zone: c.zone, project: c.project };
     for (const k of Object.keys(r)) if (r[k] == null) delete r[k];
     out[n.metadata.name] = r;
   }
@@ -71,10 +98,15 @@ export function loadPlatformNodes(cfg, read = f => fs.readFileSync(f, 'utf8')) {
   for (const [k, v] of Object.entries(cfg.nodes || {})) nodes[k] = Object.assign({}, found[k], v);
   return Object.assign({}, cfg, { nodes });
 }
-// what executors may fill in for a node: its instance, zone and project on the cloud
-export function nodeVars(cfg, node) {
-  const n = ((cfg && cfg.nodes) || {})[node] || {};
+// what executors may fill in for an action: the node's instance, zone and project on the cloud, and the fault
+// behavior the cloud's repair API wants for the action's fault class
+export function nodeVars(cfg, node, a = {}) {
+  const n = ((cfg && cfg.nodes) || {})[node] || {}, p = platformProfile(cfg, node);
   const out = {};
   for (const k of ['instance', 'zone', 'project']) if (n[k] != null) out[k] = n[k];
+  if (p && p.behaviors) {
+    const cls = String(a.faultClass || ''), b = p.behaviors;
+    out.behavior = /sdc|corrupt/i.test(cls) ? b.sdc : /perf|slow|straggl|throttl/i.test(cls) ? b.performance : a.kind === 'tpu' || a.devKind === 'tpu' || a.vendor === 'tpu' ? (b.tpu || b.default) : b.default;
+  }
   return out;
 }

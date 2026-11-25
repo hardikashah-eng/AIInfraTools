@@ -19,7 +19,7 @@ export function fill(template, vars) {
   }));
 }
 
-export const varsOf = (a, cfg) => Object.assign({ node: a.node, gpu: a.gpu, job: a.job, vendor: a.vendor, reason: a.reasonCode }, nodeVars(cfg, a.node), a.params || {});
+export const varsOf = (a, cfg) => Object.assign({ node: a.node, gpu: a.gpu, job: a.job, vendor: a.vendor, reason: a.reasonCode }, nodeVars(cfg, a.node, a), a.params || {});
 
 export function message(a, howTo) {
   const target = [a.job && `job ${a.job}`, a.node && `${a.node}${a.gpu != null ? '/' + (a.vendor && a.vendor !== 'nvidia' && a.vendor !== 'amd' ? 'dev' : 'gpu') + a.gpu : ''}`].filter(Boolean).join(' on ');

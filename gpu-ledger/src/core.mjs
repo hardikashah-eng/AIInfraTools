@@ -21,7 +21,7 @@ import { createRequire } from 'node:module';
 // Chips the sizer knows come from the shared accelerator registry; older and smaller ones are listed here.
 const REG = createRequire(import.meta.url)('../../inference-sizer/src/accelerators.js');
 export const GPU_SPECS = Object.assign(
-  Object.fromEntries(REG.ACCELERATORS.map(a => [a.short || a.id, { hbmGB: a.hbmGB, tflops: a.tfBf16 }])),
+  Object.fromEntries(REG.ACCELERATORS.map(a => [a.kind === 'tpu' ? a.id : a.short || a.id, { hbmGB: a.hbmGB, tflops: a.tfBf16 }])),
   { 'H20': { hbmGB: 96, tflops: 148 }, 'A100-40GB': { hbmGB: 40, tflops: 312 }, 'L4': { hbmGB: 24, tflops: 121 }, 'A10': { hbmGB: 24, tflops: 125 },
     'T4': { hbmGB: 16, tflops: 65 }, 'V100': { hbmGB: 32, tflops: 125 }, 'P100': { hbmGB: 16, tflops: 19 }, 'K80': { hbmGB: 12, tflops: 4 } });
 // "NVIDIA-H100-80GB-HBM3", "h100", "Tesla V100-SXM2-32GB" → a key above (or the input when unknown)

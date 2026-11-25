@@ -35,7 +35,7 @@ export function suggest(analysis, cfg) {
   for (const node of h.nodesThin || []) add({ kind: 'exporter-check', node, target: `node:${node}`, reason: `every GPU on ${node} is reporting patchily: check the node's exporter and network before suspecting the GPUs`, severity: 'medium' });
   for (const g of Object.values(h.gpus)) {
     const k = g.key, cls = g.faultClass || 'default', ladder = ladderFor(cfg, g.vendor, cls, g.node);
-    const base = { node: g.node, gpu: g.gpu, vendor: g.vendor || undefined, target: k, since: g.since, evidence: (g.signals || []).map(s => s.why) };
+    const base = { node: g.node, gpu: g.gpu, vendor: g.vendor || undefined, faultClass: g.faultClass || undefined, target: k, since: g.since, evidence: (g.signals || []).map(s => s.why) };
     const jobs = jobsOn(k);
     if (g.state === 'quarantined') {
       add(Object.assign({}, base, { kind: 'quarantine', reason: g.why, severity: 'high' }));

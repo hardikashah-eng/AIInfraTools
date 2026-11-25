@@ -97,6 +97,15 @@ What happens:
    its pool-sizing and latency recommendations cover the new pool without `--pools` or `--targets`. The manifest is
    kept beside them; `fleetops serving delete NAME --apply` removes both.
 
+### Cloud TPU on GKE
+
+`--gpu TPU-v6e`, `TPU-v5p` or `TPU7x` renders a TPU deployment:
+- the `vllm/vllm-tpu` image;
+- chips requested as `google.com/tpu`;
+- the slice selected by `cloud.google.com/gke-tpu-accelerator` and `cloud.google.com/gke-tpu-topology` (for example `tpu-v6e-slice` and `2x4`), the shape GKE's vLLM-on-Trillium tutorial uses.
+
+KV-cache and weight quantization flags are left out, so the vllm-tpu release you pin uses its own defaults.
+
 ### Disaggregated prefill/decode on llm-d
 
 ```bash
@@ -156,7 +165,8 @@ setting for constrained clusters), and pods carry no CPU or memory requests (add
 ### What it does not do
 
 - **Disaggregated roles across nodes,** or NVIDIA Dynamo. llm-d is the disaggregated path (above).
-- **Pick an image version.** The default `vllm/vllm-openai:latest` (`rocm/vllm` on AMD) is a moving tag; pin one with
+- **Multi-host TPU slices.** On Cloud TPU, an instance gets one TPU host: 8 chips on v6e, 4 on v5p and TPU7x. A layout that needs more says so. P/D on TPU is not rendered either: llm-d's guide here has no validated TPU image.
+- **Pick an image version.** The default `vllm/vllm-openai:latest` (`rocm/vllm` on AMD, `vllm/vllm-tpu` on TPU) is a moving tag; pin one with
   `--image` for production.
 - **Fetch secrets.** The Hugging Face token comes from a Secret you create.
 - **Know your GPUs' real speed until calibrated.** The sizer uses spec-sheet efficiencies; after

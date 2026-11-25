@@ -170,7 +170,7 @@ Every command takes `--json` and prints one JSON object, for scripts and LLM age
 
 | File | Contents | Needed for |
 |---|---|---|
-| `--samples` JSONL / `--prom` exporter text | per-GPU telemetry, see `src/ingest.mjs` for the fields | everything |
+| `--samples` JSONL / `--prom` exporter text / `--cloud-monitoring` Google Cloud Monitoring `timeSeries` JSON (GKE node or TPU VM accelerator metrics) | per-device telemetry, see `src/ingest.mjs` for the fields | everything |
 | `--jobs` JSON | `[{ id, class, owner, namespace, start, end?, gpusPerReplica?, gpus: [{node, gpu}] }]`, from your scheduler | efficiency, savings, owner notices |
 | `--steps` JSONL | `{ job, rank, step, t, computeMs }`, from a training-loop hook | straggler detection (best) |
 | `--probes` JSONL | `{ t, node, gpu, sku, firmware, site, gemmTflops, hbmGBs, linkGBs? }`, from a short benchmark between jobs | speed index |
