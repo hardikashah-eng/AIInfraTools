@@ -1,6 +1,7 @@
 ---
 name: inference-sizer
 description: Sizes a GPU fleet for serving an LLM. It works out how many GPUs, which tensor-parallel layout, aggregated or disaggregated prefill/decode, how many nodes, and the cost per hour and per million output tokens needed to meet TTFT and TPOT targets at a given concurrency, user count, context window and token mix. It compares GPUs (NVIDIA B200, B300, GB200 NVL72, H200, H100, A100, L40S, AMD MI300X) and takes new models or GPUs from a spec sheet or a Hugging Face config.json. Use when asked how many GPUs a model needs, which GPU to buy or rent for inference, how to meet a latency SLO, how inference cost compares across GPUs, or for a starting fleet to stress-test in FleetScope.
+license: Apache-2.0 (see LICENSE.txt)
 ---
 
 # Inference Sizer

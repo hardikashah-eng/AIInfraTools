@@ -52,3 +52,8 @@ node fleetops/tools/workload-profile.mjs list
 node fleetops/tools/workload-profile.mjs synth --type coding-agent --sessions 100 --out agent.csv
 node fleetops/tools/workload-profile.mjs inspect --input gateway.jsonl --type coding-agent --out profile.json --csv replay.csv
 ```
+
+## License
+
+[Apache License 2.0](LICENSE). Test data from other projects keeps its own license; see [NOTICE](NOTICE).
+To report a security problem, see [SECURITY.md](SECURITY.md); to contribute, [CONTRIBUTING.md](CONTRIBUTING.md).

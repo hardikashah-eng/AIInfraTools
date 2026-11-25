@@ -1,6 +1,7 @@
 {
   "name": "gpu-health",
   "version": "0.1.0",
+  "license": "Apache-2.0",
   "private": true,
   "description": "GPU health checks, efficiency and savings analysis, and an approval queue that runs fixes once approved.",
   "type": "module",

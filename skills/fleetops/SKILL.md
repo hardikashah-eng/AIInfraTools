@@ -1,6 +1,7 @@
 ---
 name: fleetops
 description: Finds the root cause of GPU fleet incidents, runs them as incidents, mitigates live, measures training goodput, turns the user's traces into tuning changes, and sizes and deploys vLLM serving. It ingests DCGM, AMD and SambaNova exporters, vLLM, Prometheus, Loki, OTLP, kernel and NCCL logs, profiler traces, switch counters, Lustre and NFS stats, Slurm and Kubernetes. It detects job failures, latency regressions, training slowdowns, hangs and divergence, and ranks causes across 17 rules (hardware, bad change, shared switch or rack, version cohort, straggler, slow link to the switch port, fabric congestion, storage stalls, collective hang, silent corruption, KV pressure, load, slow replica, workload, monitoring gaps). A live agent mitigates within approval guardrails. It advises checkpoint intervals, pool sizes, and measures whether changes worked. Use for why jobs fail, latency or training slowed, wasted GPU-hours, NaNs, tuning, live mitigation, power caps, rollouts, or what models fit and deploying them.
+license: Apache-2.0 (see LICENSE.txt)
 ---
 
 # fleetops

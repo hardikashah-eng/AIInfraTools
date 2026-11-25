@@ -70,6 +70,7 @@ function buildSkill(name, out) {
   for (const g of GENERATED) fs.rmSync(path.join(out, g), { recursive: true, force: true });
   for (const item of s.code) copyTree(path.join(toolDir, item), path.join(out, 'scripts', s.tool, item), skipJunk);
   for (const [dep, items] of Object.entries(s.with || {})) for (const item of items) copyTree(path.join(ROOT, dep, item), path.join(out, 'scripts', dep, item), skipJunk);
+  fs.copyFileSync(path.join(ROOT, 'LICENSE'), path.join(out, 'LICENSE.txt'));
   fs.writeFileSync(path.join(out, 'scripts', 'VENDORED.md'), `# Generated: do not edit\n\nCopied from \`${[s.tool, ...Object.keys(s.with || {})].join('/`, `')}/\` in the AIInfraTools repo by \`scripts/build-skills.mjs\`. Edit the tool there, then run \`node scripts/build-skills.mjs\`.\n`);
   for (const [from, to] of Object.entries(s.refs)) { const dst = path.join(out, 'references', to); fs.mkdirSync(path.dirname(dst), { recursive: true }); fs.writeFileSync(dst, adaptMarkdown(fs.readFileSync(path.join(toolDir, from), 'utf8'), s.refs)); }
   for (const [from, to] of Object.entries(s.assets)) copyTree(path.join(toolDir, from), path.join(out, 'assets', to), skipJunk);

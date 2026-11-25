@@ -1,6 +1,7 @@
 ---
 name: hybrid-tracing
 description: Unifies distributed traces across on-prem and neocloud (or any multi-site) clusters and fixes clock skew between machines. It estimates each machine's clock offset from OpenTelemetry spans with the NTP four-timestamp method, rewrites exported OTLP/JSON traces so child spans no longer start before their parents, checks a node's clock sync (chrony, PTP), and supplies OpenTelemetry Collector (agent, gateway, tail sampler), chrony and ptp4l configs for a hybrid pipeline. Use when traces across sites look out of order or show negative gaps or causality violations, when setting up one tracing view across on-prem and cloud, or when checking NTP or PTP clock sync on GPU nodes.
+license: Apache-2.0 (see LICENSE.txt)
 ---
 
 # Hybrid tracing and clock sync
