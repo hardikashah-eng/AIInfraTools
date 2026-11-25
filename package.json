@@ -58,7 +58,10 @@
     "!**/*.test.mjs",
     "!**/docs/img/**",
     "!**/*.png",
-    "!**/*.gif"
+    "!**/*.gif",
+    "fleetops/tests/fixtures/real/philly-job-log-2017-11-07-15.json.gz",
+    "fleetops/tests/fixtures/real/philly-machine-list.csv",
+    "fleetops/tests/fixtures/real/README.md"
   ],
   "scripts": {
     "test": "node --test tests/*.test.mjs",

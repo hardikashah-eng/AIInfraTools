@@ -45,5 +45,7 @@ test('installed from the packed tarball, every bin runs through its npm symlink'
   }
   const s = run('aiinfra', ['sizer', '--model', 'llama31-8b', '--gpu', 'L40S', '--json']);
   assert.equal(s.code, 0); assert.ok(JSON.parse(s.out).plan || JSON.parse(s.out).result || JSON.parse(s.out), 'JSON output parses');
+  const d = run('aiinfra', ['demo', '--out', path.join(dir, 'demo')]);
+  assert.equal(d.code, 0, d.out); assert.match(d.out, /4\. Approve[\s\S]*approve it yourself/, 'the demo and its real data ship in the package');
   assert.equal(run('aiinfra', ['path', 'fleetops']).out.trim(), fs.realpathSync(path.join(proj, 'node_modules', 'aiinfra-tools', 'fleetops', 'tools', 'fleetops.mjs')));
 });
