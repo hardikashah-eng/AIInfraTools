@@ -1,7 +1,7 @@
 # AIInfraTools as an MCP server
 
 Every tool as [Model Context Protocol](https://modelcontextprotocol.io) tools, for any MCP client: Claude Code,
-Claude Desktop, Cursor, VS Code, your own agents. Node.js 20+, no dependencies, stdio transport.
+Claude Desktop, Cursor, VS Code, your own agents. Node.js 22+, no dependencies, stdio transport.
 
 ## Add it
 

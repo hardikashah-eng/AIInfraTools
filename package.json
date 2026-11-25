@@ -26,7 +26,7 @@
     "agent-skills"
   ],
   "engines": {
-    "node": ">=20"
+    "node": ">=22"
   },
   "bin": {
     "aiinfra-tools": "bin/aiinfra.mjs",

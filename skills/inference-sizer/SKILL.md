@@ -8,7 +8,7 @@ license: Apache-2.0 (see LICENSE.txt)
 
 Estimates the GPUs, layout and cost needed to serve one LLM at the user's latency targets. It is a first-order roofline model built from spec-sheet figures. Present results as **estimates to validate with a benchmark**, not measurements.
 
-Requires Node.js 20+. Paths below are relative to this skill's folder. The CLI is `scripts/inference-sizer/tools/size.mjs`.
+Requires Node.js 22+. Paths below are relative to this skill's folder. The CLI is `scripts/inference-sizer/tools/size.mjs`.
 
 ## Workflow
 

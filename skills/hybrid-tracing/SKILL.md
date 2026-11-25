@@ -8,7 +8,7 @@ license: Apache-2.0 (see LICENSE.txt)
 
 Two jobs: **fix skew in traces you already have**, and **set up a pipeline and clocks** so new traces line up.
 
-Requires Node.js 20+. Paths below are relative to this skill's folder. The tool is in `scripts/hybrid-tracing/`.
+Requires Node.js 22+. Paths below are relative to this skill's folder. The tool is in `scripts/hybrid-tracing/`.
 
 ## Fix skew in exported traces
 

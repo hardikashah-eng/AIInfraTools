@@ -6,7 +6,7 @@ license: Apache-2.0 (see LICENSE.txt)
 
 # gpu-ledger
 
-Requires Node.js 20+. Paths are relative to this skill's folder. The CLI is `scripts/gpu-ledger/tools/ledger.mjs`
+Requires Node.js 22+. Paths are relative to this skill's folder. The CLI is `scripts/gpu-ledger/tools/ledger.mjs`
 (written `gpu-ledger` below: run it as `node scripts/gpu-ledger/tools/ledger.mjs`). Every reading command takes
 `--usage FILE[,FILE]` and `--config ledger.json` (prices, attribution, capacity, budgets, policy, thresholds, models),
 `--from`/`--to` (ISO or epoch seconds) and `--json`.

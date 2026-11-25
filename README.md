@@ -25,7 +25,7 @@ Where this is going, from four utilities to one Observe → Diagnose → Simulat
 
 ## Install
 
-Node.js 20+ and nothing else:
+Node.js 22+ and nothing else:
 
 ```bash
 npx aiinfra-tools demo                                    # the whole loop on a real week of a GPU cluster
@@ -74,7 +74,7 @@ On Claude Code 2.1.275 or later, this one step does both: `/plugin install aiinf
 
 **Other agents.** Any agent that reads Agent Skills can use the skill folders as they are: copy them into its skills directory. For an agent without skill support, every command the skills use takes `--json` and returns one JSON object, so you can wrap each one as a function tool.
 
-All skills need Node.js 20+ and nothing else.
+All skills need Node.js 22+ and nothing else.
 
 **Changing a tool.** The skill folders carry copies of the tools' code (`scripts/`), docs (`references/`) and examples (`assets/`), so each folder works on its own. After editing a tool, run `node scripts/build-skills.mjs`. CI fails while the copies are out of date. `node --test scripts/test-skills.mjs` runs each skill's documented commands from an isolated copy.
 
