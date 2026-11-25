@@ -1,0 +1,19 @@
+# Reruns the checks against public real data every week (and on demand), so docs/RESULTS.md stays true as the code
+# changes. Each check fetches its data at a pinned version and verifies it; the results go to the job summary.
+name: Validate on real data
+on:
+  schedule:
+    - cron: '17 6 * * 1'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  inferencex:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+      - run: node inference-sizer/tools/validate-inferencex.mjs --markdown >> "$GITHUB_STEP_SUMMARY"
+      - run: cd inference-sizer && node --test tests/inferencex.test.mjs
