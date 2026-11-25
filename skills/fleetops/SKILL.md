@@ -53,7 +53,7 @@ seconds.
    - **Files:** `fleetops data import SOURCE FILE… --store S`. Sources include `exporter` (DCGM, AMD, SambaNova text),
      `vllm`, `prom-range`, `kernel-log` (journalctl, dmesg, syslog), `app-log` (NCCL, PyTorch), `nccl-inspector`,
      `kineto`, `step-log`, `sacct`, `k8s-nodes`, `k8s-pods`, `k8s-events`, `helm-history`, `slurm-nodes`,
-     `nvidia-smi-q`, `nvidia-topo`, `ibnetdiscover`, `racks`, `otlp-traces`, `changes`, `git-log` and `gpu-health`.
+     `nvidia-smi-q`, `nvidia-topo`, `amd-smi-static`, `amd-smi-topology`, `ibnetdiscover`, `racks`, `otlp-traces`, `changes`, `git-log` and `gpu-health`.
      `fleetops --help` lists each one's options.
    - **The fleet's own monitoring:** `fleetops pull --from T --to T --prom URL [--loki URL] [--header 'Authorization:
      Bearer …']` fetches DCGM, AMD, vLLM and NCCL Inspector series and kernel and NCCL logs for a window.

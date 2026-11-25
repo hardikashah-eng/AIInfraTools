@@ -1,0 +1,516 @@
+{
+ "gpu_data": [
+  {
+   "gpu": 0,
+   "asic": {
+    "market_name": "AMD Instinct MI300X",
+    "vendor_id": "0x1002",
+    "vendor_name": "Advanced Micro Devices Inc. [AMD/ATI]",
+    "subvendor_id": "0x1002",
+    "device_id": "0x74a1",
+    "subsystem_id": "0x74a1",
+    "rev_id": "0x00",
+    "asic_serial": "0x00000000A0000000",
+    "oam_id": 0,
+    "num_compute_units": 304,
+    "target_graphics_version": "gfx942"
+   },
+   "bus": {
+    "bdf": "0000:05:00.0",
+    "max_pcie_width": 16,
+    "max_pcie_speed": {
+     "value": 32,
+     "unit": "GT/s"
+    },
+    "pcie_interface_version": "Gen 5",
+    "slot_type": "OAM"
+   },
+   "ifwi": {
+    "name": "AMD MI300X_HW_SRIOV_CVS_1VF",
+    "build_date": "2024/04/03 21:21",
+    "part_number": "113-M3000100-102",
+    "version": "022.040.003.042.000001"
+   },
+   "limit": {
+    "ppt0": {
+     "max_power_limit": {
+      "value": 750,
+      "unit": "W"
+     },
+     "min_power_limit": {
+      "value": 0,
+      "unit": "W"
+     },
+     "socket_power_limit": {
+      "value": 750,
+      "unit": "W"
+     }
+    },
+    "ppt1": {
+     "max_power_limit": "N/A",
+     "min_power_limit": "N/A",
+     "socket_power_limit": "N/A"
+    }
+   },
+   "driver": {
+    "name": "amdgpu",
+    "version": "6.8.5"
+   },
+   "board": {
+    "model_number": "N/A",
+    "product_serial": "N/A",
+    "fru_id": "N/A",
+    "product_name": "Aqua Vanjaram [Instinct MI300X]",
+    "manufacturer_name": "Advanced Micro Devices, Inc. [AMD/ATI]"
+   }
+  },
+  {
+   "gpu": 1,
+   "asic": {
+    "market_name": "AMD Instinct MI300X",
+    "vendor_id": "0x1002",
+    "vendor_name": "Advanced Micro Devices Inc. [AMD/ATI]",
+    "subvendor_id": "0x1002",
+    "device_id": "0x74a1",
+    "subsystem_id": "0x74a1",
+    "rev_id": "0x00",
+    "asic_serial": "0x00000000A0000001",
+    "oam_id": 1,
+    "num_compute_units": 304,
+    "target_graphics_version": "gfx942"
+   },
+   "bus": {
+    "bdf": "0000:26:00.0",
+    "max_pcie_width": 16,
+    "max_pcie_speed": {
+     "value": 32,
+     "unit": "GT/s"
+    },
+    "pcie_interface_version": "Gen 5",
+    "slot_type": "OAM"
+   },
+   "ifwi": {
+    "name": "AMD MI300X_HW_SRIOV_CVS_1VF",
+    "build_date": "2024/04/03 21:21",
+    "part_number": "113-M3000100-102",
+    "version": "022.040.003.042.000001"
+   },
+   "limit": {
+    "ppt0": {
+     "max_power_limit": {
+      "value": 750,
+      "unit": "W"
+     },
+     "min_power_limit": {
+      "value": 0,
+      "unit": "W"
+     },
+     "socket_power_limit": {
+      "value": 750,
+      "unit": "W"
+     }
+    },
+    "ppt1": {
+     "max_power_limit": "N/A",
+     "min_power_limit": "N/A",
+     "socket_power_limit": "N/A"
+    }
+   },
+   "driver": {
+    "name": "amdgpu",
+    "version": "6.8.5"
+   },
+   "board": {
+    "model_number": "N/A",
+    "product_serial": "N/A",
+    "fru_id": "N/A",
+    "product_name": "Aqua Vanjaram [Instinct MI300X]",
+    "manufacturer_name": "Advanced Micro Devices, Inc. [AMD/ATI]"
+   }
+  },
+  {
+   "gpu": 2,
+   "asic": {
+    "market_name": "AMD Instinct MI300X",
+    "vendor_id": "0x1002",
+    "vendor_name": "Advanced Micro Devices Inc. [AMD/ATI]",
+    "subvendor_id": "0x1002",
+    "device_id": "0x74a1",
+    "subsystem_id": "0x74a1",
+    "rev_id": "0x00",
+    "asic_serial": "0x00000000A0000002",
+    "oam_id": 2,
+    "num_compute_units": 304,
+    "target_graphics_version": "gfx942"
+   },
+   "bus": {
+    "bdf": "0000:46:00.0",
+    "max_pcie_width": 16,
+    "max_pcie_speed": {
+     "value": 32,
+     "unit": "GT/s"
+    },
+    "pcie_interface_version": "Gen 5",
+    "slot_type": "OAM"
+   },
+   "ifwi": {
+    "name": "AMD MI300X_HW_SRIOV_CVS_1VF",
+    "build_date": "2024/04/03 21:21",
+    "part_number": "113-M3000100-102",
+    "version": "022.040.003.042.000001"
+   },
+   "limit": {
+    "ppt0": {
+     "max_power_limit": {
+      "value": 750,
+      "unit": "W"
+     },
+     "min_power_limit": {
+      "value": 0,
+      "unit": "W"
+     },
+     "socket_power_limit": {
+      "value": 750,
+      "unit": "W"
+     }
+    },
+    "ppt1": {
+     "max_power_limit": "N/A",
+     "min_power_limit": "N/A",
+     "socket_power_limit": "N/A"
+    }
+   },
+   "driver": {
+    "name": "amdgpu",
+    "version": "6.8.5"
+   },
+   "board": {
+    "model_number": "N/A",
+    "product_serial": "N/A",
+    "fru_id": "N/A",
+    "product_name": "Aqua Vanjaram [Instinct MI300X]",
+    "manufacturer_name": "Advanced Micro Devices, Inc. [AMD/ATI]"
+   }
+  },
+  {
+   "gpu": 3,
+   "asic": {
+    "market_name": "AMD Instinct MI300X",
+    "vendor_id": "0x1002",
+    "vendor_name": "Advanced Micro Devices Inc. [AMD/ATI]",
+    "subvendor_id": "0x1002",
+    "device_id": "0x74a1",
+    "subsystem_id": "0x74a1",
+    "rev_id": "0x00",
+    "asic_serial": "0x00000000A0000003",
+    "oam_id": 3,
+    "num_compute_units": 304,
+    "target_graphics_version": "gfx942"
+   },
+   "bus": {
+    "bdf": "0000:65:00.0",
+    "max_pcie_width": 16,
+    "max_pcie_speed": {
+     "value": 32,
+     "unit": "GT/s"
+    },
+    "pcie_interface_version": "Gen 5",
+    "slot_type": "OAM"
+   },
+   "ifwi": {
+    "name": "AMD MI300X_HW_SRIOV_CVS_1VF",
+    "build_date": "2024/04/03 21:21",
+    "part_number": "113-M3000100-102",
+    "version": "022.040.003.042.000001"
+   },
+   "limit": {
+    "ppt0": {
+     "max_power_limit": {
+      "value": 750,
+      "unit": "W"
+     },
+     "min_power_limit": {
+      "value": 0,
+      "unit": "W"
+     },
+     "socket_power_limit": {
+      "value": 750,
+      "unit": "W"
+     }
+    },
+    "ppt1": {
+     "max_power_limit": "N/A",
+     "min_power_limit": "N/A",
+     "socket_power_limit": "N/A"
+    }
+   },
+   "driver": {
+    "name": "amdgpu",
+    "version": "6.8.5"
+   },
+   "board": {
+    "model_number": "N/A",
+    "product_serial": "N/A",
+    "fru_id": "N/A",
+    "product_name": "Aqua Vanjaram [Instinct MI300X]",
+    "manufacturer_name": "Advanced Micro Devices, Inc. [AMD/ATI]"
+   }
+  },
+  {
+   "gpu": 4,
+   "asic": {
+    "market_name": "AMD Instinct MI300X",
+    "vendor_id": "0x1002",
+    "vendor_name": "Advanced Micro Devices Inc. [AMD/ATI]",
+    "subvendor_id": "0x1002",
+    "device_id": "0x74a1",
+    "subsystem_id": "0x74a1",
+    "rev_id": "0x00",
+    "asic_serial": "0x00000000A0000004",
+    "oam_id": 4,
+    "num_compute_units": 304,
+    "target_graphics_version": "gfx942"
+   },
+   "bus": {
+    "bdf": "0000:85:00.0",
+    "max_pcie_width": 16,
+    "max_pcie_speed": {
+     "value": 32,
+     "unit": "GT/s"
+    },
+    "pcie_interface_version": "Gen 5",
+    "slot_type": "OAM"
+   },
+   "ifwi": {
+    "name": "AMD MI300X_HW_SRIOV_CVS_1VF",
+    "build_date": "2024/04/03 21:21",
+    "part_number": "113-M3000100-102",
+    "version": "022.040.003.042.000001"
+   },
+   "limit": {
+    "ppt0": {
+     "max_power_limit": {
+      "value": 750,
+      "unit": "W"
+     },
+     "min_power_limit": {
+      "value": 0,
+      "unit": "W"
+     },
+     "socket_power_limit": {
+      "value": 750,
+      "unit": "W"
+     }
+    },
+    "ppt1": {
+     "max_power_limit": "N/A",
+     "min_power_limit": "N/A",
+     "socket_power_limit": "N/A"
+    }
+   },
+   "driver": {
+    "name": "amdgpu",
+    "version": "6.8.5"
+   },
+   "board": {
+    "model_number": "N/A",
+    "product_serial": "N/A",
+    "fru_id": "N/A",
+    "product_name": "Aqua Vanjaram [Instinct MI300X]",
+    "manufacturer_name": "Advanced Micro Devices, Inc. [AMD/ATI]"
+   }
+  },
+  {
+   "gpu": 5,
+   "asic": {
+    "market_name": "AMD Instinct MI300X",
+    "vendor_id": "0x1002",
+    "vendor_name": "Advanced Micro Devices Inc. [AMD/ATI]",
+    "subvendor_id": "0x1002",
+    "device_id": "0x74a1",
+    "subsystem_id": "0x74a1",
+    "rev_id": "0x00",
+    "asic_serial": "0x00000000A0000005",
+    "oam_id": 5,
+    "num_compute_units": 304,
+    "target_graphics_version": "gfx942"
+   },
+   "bus": {
+    "bdf": "0000:a6:00.0",
+    "max_pcie_width": 16,
+    "max_pcie_speed": {
+     "value": 32,
+     "unit": "GT/s"
+    },
+    "pcie_interface_version": "Gen 5",
+    "slot_type": "OAM"
+   },
+   "ifwi": {
+    "name": "AMD MI300X_HW_SRIOV_CVS_1VF",
+    "build_date": "2024/04/03 21:21",
+    "part_number": "113-M3000100-102",
+    "version": "022.040.003.041.000001"
+   },
+   "limit": {
+    "ppt0": {
+     "max_power_limit": {
+      "value": 750,
+      "unit": "W"
+     },
+     "min_power_limit": {
+      "value": 0,
+      "unit": "W"
+     },
+     "socket_power_limit": {
+      "value": 750,
+      "unit": "W"
+     }
+    },
+    "ppt1": {
+     "max_power_limit": "N/A",
+     "min_power_limit": "N/A",
+     "socket_power_limit": "N/A"
+    }
+   },
+   "driver": {
+    "name": "amdgpu",
+    "version": "6.8.5"
+   },
+   "board": {
+    "model_number": "N/A",
+    "product_serial": "N/A",
+    "fru_id": "N/A",
+    "product_name": "Aqua Vanjaram [Instinct MI300X]",
+    "manufacturer_name": "Advanced Micro Devices, Inc. [AMD/ATI]"
+   }
+  },
+  {
+   "gpu": 6,
+   "asic": {
+    "market_name": "AMD Instinct MI300X",
+    "vendor_id": "0x1002",
+    "vendor_name": "Advanced Micro Devices Inc. [AMD/ATI]",
+    "subvendor_id": "0x1002",
+    "device_id": "0x74a1",
+    "subsystem_id": "0x74a1",
+    "rev_id": "0x00",
+    "asic_serial": "0x00000000A0000006",
+    "oam_id": 6,
+    "num_compute_units": 304,
+    "target_graphics_version": "gfx942"
+   },
+   "bus": {
+    "bdf": "0000:c6:00.0",
+    "max_pcie_width": 16,
+    "max_pcie_speed": {
+     "value": 32,
+     "unit": "GT/s"
+    },
+    "pcie_interface_version": "Gen 5",
+    "slot_type": "OAM"
+   },
+   "ifwi": {
+    "name": "AMD MI300X_HW_SRIOV_CVS_1VF",
+    "build_date": "2024/04/03 21:21",
+    "part_number": "113-M3000100-102",
+    "version": "022.040.003.042.000001"
+   },
+   "limit": {
+    "ppt0": {
+     "max_power_limit": {
+      "value": 750,
+      "unit": "W"
+     },
+     "min_power_limit": {
+      "value": 0,
+      "unit": "W"
+     },
+     "socket_power_limit": {
+      "value": 750,
+      "unit": "W"
+     }
+    },
+    "ppt1": {
+     "max_power_limit": "N/A",
+     "min_power_limit": "N/A",
+     "socket_power_limit": "N/A"
+    }
+   },
+   "driver": {
+    "name": "amdgpu",
+    "version": "6.8.5"
+   },
+   "board": {
+    "model_number": "N/A",
+    "product_serial": "N/A",
+    "fru_id": "N/A",
+    "product_name": "Aqua Vanjaram [Instinct MI300X]",
+    "manufacturer_name": "Advanced Micro Devices, Inc. [AMD/ATI]"
+   }
+  },
+  {
+   "gpu": 7,
+   "asic": {
+    "market_name": "AMD Instinct MI300X",
+    "vendor_id": "0x1002",
+    "vendor_name": "Advanced Micro Devices Inc. [AMD/ATI]",
+    "subvendor_id": "0x1002",
+    "device_id": "0x74a1",
+    "subsystem_id": "0x74a1",
+    "rev_id": "0x00",
+    "asic_serial": "0x00000000A0000007",
+    "oam_id": 7,
+    "num_compute_units": 304,
+    "target_graphics_version": "gfx942"
+   },
+   "bus": {
+    "bdf": "0000:e5:00.0",
+    "max_pcie_width": 16,
+    "max_pcie_speed": {
+     "value": 32,
+     "unit": "GT/s"
+    },
+    "pcie_interface_version": "Gen 5",
+    "slot_type": "OAM"
+   },
+   "ifwi": {
+    "name": "AMD MI300X_HW_SRIOV_CVS_1VF",
+    "build_date": "2024/04/03 21:21",
+    "part_number": "113-M3000100-102",
+    "version": "022.040.003.042.000001"
+   },
+   "limit": {
+    "ppt0": {
+     "max_power_limit": {
+      "value": 750,
+      "unit": "W"
+     },
+     "min_power_limit": {
+      "value": 0,
+      "unit": "W"
+     },
+     "socket_power_limit": {
+      "value": 750,
+      "unit": "W"
+     }
+    },
+    "ppt1": {
+     "max_power_limit": "N/A",
+     "min_power_limit": "N/A",
+     "socket_power_limit": "N/A"
+    }
+   },
+   "driver": {
+    "name": "amdgpu",
+    "version": "6.8.5"
+   },
+   "board": {
+    "model_number": "N/A",
+    "product_serial": "N/A",
+    "fru_id": "N/A",
+    "product_name": "Aqua Vanjaram [Instinct MI300X]",
+    "manufacturer_name": "Advanced Micro Devices, Inc. [AMD/ATI]"
+   }
+  }
+ ]
+}

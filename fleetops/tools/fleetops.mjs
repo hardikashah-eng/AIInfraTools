@@ -82,6 +82,8 @@ Sources (SOURCE):
   slurm-nodes      scontrol show node -o                     (kernel version from OS=)
   nvidia-smi-q     nvidia-smi -q                             [--node N] (default: file name)  versions, serials, PCI → GPU map
   nvidia-topo      nvidia-smi topo -m                        [--node N]  NVLink and NIC affinity
+  amd-smi-static   amd-smi static --json                     [--node N] [--rocm V]  versions, IFWI, PCI → GPU map
+  amd-smi-topology amd-smi topology --json                   [--node N]  XGMI and PCIe peer links
   ibnetdiscover    ibnetdiscover                             host → leaf → spine (with switch port numbers)
   perfquery        perfquery [-x] LID PORT output             [--switch NAME]  switch port counters (errors, xmit wait, data)
   ibqueryerrors    ibqueryerrors                              switch ports with error counters, fabric-wide
@@ -94,7 +96,7 @@ Sources (SOURCE):
   storage          JSON lines {t, target, op, node?, job?, ops?, bytes?, latMs?}   anything else (S3 clients, loaders)
   racks            CSV: node,rack,row,pdu,site
   kernel-log       journalctl -k -o short-iso | dmesg -T | dmesg | syslog   [--node N] [--boot T] [--year Y] [--utc-offset H]
-                   XID, NVLink, PCIe AER, AMD RAS, MCE, IB link, NFS/Lustre, OOM (GPU index from nvidia-smi-q imports)
+                   XID, NVLink, PCIe AER, AMD RAS, MCE, IB link, NFS/Lustre, OOM (GPU index from nvidia-smi-q / amd-smi-static imports)
   app-log          NCCL / PyTorch job output                 [--node N] [--job J] [--t T]
   k8s-events       kubectl get events -A -o json             cordon/reboot/scale changes; NotReady/OOM/mount/evict logs
   helm-history     helm history REL -n NS -o json            [--release R] [--namespace NS]
@@ -261,7 +263,7 @@ const read = f => fs.readFileSync(f, 'utf8');
 const time = v => (v == null || v === true ? undefined : toEpoch(/^\d{4}-\d{2}-\d{2}$/.test(v) ? v + 'T00:00:00Z' : v));
 const fmt = t => (Number.isFinite(t) ? new Date(t * 1000).toISOString().replace('.000', '') : '–');
 
-// PCI address → GPU index per node, from the latest nvidia-smi -q inventory in the store (for kernel logs).
+// PCI address → GPU index per node, from the latest nvidia-smi -q or amd-smi static inventory in the store (for kernel logs).
 function pciMap(store) {
   const m = {};
   for (const r of store.scan('inventory', { where: r => Array.isArray(r.gpus) })) { m[r.node] = m[r.node] || {}; for (const g of r.gpus) if (g.pci) m[r.node][g.pci] = g.gpu; }
@@ -292,6 +294,8 @@ function importSource(store, src, files, o) {
       case 'slurm-nodes': putInventory(Live.slurmNodes(read(f), { t: tOf(f) })); break;
       case 'nvidia-smi-q': putInventory([Topo.nvidiaSmiQ(read(f), { node: nodeOf(f), t: tOf(f) }).inventory]); break;
       case 'nvidia-topo': put('topology', Topo.nvidiaTopo(read(f), { node: nodeOf(f), t: tOf(f) })); break;
+      case 'amd-smi-static': putInventory([Topo.amdSmiStatic(read(f), { node: nodeOf(f), t: tOf(f), rocm: o.rocm }).inventory]); break;
+      case 'amd-smi-topology': put('topology', Topo.amdSmiTopology(read(f), { node: nodeOf(f), t: tOf(f) })); break;
       case 'ibnetdiscover': put('topology', Topo.ibnetdiscover(read(f), { t: tOf(f) })); break;
       case 'perfquery': put('port', Fabric.perfquery(read(f), { switch: o.switch, t: tOf(f) })); break;
       case 'ibqueryerrors': put('port', Fabric.ibqueryerrors(read(f), { t: tOf(f) })); break;
@@ -387,7 +391,7 @@ async function importBundle(store, target, o = {}) {
       if (!e.source) { files.push({ path: e.path, source: null, skipped: 'not recognized' }); continue; }
       try {
         const opts = Object.assign({}, e.opts);
-        if (['kernel-log', 'nvidia-smi-q', 'nvidia-topo', 'app-log'].includes(e.source) && !opts.node && p.manifest && p.manifest.host) opts.node = p.manifest.host;
+        if (['kernel-log', 'nvidia-smi-q', 'nvidia-topo', 'amd-smi-static', 'amd-smi-topology', 'app-log'].includes(e.source) && !opts.node && p.manifest && p.manifest.host) opts.node = p.manifest.host;
         if (opts.t != null) opts.t = String(opts.t);
         const by = importSource(store, e.source, [e.abs], opts);
         for (const [k, b] of Object.entries(by)) totals[k] = (totals[k] || 0) + b.written;
