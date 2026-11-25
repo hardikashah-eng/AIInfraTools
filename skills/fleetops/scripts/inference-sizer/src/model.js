@@ -291,6 +291,27 @@
     return { rows, best };
   }
 
+  // The operating point of one fixed layout at a fixed concurrency: what an engine running config c with B sequences
+  // in flight delivers, by the same physics sizeAgg uses (each step carries the decode batch plus prefill chunks; the
+  // prefill share fp slows the compute part). For checking the model against measured runs (e.g. InferenceX):
+  // returns TPOT, TTFT, and output tokens/s per GPU.
+  function operatingPoint(s, md, c, B) {
+    const st = decodeStep(s, md, c, B), ps = prefillStats(s, md, c), osl = s.avgOut, isl = Math.min(s.avgIn, s.ctx);
+    let tpot = st.t, ttft = ps.Sbatch, fp = 0;
+    for (let i = 0; i < 50; i++) {
+      const lam = B / (osl * tpot + ttft);              // requests/s through this instance
+      fp = Math.min(0.95, lam * isl / ps.cap);          // share of compute spent on prefill
+      const t = Math.max(st.tm, st.tc / (1 - fp)) * 1.1 + st.comm + st.ovh;
+      // a new prompt is prefilled in chunks between decode steps: its share of each step is what decode leaves
+      const free = Math.max(0.05, 1 - Math.max(st.tm, st.tc) / t);
+      const tt = prefillTime(s, md, c, isl, 0, 1) / free + mdWait(Math.min(0.85, fp), isl / ps.cap) + t;
+      if (Math.abs(t - tpot) < 1e-7 && Math.abs(tt - ttft) < 1e-6) { tpot = t; ttft = tt; break; }
+      tpot = t; ttft = tt;
+    }
+    const outPerGpu = B * osl / (osl * tpot + ttft) / c.g;
+    return { tpot, ttft, outPerGpu, prefillShare: fp, bound: st.bound, step: st };
+  }
+
   // Nodes (scale-up domains) needed: instances that span domains take whole domains; smaller ones pack first-fit-decreasing.
   function packNodes(pools, D) {
     const items = [];
@@ -355,6 +376,6 @@
     return res;
   }
 
-  const api = { SETTINGS, plan, derive, kvBytes, decodeStep, memInfo, prefillStats, configs, computeLoad, decodeLabel, prefillLabel, decodeCap, packNodes };
+  const api = { SETTINGS, plan, derive, kvBytes, decodeStep, memInfo, prefillStats, prefillTime, configs, computeLoad, decodeLabel, prefillLabel, decodeCap, packNodes, operatingPoint };
   if (typeof module !== 'undefined' && module.exports) module.exports = api; else root.SizerModel = api;
 })(this);

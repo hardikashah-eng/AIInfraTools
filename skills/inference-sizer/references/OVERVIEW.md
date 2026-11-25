@@ -31,6 +31,8 @@ node tools/size.mjs --model llama33-70b --gpu H200 --set conc=800 --calibration 
 
 **What fits on my GPUs.** The page has a second view (the button at the top right, or `dist/index.html#fit`). Pick a GPU and a node count, the median prompt and output length, the TTFT and TPOT targets and, optionally, a request rate. It lists every catalog model with the requests per second it carries in production (15% headroom, an N+1 spare node, 10% inside the targets) and flat out, output tokens per second, dollars per million output tokens and the layout. Models too big for the hardware say why. Click one for its concurrency, the longest prompt that still meets the target, and the `fleetops serving deploy` command for it. Rank by size (a stand-in for capability, not a quality score) or by throughput. The same engine is `fleetops serving fit` and `fleetops serving capacity` on the command line.
 
+**How accurate is it?** Against 125 measured InferenceX runs of DeepSeek-R1 (B200, B300, H200, MI300X), the defaults are off by a median 42–46% and optimistic; calibrated per GPU on one workload shape, 13–14% on the others. Details, by GPU, framework and concurrency: [docs/VALIDATION-INFERENCEX.md](docs/VALIDATION-INFERENCEX.md); rerun with `node tools/validate-inferencex.mjs`.
+
 Develop: `npm test`, then `npm run build` to rebuild `dist/index.html` from `src/`.
 
 ## What it covers
