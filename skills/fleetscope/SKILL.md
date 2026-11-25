@@ -1,6 +1,7 @@
 ---
 name: fleetscope
 description: Simulates LLM inference traffic and training on a modelled hybrid GPU fleet (on-prem plus neocloud). It replays synthetic traffic or real request logs through routers, GPU pools and cross-site links, and reports SLO attainment, TTFT and TPOT p99, cost per hour, peak GPUs and the first bottleneck under stress (traffic surges, longer contexts, half a pool down). It answers plain-English what-ifs, such as the cloud link dropping to 25 Gbps, moving a pool to H200 or doubling traffic, and compares two versions of a scenario the way terraform plan does. Use for GPU capacity planning, burst, cold-start and outage what-ifs, cross-site prefill/decode and KV-transfer questions, Kubernetes GPU scheduling and fragmentation, and reviewing changes to fleet scenarios.
+license: Apache-2.0 (see LICENSE.txt)
 ---
 
 # FleetScope

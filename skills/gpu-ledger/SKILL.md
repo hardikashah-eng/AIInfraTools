@@ -1,6 +1,7 @@
 ---
 name: gpu-ledger
 description: GPU billing and waste for any cluster. Imports Kubernetes pods with DCGM and vLLM metrics, Slurm sacct, OpenCost allocations, CSV or a fleetops store, then reports GPU-hours and cost by org, team, person, project, use case, GPU type and model, split into useful, idle and lost-to-failure hours, with unallocated capacity, budgets and coverage. Ranks savings per month with evidence and owner (idle notebooks, jobs holding idle GPUs, repeated failures, a cheaper GPU type, GPU sharing, serving cost per token, over-provisioned replicas, model and hardware matching, unused commitments) and exports FOCUS 1.4 and showback CSV. Use for GPU chargeback or showback, who is wasting GPUs, cost per team or person, cost per million tokens, which GPU a model or job should run on, or GPU budgets.
+license: Apache-2.0 (see LICENSE.txt)
 ---
 
 # gpu-ledger

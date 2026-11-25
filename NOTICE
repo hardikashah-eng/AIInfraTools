@@ -1,0 +1,8 @@
+AIInfraTools
+Copyright 2026 the AIInfraTools authors
+
+This product is licensed under the Apache License, Version 2.0 (see LICENSE).
+
+Third-party data used by the tests, each under its own license, is listed with its source in
+fleetops/tests/fixtures/real/README.md. Public traces and benchmark results that the tools download at run time
+(Philly, Alibaba, MLPerf and others) are not part of this repository and keep their own licenses.

@@ -1,6 +1,7 @@
 {
   "name": "fleetscope",
   "version": "0.1.0",
+  "license": "Apache-2.0",
   "private": true,
   "description": "Node editor for replaying LLM traffic on a modelled hybrid (on-prem + neocloud) GPU fleet",
   "scripts": {

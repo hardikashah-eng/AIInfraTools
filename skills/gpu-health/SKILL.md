@@ -1,6 +1,7 @@
 ---
 name: gpu-health
 description: Checks GPU and accelerator fleet health and efficiency from NVIDIA DCGM, AMD, SambaNova or Google Cloud TPU telemetry, including mixed fleets. It finds failing and soon-to-fail devices from XID and vendor fault codes, ECC and row-remap trends, HBM temperature, throttling, power brake, PCIe/NVLink/XGMI errors, telemetry gaps and silent data corruption. It also finds flaky GPUs that keep failing after repair, repairs that don't hold and groups of GPUs that fail together. It finds stragglers slowing training, idle or oversized GPU allocations with $/week savings, ranks failure risk and measures fragmentation. It proposes fixes (quarantine, diagnostics, reset, drain, swap at checkpoint, scale in, reclaim) in an approval queue, and runs approved fixes as a dry run unless explicitly made live. Use for GPU health checks, deciding which GPUs to quarantine or repair, GPU utilization, waste and savings reports, finding stragglers, or acting on GPU alerts in NVIDIA or AMD clusters.
+license: Apache-2.0 (see LICENSE.txt)
 ---
 
 # GPU health

@@ -1,6 +1,7 @@
 {
   "name": "hybrid-tracing",
   "version": "0.1.0",
+  "license": "Apache-2.0",
   "private": true,
   "description": "One trace view across on-prem and neocloud: shared clock reference, collector tiers, and clock-skew correction for OTLP traces.",
   "type": "module",
