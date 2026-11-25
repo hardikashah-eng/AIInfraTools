@@ -1,0 +1,113 @@
+{
+ "$schema": "https://json-schema.org/draft/2020-12/schema",
+ "$id": "https://github.com/hardikashah-eng/AIInfraTools/schemas/fleetops.power.report.schema.json",
+ "title": "aiinfra fleetops power report --budgets F --from T --to T --json",
+ "type": "object",
+ "properties": {
+  "power": {
+   "type": "object",
+   "properties": {
+    "binS": {
+     "type": "number"
+    },
+    "bins": {
+     "type": "number"
+    },
+    "gpuShare": {
+     "type": "number"
+    },
+    "groups": {
+     "type": "array",
+     "items": {
+      "type": "object",
+      "properties": {
+       "avgKw": {
+        "type": "number"
+       },
+       "budgetKw": {
+        "type": [
+         "null",
+         "number"
+        ]
+       },
+       "facilityKwP99": {
+        "type": "number"
+       },
+       "group": {
+        "type": "string"
+       },
+       "headroomKw": {
+        "type": [
+         "null",
+         "number"
+        ]
+       },
+       "moreNodes": {
+        "type": [
+         "null",
+         "number"
+        ]
+       },
+       "nodeKwP95": {
+        "type": "number"
+       },
+       "nodes": {
+        "type": "number"
+       },
+       "overBudgetShare": {
+        "type": [
+         "null",
+         "number"
+        ]
+       },
+       "p99Kw": {
+        "type": "number"
+       },
+       "peakKw": {
+        "type": "number"
+       },
+       "sku": {
+        "type": "string"
+       }
+      },
+      "required": [
+       "avgKw",
+       "budgetKw",
+       "facilityKwP99",
+       "group",
+       "headroomKw",
+       "moreNodes",
+       "nodeKwP95",
+       "nodes",
+       "overBudgetShare",
+       "p99Kw",
+       "peakKw",
+       "sku"
+      ]
+     }
+    },
+    "nodes": {
+     "type": "number"
+    },
+    "note": {
+     "type": "string"
+    },
+    "pue": {
+     "type": "number"
+    }
+   },
+   "required": [
+    "binS",
+    "bins",
+    "gpuShare",
+    "groups",
+    "nodes",
+    "note",
+    "pue"
+   ]
+  }
+ },
+ "required": [
+  "power"
+ ]
+}

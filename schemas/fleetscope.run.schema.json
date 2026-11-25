@@ -1,0 +1,72 @@
+{
+ "$schema": "https://json-schema.org/draft/2020-12/schema",
+ "$id": "https://github.com/hardikashah-eng/AIInfraTools/schemas/fleetscope.run.schema.json",
+ "title": "aiinfra fleetscope run --template T --json",
+ "type": "object",
+ "properties": {
+  "fleet": {
+   "type": "array",
+   "items": {
+    "type": "object",
+    "properties": {
+     "bottleneck": {
+      "type": "string"
+     },
+     "costPerHr": {
+      "type": "number"
+     },
+     "lost": {
+      "type": "number"
+     },
+     "name": {
+      "type": "string"
+     },
+     "peakGpus": {
+      "type": "number"
+     },
+     "rejected": {
+      "type": "number"
+     },
+     "slo": {
+      "type": "number"
+     },
+     "tpotP99": {
+      "type": "number"
+     },
+     "ttftP99": {
+      "type": "number"
+     }
+    },
+    "required": [
+     "bottleneck",
+     "costPerHr",
+     "lost",
+     "name",
+     "peakGpus",
+     "rejected",
+     "slo",
+     "tpotP99",
+     "ttftP99"
+    ]
+   }
+  },
+  "lint": {
+   "type": "array",
+   "items": {
+    "type": "string"
+   }
+  },
+  "name": {
+   "type": "string"
+  },
+  "scenario": {
+   "type": "string"
+  }
+ },
+ "required": [
+  "fleet",
+  "lint",
+  "name",
+  "scenario"
+ ]
+}

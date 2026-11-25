@@ -23,6 +23,11 @@ cd fleetops && npm test            # or gpu-health, fleetscope, inference-sizer,
 
 The browser tools (FleetScope, Inference Sizer) build a single HTML file: `node build.mjs` in their folder.
 
+## Output schemas
+
+Agents and scripts depend on the `--json` output. If you change it on purpose, run `node scripts/schemas.mjs --update`
+and say so in the pull request; CI fails otherwise. Adding a field needs nothing. See [schemas/README.md](schemas/README.md).
+
 ## Skills
 
 `skills/` packages each tool as an Agent Skill. Each `SKILL.md` is hand-written; everything else in a skill folder is

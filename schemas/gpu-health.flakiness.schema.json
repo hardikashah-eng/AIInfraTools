@@ -1,0 +1,397 @@
+{
+ "$schema": "https://json-schema.org/draft/2020-12/schema",
+ "$id": "https://github.com/hardikashah-eng/AIInfraTools/schemas/gpu-health.flakiness.schema.json",
+ "title": "aiinfra gpu-health flakiness --state DIR --json",
+ "type": "object",
+ "properties": {
+  "badput": {
+   "type": "array",
+   "items": {
+    "type": "object",
+    "properties": {
+     "cost": {
+      "type": "number"
+     },
+     "devices": {
+      "type": "array",
+      "items": {
+       "type": "string"
+      }
+     },
+     "estimated": {
+      "type": "boolean"
+     },
+     "failures": {
+      "type": "number"
+     },
+     "job": {
+      "type": "string"
+     },
+     "lostGpuHours": {
+      "type": "number"
+     }
+    },
+    "required": [
+     "cost",
+     "devices",
+     "estimated",
+     "failures",
+     "job",
+     "lostGpuHours"
+    ]
+   }
+  },
+  "devices": {
+   "type": "array",
+   "items": {
+    "type": "object",
+    "properties": {
+     "bounces": {
+      "type": "number"
+     },
+     "diagThenFail": {
+      "type": "number"
+     },
+     "events": {
+      "type": "array",
+      "items": {
+       "type": "object",
+       "properties": {
+        "from": {
+         "type": [
+          "null",
+          "string"
+         ]
+        },
+        "t": {
+         "type": "number"
+        },
+        "to": {
+         "type": "string"
+        },
+        "why": {
+         "type": "string"
+        }
+       },
+       "required": [
+        "from",
+        "t",
+        "to",
+        "why"
+       ]
+      }
+     },
+     "exits": {
+      "type": "number"
+     },
+     "faultClasses": {
+      "type": "array",
+      "items": {
+       "type": "string"
+      }
+     },
+     "firmware": {
+      "type": "string"
+     },
+     "gpu": {
+      "type": "string"
+     },
+     "hardFailures": {
+      "type": "number"
+     },
+     "jobFailures": {
+      "type": "number"
+     },
+     "key": {
+      "type": "string"
+     },
+     "lastWhy": {
+      "type": "string"
+     },
+     "next": {
+      "type": "string"
+     },
+     "node": {
+      "type": "string"
+     },
+     "score": {
+      "type": "number"
+     },
+     "site": {
+      "type": "string"
+     },
+     "sku": {
+      "type": "string"
+     },
+     "state": {
+      "type": "string"
+     },
+     "vendor": {
+      "type": "string"
+     },
+     "verdict": {
+      "type": "string"
+     }
+    },
+    "required": [
+     "bounces",
+     "diagThenFail",
+     "events",
+     "exits",
+     "faultClasses",
+     "firmware",
+     "gpu",
+     "hardFailures",
+     "jobFailures",
+     "key",
+     "lastWhy",
+     "next",
+     "node",
+     "score",
+     "site",
+     "sku",
+     "state",
+     "vendor",
+     "verdict"
+    ]
+   }
+  },
+  "hotCohorts": {
+   "type": "array",
+   "items": {
+    "type": "object",
+    "properties": {
+     "devices": {
+      "type": "number"
+     },
+     "devicesWithExits": {
+      "type": "number"
+     },
+     "dimension": {
+      "type": "string"
+     },
+     "exits": {
+      "type": "number"
+     },
+     "hot": {
+      "type": "boolean"
+     },
+     "rate": {
+      "type": "number"
+     },
+     "ratio": {
+      "type": "number"
+     },
+     "value": {
+      "type": "string"
+     }
+    },
+    "required": [
+     "devices",
+     "devicesWithExits",
+     "dimension",
+     "exits",
+     "hot",
+     "rate",
+     "ratio",
+     "value"
+    ]
+   }
+  },
+  "repairs": {
+   "type": "array",
+   "items": {
+    "type": "object",
+    "properties": {
+     "faultClass": {
+      "type": "string"
+     },
+     "hold": {
+      "type": "object",
+      "properties": {
+       "7": {
+        "type": "object",
+        "properties": {
+         "eligible": {
+          "type": "number"
+         },
+         "held": {
+          "type": "number"
+         },
+         "rate": {
+          "type": "number"
+         }
+        },
+        "required": [
+         "eligible",
+         "held",
+         "rate"
+        ]
+       },
+       "30": {
+        "type": "object",
+        "properties": {
+         "eligible": {
+          "type": "number"
+         },
+         "held": {
+          "type": "number"
+         },
+         "rate": {
+          "type": "number"
+         }
+        },
+        "required": [
+         "eligible",
+         "held",
+         "rate"
+        ]
+       }
+      },
+      "required": [
+       "30",
+       "7"
+      ]
+     },
+     "kind": {
+      "type": "string"
+     },
+     "n": {
+      "type": "number"
+     },
+     "verdict": {
+      "type": "string"
+     }
+    },
+    "required": [
+     "faultClass",
+     "hold",
+     "kind",
+     "n",
+     "verdict"
+    ]
+   }
+  },
+  "settings": {
+   "type": "object",
+   "properties": {
+    "bounceDays": {
+     "type": "number"
+    },
+    "cohortMinDevices": {
+     "type": "number"
+    },
+    "cohortRatio": {
+     "type": "number"
+    },
+    "holdDays": {
+     "type": "array",
+     "items": {
+      "type": "number"
+     }
+    },
+    "lostHoursPerFailure": {
+     "type": "number"
+    }
+   },
+   "required": [
+    "bounceDays",
+    "cohortMinDevices",
+    "cohortRatio",
+    "holdDays",
+    "lostHoursPerFailure"
+   ]
+  },
+  "totals": {
+   "type": "object",
+   "properties": {
+    "bounceRate": {
+     "type": "number"
+    },
+    "deviceJobFailures": {
+     "type": "number"
+    },
+    "devices": {
+     "type": "number"
+    },
+    "exits": {
+     "type": "number"
+    },
+    "exitsPer1kDeviceHours": {
+     "type": "number"
+    },
+    "flaky": {
+     "type": "number"
+    },
+    "hardFailures": {
+     "type": "number"
+    },
+    "lostCost": {
+     "type": "number"
+    },
+    "lostGpuHours": {
+     "type": "number"
+    },
+    "repairHoldRate": {
+     "type": "number"
+    },
+    "repairs": {
+     "type": "number"
+    },
+    "rmaCandidates": {
+     "type": "number"
+    },
+    "warnedRate": {
+     "type": "number"
+    },
+    "watch": {
+     "type": "number"
+    }
+   },
+   "required": [
+    "bounceRate",
+    "deviceJobFailures",
+    "devices",
+    "exits",
+    "exitsPer1kDeviceHours",
+    "flaky",
+    "hardFailures",
+    "lostCost",
+    "lostGpuHours",
+    "repairHoldRate",
+    "repairs",
+    "rmaCandidates",
+    "warnedRate",
+    "watch"
+   ]
+  },
+  "window": {
+   "type": "object",
+   "properties": {
+    "days": {
+     "type": "number"
+    },
+    "from": {
+     "type": "number"
+    },
+    "to": {
+     "type": "number"
+    }
+   },
+   "required": [
+    "days",
+    "from",
+    "to"
+   ]
+  }
+ },
+ "required": [
+  "badput",
+  "devices",
+  "hotCohorts",
+  "repairs",
+  "settings",
+  "totals",
+  "window"
+ ]
+}

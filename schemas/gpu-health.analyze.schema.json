@@ -1,0 +1,422 @@
+{
+ "$schema": "https://json-schema.org/draft/2020-12/schema",
+ "$id": "https://github.com/hardikashah-eng/AIInfraTools/schemas/gpu-health.analyze.schema.json",
+ "title": "aiinfra gpu-health analyze --samples F --jobs F --state DIR --json",
+ "type": "object",
+ "properties": {
+  "breaker": {
+   "type": "boolean"
+  },
+  "coverage": {
+   "type": "array",
+   "items": {
+    "type": "object",
+    "properties": {
+     "blind": {
+      "type": "array"
+     },
+     "checks": {
+      "type": "array",
+      "items": {
+       "type": "string"
+      }
+     },
+     "devices": {
+      "type": "number"
+     },
+     "kind": {
+      "type": "string"
+     },
+     "name": {
+      "type": "string"
+     },
+     "vendor": {
+      "type": "string"
+     }
+    },
+    "required": [
+     "blind",
+     "checks",
+     "devices",
+     "kind",
+     "name",
+     "vendor"
+    ]
+   }
+  },
+  "fragmentation": {
+   "type": "null"
+  },
+  "gpusNotServing": {
+   "type": "array",
+   "items": {
+    "type": "object",
+    "properties": {
+     "gpu": {
+      "type": "string"
+     },
+     "schedulable": {
+      "type": "boolean"
+     },
+     "signals": {
+      "type": "array",
+      "items": {
+       "type": "string"
+      }
+     },
+     "sku": {
+      "type": "string"
+     },
+     "state": {
+      "type": "string"
+     },
+     "why": {
+      "type": "string"
+     }
+    },
+    "required": [
+     "gpu",
+     "schedulable",
+     "signals",
+     "sku",
+     "state",
+     "why"
+    ]
+   }
+  },
+  "jobUsage": {
+   "type": "array",
+   "items": {
+    "type": "object",
+    "properties": {
+     "class": {
+      "type": "string"
+     },
+     "dramP50": {
+      "type": "number"
+     },
+     "effP50": {
+      "type": "number"
+     },
+     "effP95": {
+      "type": "number"
+     },
+     "gpus": {
+      "type": "number"
+     },
+     "hours": {
+      "type": "number"
+     },
+     "job": {
+      "type": "string"
+     },
+     "memPeakGB": {
+      "type": "number"
+     },
+     "memSource": {
+      "type": "string"
+     },
+     "memTotalGB": {
+      "type": "number"
+     },
+     "owner": {
+      "type": "string"
+     },
+     "sku": {
+      "type": "string"
+     },
+     "smP50": {
+      "type": "number"
+     },
+     "tensorP50": {
+      "type": "number"
+     },
+     "usage": {
+      "type": "string"
+     },
+     "usageText": {
+      "type": "string"
+     }
+    },
+    "required": [
+     "class",
+     "dramP50",
+     "effP50",
+     "effP95",
+     "gpus",
+     "hours",
+     "job",
+     "memPeakGB",
+     "memSource",
+     "memTotalGB",
+     "owner",
+     "sku",
+     "smP50",
+     "tensorP50",
+     "usage",
+     "usageText"
+    ]
+   }
+  },
+  "openActions": {
+   "type": "array",
+   "items": {
+    "type": "object",
+    "properties": {
+     "id": {
+      "type": "string"
+     },
+     "kind": {
+      "type": "string"
+     },
+     "mode": {
+      "type": "string"
+     },
+     "reason": {
+      "type": "string"
+     },
+     "severity": {
+      "type": "string"
+     },
+     "status": {
+      "type": "string"
+     },
+     "target": {
+      "type": "string"
+     },
+     "weekly": {
+      "type": "number"
+     }
+    },
+    "required": [
+     "id",
+     "kind",
+     "mode",
+     "reason",
+     "severity",
+     "status",
+     "target"
+    ]
+   }
+  },
+  "partitionPlan": {
+   "type": "array",
+   "items": {
+    "type": "object",
+    "properties": {
+     "gpusNeeded": {
+      "type": "number"
+     },
+     "gpusNow": {
+      "type": "number"
+     },
+     "layout": {
+      "type": "array",
+      "items": {
+       "type": "string"
+      }
+     },
+     "sku": {
+      "type": "string"
+     }
+    },
+    "required": [
+     "gpusNeeded",
+     "gpusNow",
+     "layout",
+     "sku"
+    ]
+   }
+  },
+  "recommendations": {
+   "type": "array",
+   "items": {
+    "type": "object",
+    "properties": {
+     "action": {
+      "type": "string"
+     },
+     "class": {
+      "type": "string"
+     },
+     "confidence": {
+      "type": "string"
+     },
+     "gpus": {
+      "type": "number"
+     },
+     "job": {
+      "type": "string"
+     },
+     "lever": {
+      "type": "string"
+     },
+     "text": {
+      "type": "string"
+     },
+     "usage": {
+      "type": "string"
+     },
+     "weekly": {
+      "type": "number"
+     }
+    },
+    "required": [
+     "action",
+     "class",
+     "confidence",
+     "gpus",
+     "job",
+     "lever",
+     "text",
+     "usage",
+     "weekly"
+    ]
+   }
+  },
+  "risk": {
+   "type": "array",
+   "items": {
+    "type": "object",
+    "properties": {
+     "gpu": {
+      "type": "string"
+     },
+     "key": {
+      "type": "string"
+     },
+     "kind": {
+      "type": "string"
+     },
+     "node": {
+      "type": "string"
+     },
+     "score": {
+      "type": "number"
+     },
+     "sku": {
+      "type": "string"
+     },
+     "state": {
+      "type": "string"
+     },
+     "tier": {
+      "type": "string"
+     },
+     "vendor": {
+      "type": "string"
+     },
+     "why": {
+      "type": "array",
+      "items": {
+       "type": "string"
+      }
+     }
+    },
+    "required": [
+     "gpu",
+     "key",
+     "kind",
+     "node",
+     "score",
+     "sku",
+     "state",
+     "tier",
+     "vendor",
+     "why"
+    ]
+   }
+  },
+  "summary": {
+   "type": "object",
+   "properties": {
+    "allocatedGpus": {
+     "type": "number"
+    },
+    "effectiveUtil": {
+     "type": "number"
+    },
+    "gpus": {
+     "type": "number"
+    },
+    "gpusFreeable": {
+     "type": "number"
+    },
+    "highRisk": {
+     "type": "number"
+    },
+    "idleGpuHours": {
+     "type": "number"
+    },
+    "outOfServiceCostPerWeek": {
+     "type": "number"
+    },
+    "states": {
+     "type": "object",
+     "properties": {
+      "quarantined": {
+       "type": "number"
+      },
+      "serving": {
+       "type": "number"
+      },
+      "suspect": {
+       "type": "number"
+      }
+     },
+     "required": [
+      "quarantined",
+      "serving",
+      "suspect"
+     ]
+    },
+    "stragglers": {
+     "type": "number"
+    },
+    "weeklySavings": {
+     "type": "number"
+    },
+    "window": {
+     "type": "object",
+     "properties": {
+      "from": {
+       "type": "number"
+      },
+      "to": {
+       "type": "number"
+      }
+     },
+     "required": [
+      "from",
+      "to"
+     ]
+    }
+   },
+   "required": [
+    "allocatedGpus",
+    "effectiveUtil",
+    "gpus",
+    "gpusFreeable",
+    "highRisk",
+    "idleGpuHours",
+    "outOfServiceCostPerWeek",
+    "states",
+    "stragglers",
+    "weeklySavings",
+    "window"
+   ]
+  }
+ },
+ "required": [
+  "breaker",
+  "coverage",
+  "fragmentation",
+  "gpusNotServing",
+  "jobUsage",
+  "openActions",
+  "partitionPlan",
+  "recommendations",
+  "risk",
+  "summary"
+ ]
+}

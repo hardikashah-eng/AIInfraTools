@@ -1,0 +1,390 @@
+{
+ "$schema": "https://json-schema.org/draft/2020-12/schema",
+ "$id": "https://github.com/hardikashah-eng/AIInfraTools/schemas/ledger.report.schema.json",
+ "title": "aiinfra ledger report --usage F --config F --format json --json",
+ "type": "object",
+ "properties": {
+  "budgets": {
+   "type": "array",
+   "items": {
+    "type": "object",
+    "properties": {
+     "budget": {
+      "type": "number"
+     },
+     "key": {
+      "type": "string"
+     },
+     "over": {
+      "type": "boolean"
+     },
+     "perMonth": {
+      "type": "number"
+     },
+     "share": {
+      "type": "number"
+     },
+     "spend": {
+      "type": "number"
+     }
+    },
+    "required": [
+     "budget",
+     "key",
+     "over",
+     "perMonth",
+     "share",
+     "spend"
+    ]
+   }
+  },
+  "coverage": {
+   "type": "object",
+   "properties": {
+    "attributedOrg": {
+     "type": "number"
+    },
+    "attributedUser": {
+     "type": "number"
+    },
+    "gpuType": {
+     "type": "number"
+    },
+    "priced": {
+     "type": "number"
+    },
+    "utilization": {
+     "type": "number"
+    }
+   },
+   "required": [
+    "attributedOrg",
+    "attributedUser",
+    "gpuType",
+    "priced",
+    "utilization"
+   ]
+  },
+  "currency": {
+   "type": "string"
+  },
+  "from": {
+   "type": "number"
+  },
+  "groups": {
+   "type": "array",
+   "items": {
+    "type": "object",
+    "properties": {
+     "alloc": {
+      "type": "number"
+     },
+     "cost": {
+      "type": "number"
+     },
+     "efficiency": {
+      "type": "number"
+     },
+     "idle": {
+      "type": "number"
+     },
+     "idleLong": {
+      "type": "number"
+     },
+     "key": {
+      "type": "object",
+      "properties": {
+       "org": {
+        "type": "string"
+       },
+       "team": {
+        "type": "string"
+       }
+      },
+      "required": [
+       "org",
+       "team"
+      ]
+     },
+     "loadedCost": {
+      "type": "number"
+     },
+     "lost": {
+      "type": "number"
+     },
+     "period": {
+      "type": "null"
+     },
+     "priced": {
+      "type": "number"
+     },
+     "records": {
+      "type": "number"
+     },
+     "sm": {
+      "type": "number"
+     },
+     "smBase": {
+      "type": "number"
+     },
+     "smW": {
+      "type": "number"
+     },
+     "tokensOut": {
+      "type": "number"
+     },
+     "useful": {
+      "type": "number"
+     },
+     "wasted": {
+      "type": "number"
+     }
+    },
+    "required": [
+     "alloc",
+     "cost",
+     "efficiency",
+     "idle",
+     "idleLong",
+     "key",
+     "loadedCost",
+     "lost",
+     "period",
+     "priced",
+     "records",
+     "sm",
+     "smBase",
+     "smW",
+     "tokensOut",
+     "useful",
+     "wasted"
+    ]
+   }
+  },
+  "insights": {
+   "type": "array",
+   "items": {
+    "type": "object",
+    "properties": {
+     "action": {
+      "type": "string"
+     },
+     "basis": {
+      "type": "string"
+     },
+     "caveat": {
+      "type": "string"
+     },
+     "confidence": {
+      "type": "string"
+     },
+     "evidence": {
+      "type": "string"
+     },
+     "id": {
+      "type": "string"
+     },
+     "kind": {
+      "type": "string"
+     },
+     "owner": {
+      "type": "object",
+      "properties": {
+       "org": {
+        "type": "string"
+       },
+       "team": {
+        "type": "string"
+       },
+       "user": {
+        "type": "string"
+       }
+      },
+      "required": [
+       "org"
+      ]
+     },
+     "savings": {
+      "type": "object",
+      "properties": {
+       "gpuHMonth": {
+        "type": "number"
+       },
+       "usdMonth": {
+        "type": [
+         "null",
+         "number"
+        ]
+       }
+      },
+      "required": [
+       "gpuHMonth",
+       "usdMonth"
+      ]
+     },
+     "title": {
+      "type": "string"
+     }
+    },
+    "required": [
+     "action",
+     "basis",
+     "confidence",
+     "evidence",
+     "id",
+     "kind",
+     "owner",
+     "savings",
+     "title"
+    ]
+   }
+  },
+  "lostBases": {
+   "type": "object",
+   "properties": {
+    "every attempt failed: all of it": {
+     "type": "number"
+    },
+    "half the checkpoint interval": {
+     "type": "number"
+    }
+   },
+   "required": [
+    "every attempt failed: all of it",
+    "half the checkpoint interval"
+   ]
+  },
+  "to": {
+   "type": "number"
+  },
+  "totals": {
+   "type": "object",
+   "properties": {
+    "alloc": {
+     "type": "number"
+    },
+    "cost": {
+     "type": "number"
+    },
+    "efficiency": {
+     "type": "number"
+    },
+    "idle": {
+     "type": "number"
+    },
+    "idleLong": {
+     "type": "number"
+    },
+    "lost": {
+     "type": "number"
+    },
+    "priced": {
+     "type": "number"
+    },
+    "records": {
+     "type": "number"
+    },
+    "sm": {
+     "type": "number"
+    },
+    "smBase": {
+     "type": "number"
+    },
+    "smW": {
+     "type": "number"
+    },
+    "tokensOut": {
+     "type": "number"
+    },
+    "useful": {
+     "type": "number"
+    },
+    "wasted": {
+     "type": "number"
+    }
+   },
+   "required": [
+    "alloc",
+    "cost",
+    "efficiency",
+    "idle",
+    "idleLong",
+    "lost",
+    "priced",
+    "records",
+    "sm",
+    "smBase",
+    "smW",
+    "tokensOut",
+    "useful",
+    "wasted"
+   ]
+  },
+  "unallocated": {
+   "type": "array",
+   "items": {
+    "type": "object",
+    "properties": {
+     "allocated": {
+      "type": "number"
+     },
+     "capacity": {
+      "type": "number"
+     },
+     "cluster": {
+      "type": "string"
+     },
+     "cost": {
+      "type": "number"
+     },
+     "gpuType": {
+      "type": "string"
+     },
+     "overcommitted": {
+      "type": "null"
+     },
+     "powerCost": {
+      "type": "number"
+     },
+     "rate": {
+      "type": "number"
+     },
+     "rateBasis": {
+      "type": "string"
+     },
+     "share": {
+      "type": "number"
+     },
+     "unallocated": {
+      "type": "number"
+     }
+    },
+    "required": [
+     "allocated",
+     "capacity",
+     "cluster",
+     "cost",
+     "gpuType",
+     "overcommitted",
+     "powerCost",
+     "rate",
+     "rateBasis",
+     "share",
+     "unallocated"
+    ]
+   }
+  }
+ },
+ "required": [
+  "budgets",
+  "coverage",
+  "currency",
+  "from",
+  "groups",
+  "insights",
+  "lostBases",
+  "to",
+  "totals",
+  "unallocated"
+ ]
+}

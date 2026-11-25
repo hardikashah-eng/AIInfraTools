@@ -1,0 +1,89 @@
+{
+ "$schema": "https://json-schema.org/draft/2020-12/schema",
+ "$id": "https://github.com/hardikashah-eng/AIInfraTools/schemas/ledger.insights.schema.json",
+ "title": "aiinfra ledger insights --usage F --config F --json",
+ "type": "object",
+ "properties": {
+  "insights": {
+   "type": "array",
+   "items": {
+    "type": "object",
+    "properties": {
+     "action": {
+      "type": "string"
+     },
+     "basis": {
+      "type": "string"
+     },
+     "caveat": {
+      "type": "string"
+     },
+     "confidence": {
+      "type": "string"
+     },
+     "evidence": {
+      "type": "string"
+     },
+     "id": {
+      "type": "string"
+     },
+     "kind": {
+      "type": "string"
+     },
+     "owner": {
+      "type": "object",
+      "properties": {
+       "org": {
+        "type": "string"
+       },
+       "team": {
+        "type": "string"
+       },
+       "user": {
+        "type": "string"
+       }
+      },
+      "required": [
+       "org"
+      ]
+     },
+     "savings": {
+      "type": "object",
+      "properties": {
+       "gpuHMonth": {
+        "type": "number"
+       },
+       "usdMonth": {
+        "type": [
+         "null",
+         "number"
+        ]
+       }
+      },
+      "required": [
+       "gpuHMonth",
+       "usdMonth"
+      ]
+     },
+     "title": {
+      "type": "string"
+     }
+    },
+    "required": [
+     "action",
+     "basis",
+     "confidence",
+     "evidence",
+     "id",
+     "kind",
+     "owner",
+     "savings",
+     "title"
+    ]
+   }
+  }
+ },
+ "required": [
+  "insights"
+ ]
+}
