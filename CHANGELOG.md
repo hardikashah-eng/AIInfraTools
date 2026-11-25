@@ -5,6 +5,18 @@ change the `--json` output, and when it does the change is listed here (see [sch
 
 ## Unreleased
 
+### New tool: harness-ledger
+
+- **Where agent harnesses waste model resources, across harnesses.** Importers for Claude Code transcripts, Codex
+  rollouts, OpenTelemetry GenAI and OpenInference spans, and Langfuse exports write one `llm_call` record per model
+  call, with token meanings normalized (cached tokens are part of input). Checks: prompt-cache misses and expiries,
+  unread cache writes, oversized tool output carried forward, repeated tool calls, retry loops, failed calls, unused
+  tool definitions, and routing calls on a large model (as candidates). Costs come from a price file, the harness's
+  recorded cost, or, for self-hosted models, GPU time joined from vLLM's request spans through gpu-ledger's rate card.
+  Cost per successful task with `--outcomes`. Records keep counts, names and hashes only.
+  `harness-ledger scan | report | import | demo`, HTML report, skill. Token accounting matches ccusage on its Codex
+  fixtures.
+
 Vendor-neutral: the tools no longer assume NVIDIA.
 
 ### New

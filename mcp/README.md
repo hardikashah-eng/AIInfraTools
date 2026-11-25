@@ -34,6 +34,7 @@ From a clone instead of npm: `"command": "node", "args": ["/path/to/AIInfraTools
 | `fleetscope_templates` · `fleetscope_run` · `fleetscope_ask` | simulate a hybrid fleet; plain-English what-ifs | `fleetscope.*` |
 | `gpu_health_analyze` | health problems, idle and underused GPUs, savings; proposals into the approval queue | `gpu-health.analyze` |
 | `ledger_report` · `ledger_insights` | GPU-hours and cost by owner (useful, idle, lost); ranked savings | `ledger.*` |
+| `harness_waste` | where agent harnesses (Claude Code, Codex, OTel, Langfuse) waste tokens and money, by cause, tool and session | – |
 | `rca_detect` · `rca_diagnose` | incidents in a window; ranked root causes with evidence | `fleetops.rca.diagnose` |
 | `power_report` · `power_plan` | power against budget; a plan of GPU power caps | `fleetops.power.*` |
 | `fix_trace_skew` | clock offsets and ordering violations in OTLP traces | `fix-skew.demo` |

@@ -1,0 +1,30 @@
+# Runs harness-ledger's tests and its demo end to end.
+name: Harness Ledger
+on:
+  pull_request:
+    paths:
+      - 'harness-ledger/**'
+      - 'gpu-ledger/src/core.mjs'
+      - 'inference-sizer/src/accelerators.js'
+      - '.github/workflows/harness-ledger.yml'
+permissions:
+  contents: read
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+      - name: Tests
+        working-directory: harness-ledger
+        run: npm test
+      - name: Demo finds the planted waste in three harnesses and writes the HTML report
+        working-directory: harness-ledger
+        run: |
+          node tools/harness-ledger.mjs demo | tee /tmp/hl.txt
+          grep -q 'Cache expired during a pause' /tmp/hl.txt
+          grep -q 'Retrying a failing tool' /tmp/hl.txt
+          node tools/harness-ledger.mjs demo --html /tmp/hl.html
+          grep -q 'Self-hosted: GPU time behind the calls' /tmp/hl.html

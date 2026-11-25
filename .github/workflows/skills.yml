@@ -14,6 +14,8 @@ on:
       - 'gpu-health/**'
       - 'fleetops/**'
       - 'gpu-ledger/**'
+
+      - 'harness-ledger/**'
       - '.github/workflows/skills.yml'
   push:
     branches: [main]

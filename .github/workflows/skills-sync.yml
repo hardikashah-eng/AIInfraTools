@@ -8,6 +8,8 @@ on:
       - 'fleetops/**'
       - 'gpu-health/**'
       - 'gpu-ledger/**'
+
+      - 'harness-ledger/**'
       - 'inference-sizer/**'
       - 'fleetscope/**'
       - 'hybrid-tracing/**'

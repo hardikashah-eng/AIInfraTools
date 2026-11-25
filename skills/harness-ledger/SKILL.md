@@ -1,0 +1,56 @@
+---
+name: harness-ledger
+description: Finds where agent harnesses waste model resources, across harnesses. Reads Claude Code transcripts, Codex CLI rollouts, OpenTelemetry GenAI or OpenInference spans (Copilot, Gemini CLI, LangGraph, OpenAI Agents SDK, CrewAI, LlamaIndex…) and Langfuse exports into one record per model call, then reports avoidable tokens and cost by cause (prompt-cache misses and expiries, unread cache writes, oversized tool output carried forward, repeated tool calls, retry loops, failed calls, unused tool definitions, routing calls on a large model), by harness, session, tool and model, with the fix for each. With vLLM traces it charges self-hosted calls their GPU time. Gives cost per successful task when outcomes are known. Use for why an agent costs so much, token or cache efficiency of Claude Code, Codex or a custom agent, comparing harnesses or configurations, or agent cost per task.
+license: Apache-2.0 (see LICENSE.txt)
+---
+
+# harness-ledger
+
+Requires Node.js 22+. Paths are relative to this skill's folder. The CLI is
+`scripts/harness-ledger/tools/harness-ledger.mjs` (written `harness-ledger` below: run it as
+`node scripts/harness-ledger/tools/harness-ledger.mjs`). Every reading command takes `--json`.
+
+## Rules
+
+- **Prices are examples unless the user gives theirs.** The built-in table is labelled as examples. Say so when you
+  quote dollars from it, and ask for a price file (or the provider's invoice rates) before anyone budgets on them.
+  Calls on unpriced models are listed; never guess their price.
+- **Don't read the transcripts into the conversation.** The tool reads them and keeps counts only. Don't open
+  transcript files yourself to "check" a finding: they can hold secrets and code. Quote the report.
+- **Findings are evidence, not verdicts.** A repeated tool call can be deliberate (tests re-run after an edit). A
+  model-tier finding is a candidate that needs a check that tasks still succeed. Give the note the finding carries.
+- **Say what the input can't show.** Claude Code and Codex logs don't include tool definitions, so unused tools needs
+  OTel or Langfuse input. OTel without content capture has no tool output sizes. Calls with no cache reporting skip
+  the cache checks. The report's `totals.cacheReported` says how many calls reported cache.
+
+## Workflow
+
+1. **Find the logs.** Ask which harnesses the user runs and where their traces go.
+   - Claude Code or Codex on this machine: `harness-ledger scan --since 7d --json` reads `~/.claude/projects` and
+     `~/.codex/sessions` (or `--claude DIR`, `--codex DIR`).
+   - Anything else: `harness-ledger report PATH… --json` on files or folders: OTLP JSON or span-per-line files, a
+     Langfuse export, transcripts copied from another machine. `--format` forces a format.
+   - To move data off a machine safely: `harness-ledger import PATH… --out calls.jsonl` writes counts and hashes only.
+   - No data: `harness-ledger demo --json`, three harnesses and a vLLM fleet, synthetic. Say it's synthetic.
+   Formats and how to get OTel spans from each harness: [references/FORMATS.md](references/FORMATS.md).
+2. **Price it.**
+   - `--prices prices.json`: `{ "models": { "<model or prefix>": { "input", "cacheRead", "cacheWrite", "output"
+     ($/M tokens), "tier", "downshift" } } }`.
+   - Self-hosted: `--engine vllm-traces.json --replicas replicas.json`. Replicas are `{ "<pod>": { "gpus", "gpuType",
+     "rate" } }`, or gpu-ledger usage records with `--gpu-prices`.
+   - `--outcomes outcomes.json` (session → success/failure) for cost per successful task.
+3. **Read the report** (`--json`):
+   - `totals`: calls, sessions, tokens, cacheRead, cost, `avoidableCost`, `avoidableShare`, `avoidableFullPrice` (work
+     at full price), `unpricedModels`.
+   - `funnel`: tokens processed → from cache → full price → output → avoidable.
+   - `byCause` with `fix`; `byHarness` (cache hit, cost per success); `byTool`; `sessions`; `byModel`; `top`
+     findings with `note`; `gpu.replicas` with busy and idle cost; `outcomes`.
+   - `--findings` adds every finding; `--html report.html` writes a page to share.
+4. **Answer.** Lead with avoidable cost and its share, then the top two or three causes with their fixes and the tools
+   or sessions behind them. When comparing harnesses, compare cost per successful task if outcomes are known, else
+   cost and cache hit rate per session, and say which.
+
+## Methods
+
+How each cause is decided, its thresholds (`--cache-ttl`, `--big-result`), overlap handling and the GPU-time join:
+[references/METHOD.md](references/METHOD.md).
