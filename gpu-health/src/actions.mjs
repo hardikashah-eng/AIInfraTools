@@ -34,7 +34,7 @@ export function suggest(analysis, cfg) {
   if (h.breaker) add({ kind: 'exporter-check', target: 'fleet', reason: `${h.staleCount} of ${h.fleet} GPUs stopped reporting at once; checking monitoring before quarantining anything`, severity: 'high' });
   for (const node of h.nodesThin || []) add({ kind: 'exporter-check', node, target: `node:${node}`, reason: `every GPU on ${node} is reporting patchily: check the node's exporter and network before suspecting the GPUs`, severity: 'medium' });
   for (const g of Object.values(h.gpus)) {
-    const k = g.key, cls = g.faultClass || 'default', ladder = ladderFor(cfg, g.vendor, cls);
+    const k = g.key, cls = g.faultClass || 'default', ladder = ladderFor(cfg, g.vendor, cls, g.node);
     const base = { node: g.node, gpu: g.gpu, vendor: g.vendor || undefined, target: k, since: g.since, evidence: (g.signals || []).map(s => s.why) };
     const jobs = jobsOn(k);
     if (g.state === 'quarantined') {
@@ -84,7 +84,7 @@ export function suggest(analysis, cfg) {
   for (const p of analysis.partitionPlan || []) if (p.gpusNeeded < p.gpusNow) add({ kind: 'repartition', target: `partition:${p.sku}`, reason: `pack fractional jobs on ${p.gpusNeeded} ${p.sku} GPU(s) instead of ${p.gpusNow}: ${p.layout.join(' | ')}`, severity: 'low' });
   // drop what the device's platform can't do (no GPU reset on Cloud TPU, …), then de-duplicate by kind + target
   const seen = new Map();
-  for (const a of out.filter(a => supports(cfg, a.vendor, a.kind))) {
+  for (const a of out.filter(a => supports(cfg, a.vendor, a.kind, a.node))) {
     a.id = `${a.kind}:${a.target}`;
     const s = seen.get(a.id);
     if (!s) { seen.set(a.id, a); continue; }

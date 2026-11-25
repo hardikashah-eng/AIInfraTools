@@ -153,7 +153,7 @@ export function plan(store, { from, to, budgets = {}, saveKw = null, opts = {}, 
   for (const r of results) {
     const cs = caps.filter(c => c.group === r.group); if (!cs.length) continue;
     const cmd = (c, watts) => byNode(c).flatMap(([node, gpus]) => {
-      const whole = gpus.length >= (devicesOf.get(node) || 8), t = executorFor(cfg, c.vendor, whole ? 'power-cap-node' : 'power-cap');
+      const whole = gpus.length >= (devicesOf.get(node) || 8), t = executorFor(cfg, c.vendor, whole ? 'power-cap-node' : 'power-cap', node);
       if (!Array.isArray(t)) return [];
       return whole ? t.map(a => fill(a, { node, watts })) : gpus.flatMap(gpu => t.map(a => fill(a, { node, gpu, watts })));
     });

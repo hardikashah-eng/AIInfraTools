@@ -12,6 +12,12 @@ Vendor-neutral: the tools no longer assume NVIDIA.
 - **One accelerator registry** (`inference-sizer/src/accelerators.js`), read by the sizer, FleetScope, the power model,
   serving manifests and Kubernetes inventory; vendor adapters replace the NVIDIA-or-AMD branches. MI325X, MI355X and
   GB300 NVL72 added. InferenceX validation covers 198 runs (#66).
+- **AWS:**
+  - EFA `hw_counters` read as fabric counters. Retransmits, timeouts and impaired connections count as congestion; RDMA errors as errors.
+  - EKS nodes give their instance, zone and GPU (from the instance type); the node monitoring agent's `AcceleratedHardwareReady` conditions become faults.
+  - gpu-health platforms: reboot and replace act on the EC2 instance; reseat is never proposed. `autoRepair` leaves both to EKS.
+  - `gpu-ledger import aws-cur`: GPU-hours priced at what the CUR says was billed.
+  - Capacity Blocks and spot in FleetScope's buy-vs-rent plan. `fleetops procure aws-blocks` prints the read-only lookup.
 - **AMD at parity:**
   - `amd-smi-static` and `amd-smi-topology` importers (inventory, IFWI, PCI → GPU map; XGMI links);
   - `collect.sh` and `admit-node.sh` on AMD nodes (amd-smi, ROCm Validation Suite, rccl-tests);

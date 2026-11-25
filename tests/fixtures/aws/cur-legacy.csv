@@ -1,0 +1,2 @@
+identity/LineItemId,lineItem/LineItemType,lineItem/UsageStartDate,lineItem/UsageEndDate,lineItem/ProductCode,lineItem/UsageType,lineItem/ResourceId,lineItem/UsageAmount,lineItem/UnblendedCost,reservation/EffectiveCost,savingsPlan/SavingsPlanEffectiveCost,product/instanceType,product/regionCode,resourceTags/user:team
+x1,DiscountedUsage,2026-11-20T00:00:00Z,2026-11-21T00:00:00Z,AmazonEC2,USW2-BoxUsage:p4de.24xlarge,i-0abcdef0123456789,24,0,589.20,,p4de.24xlarge,us-west-2,training

@@ -20,6 +20,7 @@ import * as Live from '../src/adapters/live.mjs';
 import { toEpoch } from '../src/adapters/time.mjs';
 import * as Logs from '../src/adapters/logs.mjs';
 import * as Topo from '../src/adapters/topology.mjs';
+import * as Procure from '../src/procure.mjs';
 import { writeGpuHealth, toFleetScopeTrace, toGpuLedger } from '../src/export.mjs';
 import * as Calib from '../src/calibrate.mjs';
 import * as RCA from '../src/rca.mjs';
@@ -50,6 +51,7 @@ const HELP = `fleetops — shared data layer for AIInfraTools
   fleetops data import bundle FILE.tar.gz|DIR                     a trace bundle (tools/collect.sh): every file, by its
                                                                  manifest entry or by content
   fleetops send FILE.tar.gz|DIR --to URL [--token T]              upload a bundle to a fleetops server (POST /v1/bundle)
+  fleetops procure aws-blocks --gpu H100 --gpus 64 --days 7       the read-only AWS command listing Capacity Blocks on offer
   fleetops data summary [--store DIR]                             records per kind, time range and sources
   fleetops data query KIND [--from T] [--to T] [--where k=v]... [--limit N]
   fleetops data node NODE [--from T] [--to T]                    versions, shared switch/rack/PDU, log faults, changes
@@ -289,7 +291,7 @@ function importSource(store, src, files, o) {
       case 'exporter': put('device', Live.exporterScrape(read(f), { vendor: o.vendor !== true ? o.vendor : undefined, t: o.t ? time(o.t) : Math.floor(fs.statSync(f).mtimeMs / 1000), site: o.site })); break;
       case 'vllm': put('serving', [Live.vllmSnapshot(read(f), { before: o.before ? read(o.before) : undefined, windowS: o.window ? +o.window : undefined, t: o.t ? time(o.t) : Math.floor(fs.statSync(f).mtimeMs / 1000), pool: o.pool || 'default', model: o.model, gpu: o.gpu })]); break;
       case 'prom-range': if (!o.field) throw new Error('prom-range needs --field'); put('serving', Live.promRange(read(f), { field: o.field, pool: o.pool })); break;
-      case 'k8s-nodes': putInventory(Live.k8sNodes(read(f), { t: tOf(f) })); put('topology', Live.k8sNodeTopology(read(f), { t: tOf(f) })); break;
+      case 'k8s-nodes': putInventory(Live.k8sNodes(read(f), { t: tOf(f) })); put('topology', Live.k8sNodeTopology(read(f), { t: tOf(f) })); put('log', Live.k8sNodeConditions(read(f), { t: tOf(f) })); break;
       case 'k8s-pods': put('placement', Live.k8sPods(read(f))); break;
       case 'slurm-nodes': putInventory(Live.slurmNodes(read(f), { t: tOf(f) })); break;
       case 'nvidia-smi-q': putInventory([Topo.nvidiaSmiQ(read(f), { node: nodeOf(f), t: tOf(f) }).inventory]); break;
@@ -471,6 +473,16 @@ function demo(store, o) {
   say('try:'); next.forEach(c => say('  ' + c));
 }
 
+// read-only procurement lookups: the cloud's own command listing what can be bought (src/procure.mjs)
+async function procureCmd(cmd, o) {
+  const opt = k => (o[k] != null && o[k] !== true ? o[k] : undefined), num = k => (opt(k) != null ? +opt(k) : undefined);
+  const from = opt('from') ? time(opt('from')) : undefined;
+  let r;
+  if (cmd === 'aws-blocks') r = Procure.awsCapacityBlocks({ chip: opt('gpu'), instanceType: opt('instance-type'), gpus: num('gpus'), days: num('days'), from, windowDays: num('window-days') });
+  else throw new Error('fleetops procure aws-blocks --gpu H100|--instance-type T --gpus N --days N [--from DATE] [--window-days 14]');
+  if (J) { OUT.procure = r; return; }
+  say(`${r.instances} × ${r.instanceType} (${r.gpusPerInstance} GPUs each) for ${r.days} day(s). To see what is on offer:\n\n  ${r.argv.join(' ')}\n\n${r.notes.map(n => `- ${n}`).join('\n')}`);
+}
 async function main() {
   const o = args(process.argv.slice(2));
   J = !!o.json;
@@ -478,6 +490,7 @@ async function main() {
   if (!area || o.help || area === 'help') return console.log(HELP);
   if (o['on-prem'] && process.env.FLEETOPS_EGRESS_ALLOW == null) process.env.FLEETOPS_EGRESS_ALLOW = typeof o['on-prem'] === 'string' ? o['on-prem'] : '';
   if (area === 'token') return tokenCmd(cmd, o);
+  if (area === 'procure') return procureCmd(cmd, o);
   if (area === 'send') return sendCmd(o);
   const store = await openStore(o.store && o.store !== true ? o.store : 'fleet-data', { backend: o.backend && o.backend !== true ? o.backend : undefined });
   // the hourly rollup answers long lookbacks (root-cause "day before") when it exists

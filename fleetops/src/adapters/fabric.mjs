@@ -64,10 +64,17 @@ export function ethtool(text, { node, iface = 'eth0', t = Math.floor(Date.now() 
 
 // The host side of an InfiniBand or RoCE port from sysfs: `grep -H . /sys/class/infiniband/*/ports/*/{counters,hw_counters}/*`,
 // one "PATH:VALUE" per line. counters/ are the standard IB port counters (data in 4-byte words, like perfquery);
-// hw_counters/ hold the RoCE congestion counters (CNPs, ECN marks) that ethtool -S does not show.
+// hw_counters/ hold the RoCE congestion counters (CNPs, ECN marks) that ethtool -S does not show. On AWS, EFA devices
+// (rdmap*, efa_*) sit in the same tree with their own hw_counters: SRD retransmits, retransmit timeouts (a network path
+// change), impaired and unresponsive remote connections (Nitro v4 and later), and RDMA work-request errors
+// (docs.aws.amazon.com/AWSEC2/latest/UserGuide/efa-working-monitor.html).
 const IBSYS = { symbol_error: 'symbolErrors', link_error_recovery: 'linkRecovery', link_downed: 'linkDowned', port_rcv_errors: 'rcvErrors', port_xmit_discards: 'xmitDiscards',
   port_xmit_wait: 'xmitWait', port_rcv_data: 'rxBytes', port_xmit_data: 'txBytes', np_cnp_sent: 'cnpSent', np_ecn_marked_roce_packets: 'ecnMarked', rp_cnp_handled: 'cnpHandled',
-  out_of_buffer: 'outOfBuffer', local_ack_timeout_err: 'ackTimeouts', out_of_sequence: 'outOfSequence', packet_seq_err: 'packetSeqErrors' };
+  out_of_buffer: 'outOfBuffer', local_ack_timeout_err: 'ackTimeouts', out_of_sequence: 'outOfSequence', packet_seq_err: 'packetSeqErrors',
+  // EFA
+  tx_bytes: 'txBytes', rx_bytes: 'rxBytes', rx_drops: 'rxDrops', retrans_pkts: 'retransPkts', retrans_timeout_events: 'retransTimeouts',
+  impaired_remote_conn_events: 'impairedConns', unresponsive_remote_events: 'unresponsiveRemote', rdma_read_wr_err: 'rdmaErrors', rdma_write_wr_err: 'rdmaErrors' };
+const EFA_ONLY = new Set(['retrans_pkts', 'retrans_timeout_events', 'impaired_remote_conn_events', 'unresponsive_remote_events', 'rdma_read_wr_err', 'rdma_write_wr_err', 'rx_drops']);
 export function ibSysfs(text, { node, t = Math.floor(Date.now() / 1000) } = {}) {
   if (!node) throw new Error('ib-sysfs needs --node');
   const by = new Map();
@@ -75,7 +82,9 @@ export function ibSysfs(text, { node, t = Math.floor(Date.now() / 1000) } = {}) 
     const m = line.match(/\/class\/infiniband\/([\w.-]+)\/ports\/(\d+)\/(?:hw_)?counters\/(\w+):\s*(\d+)\s*$/); if (!m) continue;
     const f = IBSYS[m[3]]; if (!f) continue;
     const k = `${m[1]}/${m[2]}`; if (!by.has(k)) by.set(k, { t, switch: node, port: k, nic: true, source: 'ib-sysfs' });
-    by.get(k)[f] = /^port_(rcv|xmit)_data$/.test(m[3]) ? +m[4] * 4 : +m[4];
+    const r = by.get(k), v = /^port_(rcv|xmit)_data$/.test(m[3]) ? +m[4] * 4 : +m[4];
+    r[f] = f === 'rdmaErrors' ? (r[f] || 0) + v : v; // read and write errors add up
+    if (EFA_ONLY.has(m[3]) || /^(rdmap|efa_)/.test(m[1])) r.efa = true;
   }
   return [...by.values()];
 }
@@ -103,9 +112,12 @@ export function fabricProm(json, { map = {} } = {}) {
 }
 
 // How much each counter grew over [from, to] for one port, from its records (counters can reset: a drop restarts).
-export const COUNTERS = ['symbolErrors', 'linkRecovery', 'linkDowned', 'rcvErrors', 'xmitDiscards', 'fecUncorrected', 'xmitWait', 'pfcPause', 'ecnMarked', 'cnpSent', 'outOfBuffer', 'rxBytes', 'txBytes'];
-export const ERROR_COUNTERS = ['symbolErrors', 'linkRecovery', 'linkDowned', 'rcvErrors', 'xmitDiscards', 'fecUncorrected'];
-export const CONGESTION_COUNTERS = ['xmitWait', 'pfcPause', 'ecnMarked', 'cnpSent', 'outOfBuffer'];
+export const COUNTERS = ['symbolErrors', 'linkRecovery', 'linkDowned', 'rcvErrors', 'xmitDiscards', 'fecUncorrected', 'xmitWait', 'pfcPause', 'ecnMarked', 'cnpSent', 'outOfBuffer', 'rxBytes', 'txBytes',
+  'rxDrops', 'rdmaErrors', 'unresponsiveRemote', 'retransPkts', 'retransTimeouts', 'impairedConns'];
+// EFA: dropped receives, failed RDMA work requests and unresponsive peers are errors; SRD retransmits, retransmit
+// timeouts and impaired connections are the fabric pushing back (congestion or a bad path), as ECN and CNPs are on RoCE
+export const ERROR_COUNTERS = ['symbolErrors', 'linkRecovery', 'linkDowned', 'rcvErrors', 'xmitDiscards', 'fecUncorrected', 'rxDrops', 'rdmaErrors', 'unresponsiveRemote'];
+export const CONGESTION_COUNTERS = ['xmitWait', 'pfcPause', 'ecnMarked', 'cnpSent', 'outOfBuffer', 'retransPkts', 'retransTimeouts', 'impairedConns'];
 export function growth(records, from, to) {
   const rs = records.filter(r => r.t >= from && r.t <= to).sort((a, b) => a.t - b.t), out = { seconds: rs.length > 1 ? rs[rs.length - 1].t - rs[0].t : 0, samples: rs.length };
   for (const c of COUNTERS) {
