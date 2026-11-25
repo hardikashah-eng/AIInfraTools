@@ -1,0 +1,39 @@
+# Regenerates the skills' copies of the tools on main, so pull requests change only the tools and the hand-written
+# SKILL.md files. (Committing the generated copies in every PR made unrelated PRs conflict.)
+name: Skills sync
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'fleetops/**'
+      - 'gpu-health/**'
+      - 'gpu-ledger/**'
+      - 'inference-sizer/**'
+      - 'fleetscope/**'
+      - 'hybrid-tracing/**'
+      - 'skills/*/SKILL.md'
+      - 'scripts/build-skills.mjs'
+      - 'LICENSE'
+concurrency:
+  group: skills-sync
+  cancel-in-progress: false
+permissions:
+  contents: write
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: node scripts/build-skills.mjs
+      - run: node --test scripts/test-skills.mjs
+      - name: Commit the regenerated skills
+        run: |
+          git add -A skills
+          if git diff --cached --quiet; then echo "skills already up to date"; exit 0; fi
+          git -c user.name="github-actions[bot]" -c user.email="41898282+github-actions[bot]@users.noreply.github.com" \
+            commit -q -m "skills: regenerate from the tools"
+          for i in 1 2 3; do git pull -q --rebase origin main && git push -q origin HEAD:main && exit 0; sleep 5; done
+          exit 1

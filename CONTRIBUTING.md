@@ -26,8 +26,16 @@ The browser tools (FleetScope, Inference Sizer) build a single HTML file: `node 
 ## Skills
 
 `skills/` packages each tool as an Agent Skill. Each `SKILL.md` is hand-written; everything else in a skill folder is
-generated from the tool by `node scripts/build-skills.mjs`. After changing a tool or its docs, run it, then
-`node scripts/build-skills.mjs --check` and `node --test scripts/test-skills.mjs`.
+generated from the tool by `node scripts/build-skills.mjs`. **Don't commit the generated files in a pull request**:
+change the tool (and `SKILL.md` if needed), and the Skills sync workflow regenerates the copies on `main` after the
+merge. To try a skill locally, run `node scripts/build-skills.mjs` and `node --test scripts/test-skills.mjs`, then
+`git checkout skills` (or `git stash`) before committing.
+
+## The npm package
+
+The repository root is the `aiinfra-tools` package: `bin/aiinfra.mjs` runs any tool (`npx aiinfra-tools sizer …`).
+`npm test` at the root packs it, installs it into an empty project and runs every bin. Releases publish it from
+`.github/workflows/publish.yml`.
 
 ## Pull requests
 

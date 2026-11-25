@@ -1,0 +1,32 @@
+# Publishes aiinfra-tools to npm when a GitHub release is published, with provenance.
+#
+# One-time setup (by the repository owner, on npmjs.com):
+#   - first publish: `npm publish` from a clone, signed in as yourself (trusted publishing needs the package to exist);
+#   - then on the package's page, Settings → Trusted publishing → GitHub Actions: repository
+#     hardikashah-eng/AIInfraTools, workflow publish.yml. No token is stored anywhere after that.
+# Until then this job can use an NPM_TOKEN repository secret instead (a granular, publish-only token).
+name: Publish
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+permissions:
+  contents: read
+  id-token: write
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          registry-url: https://registry.npmjs.org
+      - run: npm install -g npm@latest
+      - name: The tag matches package.json
+        if: github.event_name == 'release'
+        run: test "v$(node -p 'require("./package.json").version')" = "${{ github.event.release.tag_name }}"
+      - run: npm test
+      - run: npm publish --provenance --access public
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
