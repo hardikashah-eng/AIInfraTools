@@ -39,8 +39,15 @@ merge. To try a skill locally, run `node scripts/build-skills.mjs` and `node --t
 ## The npm package
 
 The repository root is the `aiinfra-tools` package: `bin/aiinfra.mjs` runs any tool (`npx aiinfra-tools sizer …`).
-`npm test` at the root packs it, installs it into an empty project and runs every bin. Releases publish it from
-`.github/workflows/publish.yml`.
+`npm test` at the root packs it, installs it into an empty project and runs every bin.
+
+## Releasing
+
+1. Add the version's section to `CHANGELOG.md` and set `version` in `package.json` (and the tools' `package.json`).
+2. After it merges: `git tag vX.Y.Z && git push origin vX.Y.Z` on `main`.
+
+`.github/workflows/release.yml` checks the tag matches `package.json`, runs the tests, creates the GitHub release from
+the changelog section and publishes `aiinfra-tools` to npm with provenance.
 
 ## Pull requests
 
