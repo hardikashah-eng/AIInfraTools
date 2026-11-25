@@ -9,7 +9,7 @@ const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const slug = h => h.trim().toLowerCase().replace(/[^\w\- ]+/g, '').replace(/ /g, '-');
 const anchors = f => new Set(fs.readFileSync(f, 'utf8').split('\n').filter(l => /^#{1,6} /.test(l)).map(l => slug(l.replace(/^#+ /, ''))));
 
-for (const doc of ['README.md', 'docs/RESULTS.md', 'CONTRIBUTING.md', 'SECURITY.md', 'schemas/README.md', 'mcp/README.md']) {
+for (const doc of ['README.md', 'docs/RESULTS.md', 'CONTRIBUTING.md', 'SECURITY.md', 'schemas/README.md', 'mcp/README.md', 'CHANGELOG.md']) {
   test(`links in ${doc} resolve`, () => {
     const file = path.join(ROOT, doc), text = fs.readFileSync(file, 'utf8');
     const links = [...text.matchAll(/\]\(([^)\s]+)\)/g)].map(m => m[1]).filter(u => !/^(https?:|mailto:|#)/.test(u));

@@ -44,6 +44,7 @@
     "mcp/",
     "schemas/",
     "LICENSE",
+    "CHANGELOG.md",
     "NOTICE",
     "README.md",
     "fleetops/",
