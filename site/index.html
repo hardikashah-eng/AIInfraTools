@@ -1,0 +1,131 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>AIInfraTools: open tools for running GPU fleets</title>
+<meta name="description" content="Size LLM inference, simulate GPU capacity, find root causes, cap power, deploy on llm-d and charge back GPU-hours. Open source, no dependencies, also packaged as Agent Skills.">
+<style>
+  :root { --ink: #16181d; --muted: #5b616e; --line: #e3e5ea; --bg: #fafaf8; --card: #fff; --accent: #2457d6; --accent-ink: #1a3f9e; --chip: #eef2fc; }
+  @media (prefers-color-scheme: dark) { :root { --ink: #e9eaee; --muted: #a0a6b3; --line: #2b2f38; --bg: #111317; --card: #181b21; --accent: #7ea2ff; --accent-ink: #a9c0ff; --chip: #1d2433; } }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--ink); font: 16px/1.55 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
+  a { color: var(--accent); text-decoration: none; } a:hover { text-decoration: underline; }
+  .wrap { max-width: 1080px; margin: 0 auto; padding: 0 24px; }
+  header.wrap { padding: 64px 24px 36px; }
+  .kicker { font: 600 13px/1 ui-monospace, SFMono-Regular, Menlo, monospace; letter-spacing: .06em; text-transform: uppercase; color: var(--muted); }
+  h1 { font-size: clamp(30px, 4.4vw, 46px); line-height: 1.12; margin: 14px 0 16px; letter-spacing: -.015em; max-width: 20ch; }
+  .lede { font-size: 19px; color: var(--muted); max-width: 62ch; margin: 0 0 26px; }
+  .cta { display: flex; gap: 12px; flex-wrap: wrap; align-items: center; }
+  .btn { display: inline-block; padding: 10px 16px; border-radius: 8px; font-weight: 600; border: 1px solid var(--line); background: var(--card); color: var(--ink); }
+  .btn.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+  @media (prefers-color-scheme: dark) { .btn.primary { color: #0d1220; } }
+  .btn:hover { text-decoration: none; filter: brightness(.97); }
+  code, pre { font: 14px/1.5 ui-monospace, SFMono-Regular, Menlo, monospace; }
+  pre { background: var(--card); border: 1px solid var(--line); border-radius: 10px; padding: 14px 16px; overflow-x: auto; margin: 0; }
+  section.wrap { padding: 38px 24px; border-top: 1px solid var(--line); }
+  h2 { font-size: 22px; margin: 0 0 6px; letter-spacing: -.005em; }
+  .sub { color: var(--muted); margin: 0 0 20px; max-width: 70ch; }
+  .tryit { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 20px; }
+  .card { background: var(--card); border: 1px solid var(--line); border-radius: 12px; overflow: hidden; display: flex; flex-direction: column; }
+  .card img { display: block; width: 100%; aspect-ratio: 16 / 9; object-fit: cover; object-position: top left; border-bottom: 1px solid var(--line); }
+  .card .body { padding: 16px 18px 18px; display: flex; flex-direction: column; gap: 8px; flex: 1; }
+  .card { color: var(--ink); } .card:hover { text-decoration: none; border-color: var(--accent); }
+  .card h3 { margin: 0; font-size: 18px; } .card p { margin: 0; color: var(--muted); }
+  .card .go { margin-top: auto; font-weight: 600; }
+  .loop { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin: 0 0 22px; }
+  .step { background: var(--chip); color: var(--accent-ink); border-radius: 999px; padding: 6px 12px; font-weight: 600; font-size: 14px; }
+  .arrow { color: var(--muted); }
+  table { width: 100%; border-collapse: collapse; background: var(--card); border: 1px solid var(--line); border-radius: 10px; overflow: hidden; }
+  th, td { text-align: left; padding: 11px 14px; border-bottom: 1px solid var(--line); vertical-align: top; }
+  tr:last-child td { border-bottom: 0; } th { font-size: 13px; color: var(--muted); font-weight: 600; }
+  td:first-child { white-space: nowrap; font-weight: 600; }
+  .two { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 20px; }
+  .facts { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 14px; }
+  .fact { background: var(--card); border: 1px solid var(--line); border-radius: 10px; padding: 14px 16px; }
+  .fact b { display: block; font-size: 22px; letter-spacing: -.01em; } .fact span { color: var(--muted); font-size: 14px; }
+  footer.wrap { padding: 30px 24px 60px; color: var(--muted); font-size: 14px; border-top: 1px solid var(--line); }
+</style>
+</head>
+<body>
+<header class="wrap">
+  <div class="kicker">AIInfraTools · open source · Apache-2.0</div>
+  <h1>Open tools for running GPU fleets</h1>
+  <p class="lede">Size LLM inference, simulate capacity on a hybrid fleet, find why jobs fail or slow down, cap power, deploy
+    on llm-d, and charge back every GPU-hour. Node.js and nothing else. Dry run by default, and a person approves every change.</p>
+  <div class="cta">
+    <a class="btn primary" href="sizer/">Open the Inference Sizer</a>
+    <a class="btn" href="fleetscope/">Open FleetScope</a>
+    <a class="btn" href="https://github.com/hardikashah-eng/AIInfraTools">GitHub</a>
+  </div>
+</header>
+
+<section class="wrap">
+  <h2>Try it in your browser</h2>
+  <p class="sub">Both tools are single pages that run entirely in your browser: nothing to install, and no data leaves your machine.</p>
+  <div class="tryit">
+    <a class="card" href="sizer/">
+      <img src="img/sizer.png" alt="Inference Sizer: GPU count and layout for a model at latency targets" loading="lazy">
+      <div class="body"><h3>Inference Sizer</h3>
+        <p>How many GPUs serve a model at your TTFT and TPOT targets, how to lay them out, and what it costs per million tokens.</p>
+        <span class="go">Size a deployment →</span></div>
+    </a>
+    <a class="card" href="sizer/#fit">
+      <img src="img/what-fits.png" alt="What fits on my GPUs: models ranked by load they carry" loading="lazy">
+      <div class="body"><h3>What fits on my GPUs</h3>
+        <p>Start from the hardware you have: every model that fits, the load it carries in production, and the command to deploy it.</p>
+        <span class="go">Check your GPUs →</span></div>
+    </a>
+    <a class="card" href="fleetscope/">
+      <img src="img/fleetscope.png" alt="FleetScope node editor replaying traffic on a hybrid fleet" loading="lazy">
+      <div class="body"><h3>FleetScope</h3>
+        <p>Replay LLM traffic on a modelled on-prem and neocloud fleet. Ask what-ifs, run stress suites, compare scenarios.</p>
+        <span class="go">Open the editor →</span></div>
+    </a>
+  </div>
+</section>
+
+<section class="wrap">
+  <h2>One loop, from signal to verified fix</h2>
+  <div class="loop"><span class="step">Observe</span><span class="arrow">→</span><span class="step">Diagnose</span><span class="arrow">→</span><span class="step">Simulate</span><span class="arrow">→</span><span class="step">Approve</span><span class="arrow">→</span><span class="step">Optimize</span><span class="arrow">→</span><span class="step">Verify</span></div>
+  <table>
+    <tr><th>Tool</th><th>What it does</th></tr>
+    <tr><td><a href="https://github.com/hardikashah-eng/AIInfraTools/tree/main/fleetops">fleetops</a></td><td>One store for telemetry, jobs, serving and changes. Root-cause analysis, incidents, tuning from real traces, node admission and staged rollouts, power caps, fabric and storage stalls, one-command serving on vLLM and llm-d.</td></tr>
+    <tr><td><a href="https://github.com/hardikashah-eng/AIInfraTools/tree/main/gpu-health">gpu-health</a></td><td>Health checks, utilization and savings, with suggested fixes that run only once approved.</td></tr>
+    <tr><td><a href="https://github.com/hardikashah-eng/AIInfraTools/tree/main/gpu-ledger">gpu-ledger</a></td><td>GPU-hours and cost by org, team, person and use case, split into useful, idle and lost; where to save, with an owner; FOCUS export.</td></tr>
+    <tr><td><a href="https://github.com/hardikashah-eng/AIInfraTools/tree/main/inference-sizer">inference-sizer</a></td><td>GPU count, layout and cost at latency targets; what fits on given GPUs.</td></tr>
+    <tr><td><a href="https://github.com/hardikashah-eng/AIInfraTools/tree/main/fleetscope">fleetscope</a></td><td>Traffic replay and capacity planning on a hybrid fleet.</td></tr>
+    <tr><td><a href="https://github.com/hardikashah-eng/AIInfraTools/tree/main/hybrid-tracing">hybrid-tracing</a></td><td>One trace view across sites, with clock-skew correction.</td></tr>
+  </table>
+</section>
+
+<section class="wrap">
+  <h2>Checked against real data</h2>
+  <p class="sub">Every model is tested on public measurements, and the tests found real bugs. <a href="https://github.com/hardikashah-eng/AIInfraTools/blob/main/docs/RESULTS.md">All results</a>.</p>
+  <div class="facts">
+    <div class="fact"><b>17 → 1</b><span>false alarms in 100 for rollout checks on a real Philly cluster week, after allowing for clustered failures</span></div>
+    <div class="fact"><b>&lt; 2 points</b><span>median error of the power-cap model on 857 measured capped runs, 4 GPU types, caps from 60% to 100% of the limit</span></div>
+    <div class="fact"><b>70 / 25 / 4%</b><span>useful, idle and lost of 314,261 GPU-hours on the Philly trace</span></div>
+    <div class="fact"><b>0 unknown fields</b><span>in our llm-d manifests against the real DisaggregatedSet CRD schema</span></div>
+  </div>
+</section>
+
+<section class="wrap two">
+  <div>
+    <h2>Install</h2>
+    <p class="sub">Node.js 20+. No other dependencies.</p>
+<pre>npx aiinfra-tools --help
+npx aiinfra-tools sizer --model llama33-70b --gpu H100
+npx aiinfra-tools ledger demo</pre>
+  </div>
+  <div>
+    <h2>Use with agents</h2>
+    <p class="sub">Each tool is an Agent Skill. In Claude Code:</p>
+<pre>/plugin marketplace add hardikashah-eng/AIInfraTools
+/plugin install aiinfra-tools@aiinfra-tools</pre>
+  </div>
+</section>
+
+<footer class="wrap">Apache License 2.0 · <a href="https://github.com/hardikashah-eng/AIInfraTools">Source</a> · <a href="https://github.com/hardikashah-eng/AIInfraTools/blob/main/SECURITY.md">Security</a> · <a href="https://github.com/hardikashah-eng/AIInfraTools/blob/main/ROADMAP.md">Roadmap</a></footer>
+</body>
+</html>
