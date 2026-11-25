@@ -1,5 +1,9 @@
 # Publishes the landing page and the two browser tools (Inference Sizer, FleetScope) to GitHub Pages.
 # One-time setup: Settings → Pages → Source: GitHub Actions.
+#
+# Versions: upload-pages-artifact@v4 uploads with upload-artifact v4, which deploy-pages@v5's artifact client can
+# list. upload-pages-artifact@v5 uploads with upload-artifact v7, which deploy-pages@v5 can't see ("Found 0
+# artifact(s)"), so don't move one without the other.
 name: Pages
 on:
   push:
@@ -19,23 +23,27 @@ permissions:
   id-token: write
 concurrency:
   group: pages
-  cancel-in-progress: true
+  cancel-in-progress: false
 jobs:
-  deploy:
+  build:
     runs-on: ubuntu-latest
-    environment:
-      name: github-pages
-      url: ${{ steps.deployment.outputs.page_url }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
           node-version: 22
       - run: node --test tests/site.test.mjs
-      - uses: actions/configure-pages@v6
+      - uses: actions/configure-pages@v5
       - run: node scripts/build-site.mjs _site
-      - uses: actions/upload-pages-artifact@v5
+      - uses: actions/upload-pages-artifact@v4
         with:
           path: _site
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
       - id: deployment
         uses: actions/deploy-pages@v5
