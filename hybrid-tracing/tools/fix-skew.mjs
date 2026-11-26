@@ -9,7 +9,7 @@
 // Exit code: 0 corrected (or nothing to do), 1 causality violations remain, 2 usage error.
 import { readFileSync, writeFileSync } from 'node:fs';
 import { readRequests, fix } from '../src/skew.mjs';
-import { generate, TRUE_OFFSETS_NS } from '../src/synth.mjs';
+import { generate } from '../src/synth.mjs';
 
 const args = process.argv.slice(2), opt = {}, files = [];
 for (let i = 0; i < args.length; i++) {

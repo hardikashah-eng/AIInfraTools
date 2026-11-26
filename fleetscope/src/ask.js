@@ -4,7 +4,6 @@
   'use strict';
   const node = typeof module !== 'undefined' && module.exports;
   const E = node ? require('./engine.js') : root.FleetEngine;
-  const SC = node ? require('./scenario.js') : root.FleetScenarioLib;
 
   const EXAMPLES = [
     'What if coding agents move to H200 and the cloud link drops to 100 Gbps?',

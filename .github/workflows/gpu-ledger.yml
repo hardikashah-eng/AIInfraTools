@@ -18,7 +18,7 @@ jobs:
           node-version: 22
       - name: Tests
         working-directory: gpu-ledger
-        run: npm test
+        run: npm run test:coverage   # the tests, with a floor on line and branch coverage (package.json)
       - name: Demo runs, finds the planted waste and writes FOCUS and HTML
         working-directory: gpu-ledger
         run: |

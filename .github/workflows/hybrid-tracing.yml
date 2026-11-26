@@ -20,7 +20,7 @@ jobs:
         run: sudo apt-get update && sudo apt-get install -y --no-install-recommends chrony linuxptp
       - name: Tests
         working-directory: hybrid-tracing
-        run: npm test
+        run: npm run test:coverage   # the tests, with a floor on line and branch coverage (package.json)
   collector-configs:
     runs-on: ubuntu-latest
     steps:

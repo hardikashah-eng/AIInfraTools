@@ -83,7 +83,7 @@ function detailHTML() {
 }
 
 function schedule() { clearTimeout(timer); timer = setTimeout(() => { save(st); run(); }, 120); }
-function onInput(e) { const k = e.target.dataset.k; if (!k) return; st[k] = e.target.type === 'number' ? (e.target.value === '' ? '' : +e.target.value) : e.target.value; if (k === 'gpu' || k === 'nodes') st.pick = st.pick; schedule(); }
+function onInput(e) { const k = e.target.dataset.k; if (!k) return; st[k] = e.target.type === 'number' ? (e.target.value === '' ? '' : +e.target.value) : e.target.value; schedule(); }
 function pick(m) { st.pick = st.pick === m ? null : m; save(st); render(); const d = document.getElementById('fit-detail'); if (st.pick && d) d.scrollIntoView({ behavior: 'smooth', block: 'nearest' }); }
 
 function show(view) {

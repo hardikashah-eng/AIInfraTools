@@ -5,7 +5,7 @@
 //  - every vLLM metric the queries use exists in vLLM's own metric list (fixtures/real/vllm);
 //  - selectors are label matchers or nothing: PromQL can't be smuggled in;
 //  - the judge's HTTP answers for Argo (web metric) and Flagger (rollout / confirm-promotion webhooks), auth, errors;
-//  - the shipped manifests pass the real CRD schemas (Argo Rollouts v1.9.3, Flagger v1.45.0, Prometheus Operator
+//  - the shipped manifests pass the real CRD schemas (Argo Rollouts v1.10.2, Flagger v1.45.0, Prometheus Operator
 //    v0.95.2) with no unknown fields, the bodies they send after templating are accepted, and the judge starts from the
 //    Deployment's own arguments.
 import { test } from 'node:test';

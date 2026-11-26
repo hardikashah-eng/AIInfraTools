@@ -168,7 +168,7 @@ controller does what the verdict says.
 Prometheus unreachable is an HTTP 502, which Argo counts as a measurement error (`consecutiveErrorLimit: 3`), not as a
 verdict. Flagger webhooks can't send a token, so the judge runs without one behind a NetworkPolicy that admits only the
 controllers' namespaces; with Argo alone, `--tokens` works too. The manifests are checked in CI against the real CRD
-schemas of Argo Rollouts v1.9.3, Flagger v1.45.0 and Prometheus Operator v0.95.2.
+schemas of Argo Rollouts v1.10.2, Flagger v1.45.0 and Prometheus Operator v0.95.2.
 
 ### An llm-d canary, stepped by the judge
 

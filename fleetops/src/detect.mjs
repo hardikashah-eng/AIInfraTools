@@ -9,8 +9,8 @@
 //     incident window begins at the change, not at the alarm;
 //   - incidents with overlapping windows and the same symptom (and pool) fold into one; others that overlap are linked.
 
-const median = a => { const s = a.filter(Number.isFinite).sort((x, y) => x - y); return s.length ? s[Math.floor(s.length / 2)] : NaN; };
 import { findSdc } from './sdc.mjs';
+import { medianUpper as median } from './stats.mjs';
 
 const iso = t => new Date(t * 1000).toISOString().replace('.000Z', 'Z');
 

@@ -17,7 +17,7 @@ jobs:
           node-version: 22
       - name: Tests
         working-directory: gpu-health
-        run: npm test
+        run: npm run test:coverage   # the tests, with a floor on line and branch coverage (package.json)
       - name: Demo runs and writes a report
         working-directory: gpu-health
         run: |

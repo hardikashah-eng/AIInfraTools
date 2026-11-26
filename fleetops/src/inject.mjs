@@ -11,7 +11,7 @@
 import { spawnSync } from 'node:child_process';
 import fs from 'node:fs';
 
-const NAME = /^[A-Za-z0-9][A-Za-z0-9._:\/@-]{0,252}$/, NUM = /^\d{1,10}$/, PCI = /^[0-9a-fA-F]{4}:[0-9a-fA-F]{2}:[0-9a-fA-F]{2}(\.\d)?$/, SET = /^[A-Za-z0-9._\/-]+=[A-Za-z0-9._:\/@,-]*$/;
+const NAME = /^[A-Za-z0-9][A-Za-z0-9._:/@-]{0,252}$/, NUM = /^\d{1,10}$/, PCI = /^[0-9a-fA-F]{4}:[0-9a-fA-F]{2}:[0-9a-fA-F]{2}(\.\d)?$/, SET = /^[A-Za-z0-9._/-]+=[A-Za-z0-9._:/@,-]*$/;
 
 // fault → what it needs, what it runs, how to undo it, and the rule a correct diagnosis ranks first (null: measured
 // for detection only until the rule exists). DCGM field IDs: 230 XID, 311 DBE volatile total, 313 DBE aggregate total.
@@ -95,7 +95,7 @@ export function prepare(fault, params, { allow = [] } = {}) {
 }
 
 export const loadAllow = file => (file && fs.existsSync(file) ? fs.readFileSync(file, 'utf8').split(/\r?\n/).map(l => l.replace(/#.*/, '').trim()).filter(Boolean) : []);
-const sh = argv => argv.map(a => (/^[\w.\/:@=,-]+$/.test(a) ? a : `'${a.replace(/'/g, `'\\''`)}'`)).join(' ');
+const sh = argv => argv.map(a => (/^[\w./:@=,-]+$/.test(a) ? a : `'${a.replace(/'/g, `'\\''`)}'`)).join(' ');
 
 // Run one prepared injection. runner(argv) → { status, stdout, stderr }; sleep(s) waits (both injectable for tests).
 export async function run(prep, { live = false, forS = 300, store, now = () => Date.now() / 1000, runner, sleep, log = console.log } = {}) {

@@ -5,9 +5,12 @@
   "private": true,
   "description": "Shared data layer, continuous calibration, root-cause analysis and safe optimization across the AIInfraTools utilities.",
   "type": "module",
-  "bin": { "fleetops": "tools/fleetops.mjs" },
+  "bin": {
+    "fleetops": "tools/fleetops.mjs"
+  },
   "scripts": {
-    "test": "node --test tests/*.test.mjs"
+    "test": "node --test tests/*.test.mjs",
+    "test:coverage": "node --test --experimental-test-coverage --test-coverage-exclude='tests/**' --test-coverage-exclude='../**' --test-coverage-lines=90 --test-coverage-branches=70 tests/*.test.mjs"
   },
   "engines": {
     "node": ">=22"

@@ -58,7 +58,7 @@ function steps1to4(dir) {
   head(3, 'Simulate', 'what each change should give back, before anyone makes it');
   out.simulate = T.recommendations.map(r => ({ id: r.id, title: r.title, gpuHoursPerWeek: r.impact.gpuHoursPerWeek, basis: r.impact.basis, confidence: r.confidence }));
   for (const r of out.simulate) say(`  → ${r.title}: up to ${n0(r.gpuHoursPerWeek)} GPU-hours a week (${r.basis}).`);
-  const C = run('optimize candidates', ['optimize', 'candidates', '--from', String(FROM), '--to', String(TO), '--store', S, '--out', path.join(dir, 'candidates.json')]);
+  run('optimize candidates', ['optimize', 'candidates', '--from', String(FROM), '--to', String(TO), '--store', S, '--out', path.join(dir, 'candidates.json')]);
   const P = run('optimize plan', ['optimize', 'plan', '--candidates', path.join(dir, 'candidates.json'), '--out', path.join(dir, 'plan.json'), '--store', S]);
   const plan = P.plan || JSON.parse(fs.readFileSync(path.join(dir, 'plan.json'), 'utf8'));
   out.plan = { id: plan.id, weekly: plan.totalWeekly, stages: plan.stages.map(s => s.title) };

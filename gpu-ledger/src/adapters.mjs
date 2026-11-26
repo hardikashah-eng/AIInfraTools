@@ -68,7 +68,7 @@ export function k8s({ pods, nodes, prom = [], cluster = null, now = Math.floor(D
     const tok = ser.filter(s => /generation_tokens_total/.test(s.name)), pin = ser.filter(s => /prompt_tokens_total/.test(s.name)), rq = ser.filter(s => /request_success_total/.test(s.name));
     if (!tok.length) { out.push(base); continue; }
     // serving pods: one record per hour with the counters' increase in that hour
-    const model = tok[0].model, inc = (ss, a, b) => ss.reduce((acc, s) => { let first = null, last = null, prev = null, sum = 0; for (const [ts, v] of s.values) { if (ts < a || ts > b) continue; if (prev != null) sum += v >= prev ? v - prev : v; prev = v; first ??= v; last = v; } return acc + sum; }, 0);
+    const model = tok[0].model, inc = (ss, a, b) => ss.reduce((acc, s) => { let first = null, prev = null, sum = 0; for (const [ts, v] of s.values) { if (ts < a || ts > b) continue; if (prev != null) sum += v >= prev ? v - prev : v; prev = v; first ??= v; } return acc + sum; }, 0);
     const e = end ?? now;
     for (let h = Math.floor(start / 3600) * 3600; h < e; h += 3600) {
       const a = Math.max(start, h), b = Math.min(e, h + 3600);

@@ -9,7 +9,6 @@ const require=createRequire(import.meta.url);
 const {parseTrace}=require("../../fleetscope/src/ingest.js");
 const args=process.argv.slice(2), cmd=args[0]||"help";
 function opt(name,fallback){const i=args.indexOf("--"+name);return i<0?fallback:args[i+1];}
-function flag(name){return args.includes("--"+name);}
 function save(out,data){if(!out)throw new Error("--out is required");fs.mkdirSync(path.dirname(path.resolve(out)),{recursive:true});fs.writeFileSync(out,data);}
 function readInput(file) {
   // Offset limit permits normal trace windows beyond FleetScope's browser truncation.

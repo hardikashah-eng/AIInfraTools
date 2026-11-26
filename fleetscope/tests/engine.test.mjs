@@ -28,7 +28,7 @@ test('every template except the blank canvas compiles and runs', () => {
 
 test('runs are deterministic for the same graph', () => {
   const a = runTemplate('agent').summary, b = runTemplate('agent').summary;
-  const strip = s => { const { simMs, ...rest } = s; return rest; };
+  const strip = s => { const { simMs: _simMs, ...rest } = s; return rest; };
   assert.deepEqual(strip(a), strip(b));
 });
 

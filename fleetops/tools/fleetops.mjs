@@ -3,7 +3,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { DataStore, whereFrom, openStore, SCHEMA } from '../src/store.mjs';
+import { whereFrom, openStore, SCHEMA } from '../src/store.mjs';
 import * as Retention from '../src/retention.mjs';
 import { migrate } from '../src/migrate.mjs';
 import * as Ingest from '../src/ingest.mjs';
@@ -387,8 +387,8 @@ function importSource(store, src, files, o) {
         const inv = store.query('inventory', { where: r => r.source === 'philly' }), skus = Object.fromEntries(inv.map(r => [r.node, r.sku]));
         // the first N machines (by number) with 8 GPUs: a fixed, repeatable subset of the cluster
         if (limit) keep = new Set(inv.filter(r => r.devices === 8).map(r => r.node).sort((a, b) => +a.slice(1) - +b.slice(1)).slice(0, limit));
-        let batch = [], n = 0;
-        for (const s of Philly.gpuUtil(readLines(f), { from, to, stepMin: +(o.step || 10), machines: keep, skus })) { batch.push(s); if (batch.length >= 50000) { n += put('device', batch).written; batch = []; } }
+        let batch = [];
+        for (const s of Philly.gpuUtil(readLines(f), { from, to, stepMin: +(o.step || 10), machines: keep, skus })) { batch.push(s); if (batch.length >= 50000) { put('device', batch); batch = []; } }
         if (batch.length) put('device', batch);
         break;
       }
@@ -841,7 +841,7 @@ async function gameday(store, cmd, o) {
   if (!planFile) throw new Error('gameday PLAN.json --allow FILE [--live] [--cooldown 900] [--prom URL --loki URL]');
   const plan = JSON.parse(read(planFile)), allow = Inject.loadAllow(o.allow && o.allow !== true ? o.allow : process.env.FLEETOPS_INJECT_ALLOW);
   const steps = plan.steps || plan, cool = o.cooldown ? +o.cooldown : plan.cooldownS ?? 900, live = !!o.live;
-  const preps = steps.map(st => { const { fault, forS, ...params } = st; return { st, prep: Inject.prepare(fault, params, { allow }) }; }); // check every step before running any
+  const preps = steps.map(st => { const { fault, forS: _forS, ...params } = st; return { st, prep: Inject.prepare(fault, params, { allow }) }; }); // check every step before running any
   const done = [];
   for (const [i, { st, prep }] of preps.entries()) {
     if (!J) say(`step ${i + 1}/${preps.length}: ${prep.fault} on ${prep.nodes.join(', ') || prep.params.release || prep.params.host} for ${st.forS || 300} s (expect ${prep.expect || 'detection only'})`);
@@ -1157,7 +1157,7 @@ async function shadowCmd(store, cmd, rest, o) {
       const now = Math.floor(Date.now() / 1000), step = num('step') || 60, t1 = to ?? now, t0 = from ?? t1 - (num('lookback') || 3600);
       saved = await SProm.fetchArms(opt('prom'), { select: opt('select'), baseline: opt('baseline'), candidate: opt('candidate'), from: t0, to: t1, baselineFrom: num('baseline-lookback') ? t1 - num('baseline-lookback') : t0, step, headers: promHeaders() });
       d = saved;
-      if (opt('save')) { const { baseline, candidate, ...keep } = saved; fs.writeFileSync(opt('save'), JSON.stringify(keep) + '\n'); }
+      if (opt('save')) { const { baseline: _b, candidate: _c, ...keep } = saved; fs.writeFileSync(opt('save'), JSON.stringify(keep) + '\n'); } // the series, not the windows derived from them
     }
     if (!d.baseline.length || !d.candidate.length) throw new Error(`no windows with requests: ${d.baseline.length} baseline, ${d.candidate.length} candidate (check the selectors and the time range)`);
     const planObj = json('plan');

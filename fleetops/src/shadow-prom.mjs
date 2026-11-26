@@ -14,6 +14,7 @@
 // vllm:request_success_total{finished_reason}. llm-d's controlled deployments label each version llm_isvc_name.
 import { promRange } from './pull.mjs';
 import { GATES, judge, decide, errorTest } from './shadow.mjs';
+import { median, pctl, rng } from './stats.mjs';
 
 // ---------- selectors ----------
 // A selector is a list of Prometheus label matchers, as inside { }: llm_isvc_name="chat-v2",namespace="llm"
@@ -87,9 +88,6 @@ export async function fetchArms(prom, { baseline, candidate, select = null, from
 export const fromSaved = j => ({ baseline: windowsFrom(j.series.baseline, j.step), candidate: windowsFrom(j.series.candidate, j.step) });
 
 // ---------- matched load over windows ----------
-const median = a => { if (!a.length) return NaN; const s = [...a].sort((x, y) => x - y), m = s.length >> 1; return s.length % 2 ? s[m] : (s[m - 1] + s[m]) / 2; };
-const pctl = (a, p) => { const s = [...a].sort((x, y) => x - y); return s.length ? s[Math.min(s.length - 1, Math.max(0, Math.round(p * (s.length - 1))))] : NaN; };
-function rng(seed) { let s = (seed >>> 0) || 1; return () => ((s = (Math.imul(s, 1664525) + 1013904223) >>> 0) / 4294967296); }
 // The baseline's latency as a function of load, fitted on its own windows: for each canary window, a local linear fit
 // (LOESS) of the baseline's log latency around that window's load, tricube-weighted by distance in log calls per engine
 // and by requests, with prompt length, prefix-cache hit (and output length for end-to-end time) as linear terms. Local

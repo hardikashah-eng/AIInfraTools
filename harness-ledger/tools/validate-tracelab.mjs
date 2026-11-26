@@ -11,7 +11,7 @@ import readline from 'node:readline';
 import { fileURLToPath } from 'node:url';
 import { tracelabCall } from '../src/importers.mjs';
 import { dedupe, sessionsOf } from '../src/record.mjs';
-import { ledger, CAUSES } from '../src/ledger.mjs';
+import { ledger } from '../src/ledger.mjs';
 import { tracelabFile, TRACELAB } from '../../fleetscope/tools/tracelab-data.mjs';
 
 export async function loadCalls(file) {

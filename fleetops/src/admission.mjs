@@ -10,6 +10,7 @@
 //   topology     as many GPUs, scale-up links (NVLink, XGMI) and the same PCIe link as the same SKU's other nodes
 //   versions     driver, CUDA or ROCm, firmware, VBIOS/IFWI, NCCL or RCCL, kernel equal to the fleet's baseline for the SKU
 // Any fail rejects; otherwise anything missing leaves the node waiting (incomplete) with what to run.
+import { medianUpper as median } from './stats.mjs';
 const H = 3600, DAY = 86400;
 export const ADMISSION_POLICY = {
   lookbackS: 3 * DAY, burnInS: 6 * H, burnInLoad: 0.5, maxTempC: 87, maxMemTempC: 95,
@@ -17,7 +18,6 @@ export const ADMISSION_POLICY = {
   ncclFrac: 0.9, ncclRef: {},               // { sku: GB/s } when the fleet has no admitted peers yet
   versionFields: ['driver', 'cuda', 'rocm', 'firmware', 'vbios', 'nccl', 'rccl', 'kernel'], golden: {},   // { sku: { driver: '…' } }
 };
-const median = a => { const s = a.filter(Number.isFinite).sort((x, y) => x - y); return s.length ? s[Math.floor(s.length / 2)] : NaN; };
 const mode = a => { const m = new Map(); for (const v of a) if (v != null) m.set(String(v), (m.get(String(v)) || 0) + 1); let b = null, n = 0; for (const [k, c] of m) if (c > n) { b = k; n = c; } return b; };
 
 function latestInventory(store, to) {
@@ -31,8 +31,8 @@ function latestInventory(store, to) {
 function lastAdmissions(store, to) { const m = new Map(); for (const a of store.query('admission', { to })) m.set(a.node, a); return m; }
 
 // Nodes that need the gate: new to the inventory, back from quarantine or repair, or changed by hand since admitted.
-export function pending(store, { now = Math.floor(Date.now() / 1000), policy = {} } = {}) {
-  const P = Object.assign({}, ADMISSION_POLICY, policy), inv = latestInventory(store, now), adm = lastAdmissions(store, now), out = [];
+export function pending(store, { now = Math.floor(Date.now() / 1000) } = {}) {
+  const inv = latestInventory(store, now), adm = lastAdmissions(store, now), out = [];
   const since = n => (adm.get(n) && adm.get(n).verdict === 'admit' ? adm.get(n).t : -Infinity);
   for (const [node, r] of inv) {
     const reasons = [];

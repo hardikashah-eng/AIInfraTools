@@ -14,7 +14,7 @@ import { diagnose } from '../src/rca.mjs';
 import { startServer as startCorrector } from '../../hybrid-tracing/src/service.mjs';
 import { generate as hybridTraces } from '../../hybrid-tracing/src/synth.mjs';
 
-const T0 = Date.UTC(2026, 0, 20) / 1000, H = 3600;
+const T0 = Date.UTC(2026, 0, 20) / 1000;
 const tmp = () => fs.mkdtempSync(path.join(os.tmpdir(), 'fleetops-tr-'));
 const span = (traceId, spanId, parent, name, t, dur, extra = {}) => Object.assign({ t, traceId, spanId, parentSpanId: parent, name, durS: dur, service: 'router', attrs: {} }, extra);
 

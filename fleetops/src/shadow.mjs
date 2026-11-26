@@ -10,6 +10,7 @@
 // Request records are the store's `request` kind: { t, isl, osl, cached?, ttft?, e2e?, tpot?, error?, variant?, pair? }.
 // They come from engine traces (fleetops data import otlp-traces FILE --derive), from shadow replay (shadow-replay.mjs), or files.
 import { createRequire } from 'node:module';
+import { median, pctl, rng } from './stats.mjs';
 
 const require = createRequire(import.meta.url);
 const C = require('../../inference-sizer/src/catalog.js'), M = require('../../inference-sizer/src/model.js');
@@ -20,9 +21,6 @@ export const GATES = { ttft: 0.05, tpot: 0.05, e2e: 0.05, errorRate: 0.005, tokP
 const METRICS = ['ttft', 'tpot', 'e2e'];
 
 // ---------- small statistics ----------
-const median = a => { if (!a.length) return NaN; const s = [...a].sort((x, y) => x - y), m = s.length >> 1; return s.length % 2 ? s[m] : (s[m - 1] + s[m]) / 2; };
-const pctl = (a, p) => { const s = [...a].sort((x, y) => x - y); return s.length ? s[Math.min(s.length - 1, Math.max(0, Math.round(p * (s.length - 1))))] : NaN; };
-function rng(seed) { let s = (seed >>> 0) || 1; return () => ((s = (Math.imul(s, 1664525) + 1013904223) >>> 0) / 4294967296); }
 const normCdf = z => { const t = 1 / (1 + 0.2316419 * Math.abs(z)), d = 0.3989423 * Math.exp(-z * z / 2), p = d * t * (0.3193815 + t * (-0.3565638 + t * (1.781478 + t * (-1.821256 + t * 1.330274)))); return z > 0 ? 1 - p : p; };
 
 // ---------- load context ----------

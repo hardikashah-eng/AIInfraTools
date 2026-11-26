@@ -101,8 +101,8 @@ export function predict(j, capW, { alphaCompute = POWER_DEFAULTS.alphaCompute, a
 }
 
 // ---------- fit α from clocks under different limits ----------
-export function fit(store, { from, to, opts = {} } = {}) {
-  const O = Object.assign({}, POWER_DEFAULTS, opts), by = new Map();
+export function fit(store, { from, to } = {}) {
+  const by = new Map();
   for (const d of store.query('device', { from, to, where: d => Number.isFinite(d.powerLimitW) && Number.isFinite(d.clockMHz) && (d.sm ?? d.tensor ?? 0) >= 0.5 })) {
     const k = `${d.node}|${d.gpu}`, L = Math.round(d.powerLimitW / 10) * 10; if (!by.has(k)) by.set(k, new Map()); const m = by.get(k); if (!m.has(L)) m.set(L, []); m.get(L).push(d);
   }

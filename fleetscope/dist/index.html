@@ -2431,7 +2431,7 @@ button, select, input { font: inherit; color: inherit; }
     return { docs: out, bad };
   }
   function parseTrace(text, opt) {
-    const s = text.replace(/^﻿/, '').trimStart();
+    const s = text.replace(/^\uFEFF/, '').trimStart();
     if (s[0] === '{' || s[0] === '[') {
       let docs, bad = 0;
       try { const whole = JSON.parse(s); docs = Array.isArray(whole) ? whole : [whole]; }
@@ -5595,6 +5595,7 @@ window.addEventListener('resize', () => {});
 
 </script>
 <script>
+/* global FleetScenario */ // set by scenario.js, loaded first on the page
 /* FleetScope cluster view: GPU allocation grid, scheduler policy what-ifs, workload timeline. Browser only. */
 (function () {
   'use strict';
@@ -6255,7 +6256,7 @@ window.addEventListener('resize', () => {});
           const arr = [];
           while (i < lines.length && indent(lines[i]) === ind && lines[i].trim().startsWith('- ')) {
             const rest = lines[i].trim().slice(2);
-            if (/^[\w.\/-]+:(\s|$)/.test(rest)) { lines[i] = ' '.repeat(ind + 2) + rest; arr.push(block(ind + 2)); }
+            if (/^[\w./-]+:(\s|$)/.test(rest)) { lines[i] = ' '.repeat(ind + 2) + rest; arr.push(block(ind + 2)); }
             else { arr.push(scalar(rest)); i++; }
           }
           return arr;
@@ -6511,7 +6512,7 @@ window.addEventListener('resize', () => {});
   function capacityPlan(o) {
     o = Object.assign({}, CAP_DEFAULTS, o || {});
     const H = 730, months = [];
-    const strat = { demand: [], rent: [], reserved: [], hybrid: [], owned: [] }, DAYS = H / 24;
+    const DAYS = H / 24;
     let owned = o.onPremStart;
     const deliveries = [];
     for (let m = 0; m < o.months; m++) {
@@ -6585,7 +6586,6 @@ window.addEventListener('resize', () => {});
   'use strict';
   const node = typeof module !== 'undefined' && module.exports;
   const E = node ? require('./engine.js') : root.FleetEngine;
-  const SC = node ? require('./scenario.js') : root.FleetScenarioLib;
 
   const EXAMPLES = [
     'What if coding agents move to H200 and the cloud link drops to 100 Gbps?',
@@ -6720,6 +6720,7 @@ window.addEventListener('resize', () => {});
 
 </script>
 <script>
+/* global FleetScenario */ // set by scenario.js, loaded first on the page
 /* FleetScope Training view: one job seen four ways (GPUs, phases, scheduling, full). Browser only. */
 (function () {
   'use strict';
@@ -7134,6 +7135,7 @@ window.addEventListener('resize', () => {});
 
 </script>
 <script>
+/* global FleetScenario */ // set by scenario.js, loaded first on the page
 /* FleetScope Inference view: serving deployments as pods — replicas wanted vs ready, start-up time,
    and contention with training and batch work for GPUs. Browser only. */
 (function () {

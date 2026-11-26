@@ -20,7 +20,7 @@ jobs:
           node-version: 22
       - name: Tests
         working-directory: harness-ledger
-        run: npm test
+        run: npm run test:coverage   # the tests, with a floor on line and branch coverage (package.json)
       - name: Demo finds the planted waste in three harnesses and writes the HTML report
         working-directory: harness-ledger
         run: |

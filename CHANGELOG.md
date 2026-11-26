@@ -5,6 +5,22 @@ change the `--json` output, and when it does the change is listed here (see [sch
 
 ## Unreleased
 
+### Code quality
+
+- **Lint gate:** ESLint recommended rules on every pull request (`eslint.config.mjs`, `.github/workflows/lint.yml`),
+  starting from zero findings.
+- **Removed:**
+  - four exports nothing used (`STATES`, `slowRequests`, `NUM_FIELDS`, `knownPlatforms`, and the helper behind the last);
+  - 20 unused locals and imports;
+  - a no-op self-assignment in the sizer UI;
+  - nine needless regex escapes;
+  - a literal byte-order mark in a regex.
+- **One copy of fleetops' statistics:** `fleetops/src/stats.mjs` replaces 11 copies of median, percentile and the seeded
+  generator. Each copy's exact behaviour is kept, so no result moved.
+- **Weekly format check:** `scripts/check-formats.mjs` and `.github/workflows/formats.yml`.
+  - Its first run found that the Argo Rollouts schemas had been vendored from v1.9.3 while v1.10.2 is current. They are
+    refreshed; the manifests pass both.
+
 ### Integrations, and the loop between the tools
 
 - **OpenCost:** `harness-ledger economics --opencost FILE|URL` (its `/inferenceCost/total`) or `--opencost-prom URL` (its
@@ -42,7 +58,7 @@ change the `--json` output, and when it does the change is listed here (see [sch
   - `--save` keeps the series; `--file` reruns them; `--demo` shows the trap.
 - **`fleetops shadow serve`** runs the judge as a service for Argo Rollouts (an AnalysisTemplate web metric) and
   Flagger (`rollout` and `confirm-promotion` webhooks): promote, rollback or wait.
-  - Manifests in `fleetops/deploy/shadow-gate/`, checked against the real CRD schemas (Argo Rollouts v1.9.3, Flagger
+  - Manifests in `fleetops/deploy/shadow-gate/`, checked against the real CRD schemas (Argo Rollouts v1.10.2, Flagger
     v1.45.0, Prometheus Operator v0.95.2).
   - Selectors are checked as label matchers before any query is built.
 - **`fleetops/deploy/shadow-live/`**: a kit that runs everything on three 1-GPU L4 nodes against real vLLM engines

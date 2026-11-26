@@ -9,7 +9,7 @@ import * as A from '../src/adapters.mjs';
 import * as Cloud from '../src/cloud.mjs';
 import { ledger, groupBy, budgets as budgetsOf, loaded } from '../src/ledger.mjs';
 import { insights, sizerFrom } from '../src/insights.mjs';
-import { reportText, showbackCsv, focusCsv, toCsv } from '../src/export.mjs';
+import { reportText, showbackCsv, focusCsv } from '../src/export.mjs';
 import { html } from '../src/html.mjs';
 import { rateCard } from '../src/core.mjs';
 import { demo } from '../src/demo.mjs';
