@@ -1,0 +1,20 @@
+# Scrape vLLM with the labels the judge selects versions by (Prometheus Operator). Each relabeling copies a pod label
+# into a metric label:
+#   app.kubernetes.io/name     → llm_isvc_name                (llm-d controlled deployments, as Red Hat's guide does)
+#   rollouts-pod-template-hash → rollouts_pod_template_hash   (Argo Rollouts: stable vs canary ReplicaSet)
+#   app                        → app                          (Flagger: <name>-primary vs <name>)
+apiVersion: monitoring.coreos.com/v1
+kind: PodMonitor
+metadata: { name: vllm, namespace: llm }
+spec:
+  selector: { matchExpressions: [{ key: app, operator: Exists }] }
+  podMetricsEndpoints:
+    - port: http          # vLLM serves /metrics on its API port (8000); name that port "http"
+      path: /metrics
+      interval: 10s
+      relabelings:
+        - { sourceLabels: [__meta_kubernetes_pod_label_app_kubernetes_io_name], targetLabel: llm_isvc_name }
+        - { sourceLabels: [__meta_kubernetes_pod_label_rollouts_pod_template_hash], targetLabel: rollouts_pod_template_hash }
+        - { sourceLabels: [__meta_kubernetes_pod_label_app], targetLabel: app }
+        - { sourceLabels: [__meta_kubernetes_namespace], targetLabel: namespace }
+        - { sourceLabels: [__meta_kubernetes_pod_name], targetLabel: pod }

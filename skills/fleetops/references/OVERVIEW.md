@@ -109,6 +109,13 @@ See [docs/ADMISSION.md](ADMISSION.md).
 traffic and looks 7.5% faster on a dashboard; the matched-load comparison finds +7.8% and rolls it back. See
 [docs/SHADOW.md](SHADOW.md).
 
+It also works from a canary's own metrics and inside the rollout tools people already run:
+- **`shadow prom`** reads vLLM's per-version metrics from Prometheus (llm-d controlled deployments, Argo Rollouts,
+  Flagger) and compares each canary window with the baseline at the same load per engine.
+- **`shadow serve`** is that judge as a service: an Argo Rollouts analysis step (`POST /verdict`) or Flagger webhooks.
+  The manifests are in [deploy/shadow-gate/](deploy/shadow-gate/).
+- [deploy/shadow-live/](deploy/shadow-live/) runs it all on three L4 nodes against real vLLM engines (not run yet).
+
 ## Serving: what fits, what it carries, deploy it
 
 - **What fits:** `fleetops serving fit --gpu H100 --nodes 2 [--rate 5]` lists every catalog model with the load it carries on that hardware within the TTFT and TPOT targets (production and flat out), output tokens/s, $ per million tokens and the layout. With `--rate`, the models that carry it come first, largest first.
@@ -225,6 +232,8 @@ src/traces.mjs           spans → requests with stages; Kineto traces and step 
 tools/bench-scale.mjs    ingest and 24 h root-cause benchmark
 src/shadow.mjs           shadow upgrades: plan, matched-load compare, verdicts, baselines and drift
 src/shadow-replay.mjs    paired replay to two OpenAI-compatible endpoints; greedy same-answers check
+src/shadow-prom.mjs      a canary's per-version vLLM metrics from Prometheus, judged at matched load
+src/shadow-gate.mjs      the judge for Argo Rollouts (web metric) and Flagger (webhooks)
 src/optimize.mjs         candidates, selection, staged rollout through gpu-health's queue, guards, rollback, verify
 tools/fleetops.mjs       CLI
 tools/fetch-public-data.sh

@@ -1,0 +1,121 @@
+# Shadow upgrades on real engines: three 1-GPU NVIDIA L4 nodes, two vLLM versions and a Prometheus. See README.md.
+#   chat-v1  the baseline: vLLM v0.32.0, Qwen2.5-1.5B-Instruct, prefix caching on (vLLM's default). Two replicas.
+#   chat-v2  the candidate: the same with prefix caching off: a change whose direction is known (agent sessions reuse
+#            long prefixes, so TTFT should get worse), to check that the judge sees it. For an engine upgrade, change
+#            this Deployment's image instead.
+# Services: chat-v1 and chat-v2 (one version each, for paired replay), chat (all three pods: a canary at a third of the
+# traffic, judged from Prometheus). Prometheus labels each version llm_isvc_name, as llm-d's controlled deployments do.
+apiVersion: v1
+kind: Namespace
+metadata: { name: shadow-live }
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata: { name: chat-v1, namespace: shadow-live }
+spec:
+  replicas: 2
+  selector: { matchLabels: { app.kubernetes.io/name: chat-v1 } }
+  template:
+    metadata: { labels: { app: chat, app.kubernetes.io/name: chat-v1 } }
+    spec:
+      nodeSelector: { nvidia.com/gpu.product: NVIDIA-L4 }
+      containers:
+        - name: vllm
+          image: vllm/vllm-openai:v0.32.0
+          args: [--model, Qwen/Qwen2.5-1.5B-Instruct, --served-model-name, chat, --port, "8000", --max-model-len, "16384", --gpu-memory-utilization, "0.9"]
+          ports: [{ name: http, containerPort: 8000 }]
+          readinessProbe: { httpGet: { path: /health, port: http }, periodSeconds: 10, failureThreshold: 60 }
+          resources: { limits: { nvidia.com/gpu: 1 }, requests: { cpu: "2", memory: 12Gi } }
+          volumeMounts: [{ name: shm, mountPath: /dev/shm }]
+      volumes: [{ name: shm, emptyDir: { medium: Memory, sizeLimit: 2Gi } }]
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata: { name: chat-v2, namespace: shadow-live }
+spec:
+  replicas: 1
+  selector: { matchLabels: { app.kubernetes.io/name: chat-v2 } }
+  template:
+    metadata: { labels: { app: chat, app.kubernetes.io/name: chat-v2 } }
+    spec:
+      nodeSelector: { nvidia.com/gpu.product: NVIDIA-L4 }
+      containers:
+        - name: vllm
+          image: vllm/vllm-openai:v0.32.0
+          args: [--model, Qwen/Qwen2.5-1.5B-Instruct, --served-model-name, chat, --port, "8000", --max-model-len, "16384", --gpu-memory-utilization, "0.9",
+                 --no-enable-prefix-caching]
+          ports: [{ name: http, containerPort: 8000 }]
+          readinessProbe: { httpGet: { path: /health, port: http }, periodSeconds: 10, failureThreshold: 60 }
+          resources: { limits: { nvidia.com/gpu: 1 }, requests: { cpu: "2", memory: 12Gi } }
+          volumeMounts: [{ name: shm, mountPath: /dev/shm }]
+      volumes: [{ name: shm, emptyDir: { medium: Memory, sizeLimit: 2Gi } }]
+---
+apiVersion: v1
+kind: Service
+metadata: { name: chat-v1, namespace: shadow-live }
+spec: { selector: { app.kubernetes.io/name: chat-v1 }, ports: [{ name: http, port: 8000, targetPort: http }] }
+---
+apiVersion: v1
+kind: Service
+metadata: { name: chat-v2, namespace: shadow-live }
+spec: { selector: { app.kubernetes.io/name: chat-v2 }, ports: [{ name: http, port: 8000, targetPort: http }] }
+---
+apiVersion: v1
+kind: Service
+metadata: { name: chat, namespace: shadow-live }
+spec: { selector: { app: chat }, ports: [{ name: http, port: 8000, targetPort: http }] }
+---
+# Prometheus scraping the vLLM pods of this namespace every 10 s
+apiVersion: v1
+kind: ServiceAccount
+metadata: { name: prometheus, namespace: shadow-live }
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata: { name: prometheus, namespace: shadow-live }
+rules: [{ apiGroups: [""], resources: [pods], verbs: [get, list, watch] }]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata: { name: prometheus, namespace: shadow-live }
+roleRef: { apiGroup: rbac.authorization.k8s.io, kind: Role, name: prometheus }
+subjects: [{ kind: ServiceAccount, name: prometheus, namespace: shadow-live }]
+---
+apiVersion: v1
+kind: ConfigMap
+metadata: { name: prometheus, namespace: shadow-live }
+data:
+  prometheus.yml: |
+    global: { scrape_interval: 10s }
+    scrape_configs:
+      - job_name: vllm
+        kubernetes_sd_configs: [{ role: pod, namespaces: { names: [shadow-live] } }]
+        relabel_configs:
+          - { source_labels: [__meta_kubernetes_pod_label_app], regex: chat, action: keep }
+          - { source_labels: [__meta_kubernetes_pod_container_port_name], regex: http, action: keep }
+          - { source_labels: [__meta_kubernetes_pod_label_app_kubernetes_io_name], target_label: llm_isvc_name }
+          - { source_labels: [__meta_kubernetes_namespace], target_label: namespace }
+          - { source_labels: [__meta_kubernetes_pod_name], target_label: pod }
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata: { name: prometheus, namespace: shadow-live }
+spec:
+  replicas: 1
+  selector: { matchLabels: { app: prometheus } }
+  template:
+    metadata: { labels: { app: prometheus } }
+    spec:
+      serviceAccountName: prometheus
+      containers:
+        - name: prometheus
+          image: prom/prometheus:v3.5.0
+          args: [--config.file=/etc/prometheus/prometheus.yml, --storage.tsdb.retention.time=2d]
+          ports: [{ name: web, containerPort: 9090 }]
+          volumeMounts: [{ name: config, mountPath: /etc/prometheus }]
+      volumes: [{ name: config, configMap: { name: prometheus } }]
+---
+apiVersion: v1
+kind: Service
+metadata: { name: prometheus, namespace: shadow-live }
+spec: { selector: { app: prometheus }, ports: [{ name: web, port: 9090, targetPort: web }] }

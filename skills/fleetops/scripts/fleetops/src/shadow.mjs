@@ -109,10 +109,7 @@ export function compare(base0, cand0, opt = {}) {
   }
   // errors: difference in rate, two-proportion test
   const er = rs => ({ n: rs.length, k: rs.filter(r => r.error).length }), eb = er(base), ec = er(cand);
-  if (eb.n && ec.n) {
-    const pb = eb.k / eb.n, pc = ec.k / ec.n, pp = (eb.k + ec.k) / (eb.n + ec.n), se = Math.sqrt(Math.max(1e-12, pp * (1 - pp) * (1 / eb.n + 1 / ec.n))), z = (pc - pb) / se;
-    metrics.errorRate = { baseline: pb, candidate: pc, diff: pc - pb, p: 1 - normCdf(z), verdict: pc - pb > G.errorRate && 1 - normCdf(z) < 0.05 ? 'worse' : pb - pc > G.errorRate && normCdf(z) < 0.05 ? 'better' : 'same' };
-  }
+  if (eb.n && ec.n) metrics.errorRate = errorTest(eb, ec, G.errorRate);
   // tokens/s per GPU and cost per million output tokens: meaningful when both arms served the same requests (paired)
   const span = rs => (rs.length ? Math.max(...rs.map(r => r.t + (r.e2e || 0))) - Math.min(...rs.map(r => r.t)) : 0);
   const outTok = rs => rs.filter(r => !r.error).reduce((a, r) => a + (r.osl || 0), 0);
@@ -138,16 +135,28 @@ export function compare(base0, cand0, opt = {}) {
     for (const [k, p] of Object.entries(opt.predicted)) { const m = metrics[k]; const meas = m ? (m.effect ?? null) : null; if (meas == null || !Number.isFinite(p)) continue; rows.push({ metric: k, predicted: p, measured: meas, off: (1 + meas) / (1 + p) - 1 }); }
     prediction = { rows, holds: rows.every(r => Math.abs(r.off) <= G.prediction) };
   }
-  // the decision
-  const vs = Object.entries(metrics).filter(([, m]) => m.verdict);
+  const d = decide(metrics, answers, prediction);
+  return { decision: d.decision, why: d.why, paired, requests: { baseline: base.length, candidate: cand.length }, metrics, answers, prediction, infra: opt.infra || null, gates: G };
+}
+
+// errors: a difference in rate past the gate, by a one-sided two-proportion test. eb, ec: { n, k } (requests, errors)
+export function errorTest(eb, ec, gate = GATES.errorRate) {
+  const pb = eb.k / eb.n, pc = ec.k / ec.n, pp = (eb.k + ec.k) / (eb.n + ec.n), se = Math.sqrt(Math.max(1e-12, pp * (1 - pp) * (1 / eb.n + 1 / ec.n))), z = (pc - pb) / se;
+  return { baseline: pb, candidate: pc, diff: pc - pb, p: 1 - normCdf(z), verdict: pc - pb > gate && 1 - normCdf(z) < 0.05 ? 'worse' : pb - pc > gate && normCdf(z) < 0.05 ? 'better' : 'same' };
+}
+
+// promote / roll back / extend the test, from the metric verdicts (and answers and the prediction when there are any)
+export function decide(metrics, answers = null, prediction = null, { unit = 'requests per arm' } = {}) {
+  const vs = Object.entries(metrics).filter(([, m]) => m && m.verdict);
   const worse = vs.filter(([, m]) => m.verdict === 'worse').map(([k]) => k), open = vs.filter(([, m]) => m.verdict === 'inconclusive').map(([k]) => k);
   let decision, why;
   if (answers && answers.verdict === 'different') { decision = 'roll back'; why = `answers differ (${(100 * answers.matchRate).toFixed(1)}% identical under greedy decoding)`; }
   else if (worse.length) { decision = 'roll back'; why = `worse on ${worse.join(', ')}`; }
-  else if (open.length) { decision = 'extend the test'; why = `not settled on ${open.join(', ')}: about ${Math.max(...open.map(k => metrics[k].more || 0))} more requests per arm`; }
+  else if (open.length) { decision = 'extend the test'; why = `not settled on ${open.join(', ')}: about ${Math.max(...open.map(k => metrics[k].more || 0))} more ${unit}`; }
+  else if (['ttft', 'tpot', 'e2e'].every(k => !metrics[k] || metrics[k].verdict === 'no data')) { decision = 'extend the test'; why = 'no latency data to judge yet'; }
   else { decision = 'promote'; why = `no metric worse${vs.some(([, m]) => m.verdict === 'better') ? `; better on ${vs.filter(([, m]) => m.verdict === 'better').map(([k]) => k).join(', ')}` : ''}`; }
   if (prediction && !prediction.holds) why += '; the prediction was off: recalibrate the sizer for this change';
-  return { decision, why, paired, requests: { baseline: base.length, candidate: cand.length }, metrics, answers, prediction, infra: opt.infra || null, gates: G };
+  return { decision, why };
 }
 
 // ---------- infra signals per arm (from the store's collectors) ----------

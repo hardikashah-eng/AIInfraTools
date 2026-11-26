@@ -1,0 +1,26 @@
+# In-cluster load through the shared Service `chat` (kube-proxy spreads it over all three pods, so chat-v2 is a canary
+# at about a third of the traffic). vLLM's own benchmark client, from the image the nodes already pulled; CPU only.
+# Every prompt shares a 1,500-token prefix, so prefix caching matters: the candidate (caching off) should be slower to
+# first token. Two phases at different rates give the judge a range of load to match on.
+apiVersion: batch/v1
+kind: Job
+metadata: { name: load-canary, namespace: shadow-live }
+spec:
+  backoffLimit: 0
+  template:
+    spec:
+      restartPolicy: Never
+      containers:
+        - name: bench
+          image: vllm/vllm-openai:v0.32.0
+          command: [bash, -c]
+          args:
+            - |
+              set -e
+              for rate in 2 6; do
+                vllm bench serve --backend openai --base-url http://chat.shadow-live.svc:8000 --endpoint /v1/completions \
+                  --model chat --tokenizer Qwen/Qwen2.5-1.5B-Instruct --dataset-name random \
+                  --random-prefix-len 1500 --random-input-len 500 --random-output-len 200 \
+                  --num-prompts $((rate * 900)) --request-rate $rate --burstiness 0.5 --seed $rate
+              done
+          resources: { requests: { cpu: "2", memory: 4Gi } }
