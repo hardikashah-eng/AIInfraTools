@@ -1,0 +1,29 @@
+# Runs FleetScope's tests (engine, ingest, agentic profiles, cluster and training models) and checks dist/ is rebuilt.
+name: FleetScope
+on:
+  pull_request:
+    paths:
+      - 'fleetscope/**'
+      - 'inference-sizer/src/**'
+  push:
+    branches: [main]
+    paths:
+      - 'fleetscope/**'
+permissions:
+  contents: read
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+      - name: Tests
+        working-directory: fleetscope
+        run: npm run test:coverage   # the tests, with a floor on line and branch coverage (package.json)
+      - name: dist/index.html is up to date
+        working-directory: fleetscope
+        run: |
+          node build.mjs
+          git diff --exit-code -- dist/index.html || (echo "Run 'npm run build' in fleetscope and commit dist/index.html." && exit 1)

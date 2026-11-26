@@ -14,6 +14,7 @@
 // vllm:request_success_total{finished_reason}. llm-d's controlled deployments label each version llm_isvc_name.
 import { promRange } from './pull.mjs';
 import { GATES, judge, decide, errorTest } from './shadow.mjs';
+import { median, pctl, rng } from './stats.mjs';
 
 // ---------- selectors ----------
 // A selector is a list of Prometheus label matchers, as inside { }: llm_isvc_name="chat-v2",namespace="llm"
@@ -87,9 +88,6 @@ export async function fetchArms(prom, { baseline, candidate, select = null, from
 export const fromSaved = j => ({ baseline: windowsFrom(j.series.baseline, j.step), candidate: windowsFrom(j.series.candidate, j.step) });
 
 // ---------- matched load over windows ----------
-const median = a => { if (!a.length) return NaN; const s = [...a].sort((x, y) => x - y), m = s.length >> 1; return s.length % 2 ? s[m] : (s[m - 1] + s[m]) / 2; };
-const pctl = (a, p) => { const s = [...a].sort((x, y) => x - y); return s.length ? s[Math.min(s.length - 1, Math.max(0, Math.round(p * (s.length - 1))))] : NaN; };
-function rng(seed) { let s = (seed >>> 0) || 1; return () => ((s = (Math.imul(s, 1664525) + 1013904223) >>> 0) / 4294967296); }
 // The baseline's latency as a function of load, fitted on its own windows: for each canary window, a local linear fit
 // (LOESS) of the baseline's log latency around that window's load, tricube-weighted by distance in log calls per engine
 // and by requests, with prompt length, prefix-cache hit (and output length for end-to-end time) as linear terms. Local
@@ -167,9 +165,15 @@ export function compareWindows(bw, cw, opt = {}) {
     if (B.rate && C.rate) { const cb = B.rate / 3600 / (tb / 1e6), cc = C.rate / 3600 / (tc / 1e6); metrics.costPerMTok = { baseline: cb, candidate: cc, effect: cc / cb - 1, note: 'at the load each version saw' }; }
   }
   const load = ws => ({ windows: ws.length, requests: Math.round(sum(ws, 'n')), concPerEngine: median(ws.map(w => w.conc)), isl: median(ws.map(w => w.isl).filter(Number.isFinite)), hit: median(ws.map(w => w.hit).filter(Number.isFinite)), ttftP95: median(ws.map(w => w.ttftP95).filter(Number.isFinite)), e2eP95: median(ws.map(w => w.e2eP95).filter(Number.isFinite)) });
-  const d = decide(metrics, null, null, { unit: 'minutes of canary traffic' });
+  let prediction = null;
+  if (opt.predicted) {
+    const rows = [];
+    for (const [k, p] of Object.entries(opt.predicted)) { const m = metrics[k]; const meas = m ? (m.effect ?? null) : null; if (meas == null || !Number.isFinite(p) || !Number.isFinite(meas)) continue; rows.push({ metric: k, predicted: p, measured: meas, off: (1 + meas) / (1 + p) - 1 }); }
+    prediction = { rows, holds: rows.every(r => Math.abs(r.off) <= G.prediction) };
+  }
+  const d = decide(metrics, null, prediction, { unit: 'minutes of canary traffic' });
   if (d.why === 'no latency data to judge yet') d.why = `too little canary traffic to judge yet (needs ${opt.minWin || 5} windows and ${opt.minRequests || 200} requests inside the baseline's load range)`;
-  return { decision: d.decision, why: d.why, verdict: verdictOf(d.decision), source: 'prometheus', step, requests: { baseline: Math.round(sum(bw, 'n')), candidate: Math.round(sum(cw, 'n')) }, load: { baseline: load(bw), candidate: load(cw) }, metrics, gates: G };
+  return { decision: d.decision, why: d.why, verdict: verdictOf(d.decision), source: 'prometheus', step, prediction, requests: { baseline: Math.round(sum(bw, 'n')), candidate: Math.round(sum(cw, 'n')) }, load: { baseline: load(bw), candidate: load(cw) }, metrics, gates: G };
 }
 // one word for rollout controllers
 export const verdictOf = d => (d === 'promote' ? 'promote' : d === 'roll back' ? 'rollback' : 'wait');

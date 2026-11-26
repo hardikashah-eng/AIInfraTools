@@ -14,6 +14,9 @@ import { run } from './executors.mjs';
 import { ladderFor, supports, noun } from './vendors.mjs';
 
 const OPEN = new Set(['proposed', 'approved', 'suggested']);
+// what an external remediator already does for a node: quarantine, drain, diagnose, repair, release
+const DEFERRED = new Set(['quarantine', 'release', 'run-diag', 'deep-diag-next-boundary', 'gpu-reset', 'node-reboot', 'fabric-restart', 'rma', 'reseat', 'config-reset', 'firmware-align', 'drain-inference', 'swap-at-checkpoint', 'drain-replica', 'restart-without-node', 'avoid-large-jobs', 'cordon-node', 'uncordon-node']);
+const ladderKinds = cfg => new Set([cfg.ladder || {}, ...Object.values(cfg.vendors || {}).map(v => (v && v.ladder) || {})].flatMap(l => Object.values(l).flat()).filter(x => typeof x === 'string'));
 const DISRUPTIVE = new Set(['gpu-reset', 'node-reboot', 'fabric-restart', 'reclaim-idle', 'scale-in', 'resize', 'swap-at-checkpoint', 'drain-inference', 'release', 'repartition', 'drain-replica', 'rollback-change', 'restart-without-node']);
 
 // Candidate actions from an analysis.
@@ -82,9 +85,19 @@ export function suggest(analysis, cfg) {
     add(a);
   }
   for (const p of analysis.partitionPlan || []) if (p.gpusNeeded < p.gpusNow) add({ kind: 'repartition', target: `partition:${p.sku}`, reason: `pack fractional jobs on ${p.gpusNeeded} ${p.sku} GPU(s) instead of ${p.gpusNow}: ${p.layout.join(' | ')}`, severity: 'low' });
+  // a node another system (NVSentinel) is remediating gets no second repair ladder: its repair, drain and diag actions
+  // become one informational action, so the two never cordon, drain or reset the same node twice
+  const ext = cfg.deferToExternal === false ? {} : (analysis.external || {}), handled = a => a.node && (ext[`${a.node}/${a.gpu}`] || ext[a.node]);
+  const kept = [];
+  for (const a of out) {
+    const h = handled(a);
+    if (!h || !DEFERRED.has(a.kind) && !ladderKinds(cfg).has(a.kind)) { kept.push(a); continue; }
+    kept.push({ kind: 'external-remediation', node: a.node, gpu: ext[`${a.node}/${a.gpu}`] ? a.gpu : undefined, target: `external:${ext[`${a.node}/${a.gpu}`] ? `${a.node}/${a.gpu}` : a.node}`, severity: a.severity,
+      reason: `${h.by} is remediating ${a.node} (${h.check}${h.action ? `, ${h.action}` : ''}): gpu-health would have proposed ${a.kind} (${a.reason})`, evidence: a.evidence || [], deferred: a.kind });
+  }
   // drop what the device's platform can't do (no GPU reset on Cloud TPU, …), then de-duplicate by kind + target
   const seen = new Map();
-  for (const a of out.filter(a => supports(cfg, a.vendor, a.kind, a.node))) {
+  for (const a of kept.filter(a => supports(cfg, a.vendor, a.kind, a.node))) {
     a.id = `${a.kind}:${a.target}`;
     const s = seen.get(a.id);
     if (!s) { seen.set(a.id, a); continue; }

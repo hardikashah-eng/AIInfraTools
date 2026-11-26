@@ -314,7 +314,7 @@
     return { docs: out, bad };
   }
   function parseTrace(text, opt) {
-    const s = text.replace(/^﻿/, '').trimStart();
+    const s = text.replace(/^\uFEFF/, '').trimStart();
     if (s[0] === '{' || s[0] === '[') {
       let docs, bad = 0;
       try { const whole = JSON.parse(s); docs = Array.isArray(whole) ? whole : [whole]; }

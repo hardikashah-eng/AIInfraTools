@@ -16,10 +16,11 @@ import { diagnose } from './rca.mjs';
 import { goodput } from './goodput.mjs';
 import { goodputHtml, goodputMarkdown } from './goodput-report.mjs';
 import { tune, tuneMarkdown } from './tune.mjs';
+import { medianUpper } from './stats.mjs';
 
 const num = (v, d) => (v == null || v === '' ? d : Number(v));
 const time = v => (v == null || v === '' ? undefined : /^\d+(\.\d+)?$/.test(v) ? +v : Date.parse(v) / 1000);
-const median = a => { const s = a.slice().sort((x, y) => x - y); return s.length ? s[Math.floor(s.length / 2)] : null; };
+const median = a => medianUpper(a, null);
 const AGG = { avg: a => a.reduce((t, v) => t + v, 0) / a.length, max: a => Math.max(...a), min: a => Math.min(...a), sum: a => a.reduce((t, v) => t + v, 0), count: a => a.length, p50: median, p99: a => a.slice().sort((x, y) => x - y)[Math.floor(0.99 * (a.length - 1))] };
 
 function jobMetaFor(store, recs, to) {

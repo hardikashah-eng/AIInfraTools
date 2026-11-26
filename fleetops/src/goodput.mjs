@@ -95,11 +95,9 @@ function splitAttempt(a, steps, ideal, ckpts, now) {
   const extraCkpt = ckpts.filter(c => c.t > a.start && c.t <= end && !mine.some(s => s.ckpt > 0 && Math.abs(s.t1 - c.t) < 1)).reduce((t, c) => t + (c.saveS || 0), 0);
   const lastMark = marks.length ? marks[marks.length - 1] : -Infinity;
   const kept = s => !failed || s.t1 <= lastMark;
-  let stepWall = 0;
   for (const s of mine) {
     const w = s.n * s.dur, ck = Math.min(s.ckpt, w), da = Math.min(s.data, w - ck), work = w - ck - da;
     const good = Math.min(work, ideal * s.n), slow = work - good;
-    stepWall += w;
     out.checkpoint += ck;
     if (kept(s)) { out.productive += good; out['slow-steps'] += slow; out['data-stall'] += da; }
     else out['lost-work'] += good + slow + da;

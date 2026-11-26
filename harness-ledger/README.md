@@ -81,6 +81,38 @@ the total avoidable never exceeds the bill. The method, the thresholds and what 
 `--outcomes` (session → success/failure, JSON or CSV) adds cost on failed tasks and **cost per successful task**,
 the number to compare harnesses and configurations by.
 
+## Unit economics: cost per resolved task, and self-hosting vs the API
+
+```
+harness-ledger economics ~/.claude/projects --outcomes outcomes.csv
+harness-ledger economics traces/ --outcomes outcomes.csv --self-host-model deepseek-v3 --gpu H200 \
+    --self-host-success-rate 0.70 --gpu-rate 3
+```
+
+`economics` turns the waste report into numbers a budget owner can use:
+- **Cost per resolved task:** the spend over the sessions that succeeded (`--outcomes`), and the share of spend that
+  went to tasks that failed.
+- **Fixes, ranked:** each waste cause's avoidable spend, per resolved task, and the cost per resolved task after it.
+  Also a step cap on sessions, computed exactly from each session's own calls, and the successes it would cost.
+- **Self-hosting vs the API:** the same workload sized with the Inference Sizer for an open model on a GPU, through
+  FleetScope's agentic path (real arrivals, prompt growth, cache reuse, the KV working set). It is sized for the busiest
+  day's peak and kept on all month.
+  - The result is a break-even: the GPU-hour price under which self-hosting is cheaper per resolved task (scaled by the
+    two models' success rates). With `--gpu-rate`, it also gives the volume from which self-hosting wins.
+  - `--opencost FILE|URL` (OpenCost's `/inferenceCost/total`) or `--opencost-prom URL` (its `llm_cost_per_million_tokens`
+    gauges) uses OpenCost's measured self-host cost per token instead. Its price per delivered input token is turned into
+    a price per prefilled token, so a workload with a different cache hit rate is priced right. `--self-host-price` takes
+    prices by hand.
+  - `--calibration FILE` sizes with measured engine efficiencies, from `fleetops calibrate` or from a promoted shadow
+    upgrade's `<store>/calibration/sizer.json`.
+  - Calls longer than the open model's context are counted and flagged.
+
+On TraceLab's workload, with SWE-bench success rates ([VALIDATION-ECONOMICS.md](docs/VALIDATION-ECONOMICS.md)):
+- **One team:** at about $5,600 a month of API spend at Sonnet-class prices, self-hosting DeepSeek V3 or Kimi K2 pays
+  only below about $0.25–0.50 a GPU-hour. Two whole nodes (one serving, one spare) are the floor at any load.
+- **Pooled teams:** at $3 a GPU-hour on B200 it wins from about 8–16× that volume.
+- **Context:** half the calls exceed those models' 128k context.
+
 ## On real data
 
 - **Real coding-agent use** ([VALIDATION-TRACELAB.md](docs/VALIDATION-TRACELAB.md)). On TraceLab (8,058 Claude Code

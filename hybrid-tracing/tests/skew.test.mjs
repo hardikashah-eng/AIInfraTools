@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { generate, TRUE_OFFSETS_NS } from '../src/synth.mjs';
+import { generate } from '../src/synth.mjs';
 import { fix, readRequests, collect, violations, kindOf, CORRECTED_ATTR } from '../src/skew.mjs';
 
 const run = (opts = {}, gen = {}) => { const g = generate(Object.assign({ requests: 400 }, gen)); return Object.assign(fix([g.request], opts), { truth: g.offsets }); };

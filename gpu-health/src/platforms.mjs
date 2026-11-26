@@ -51,7 +51,6 @@ export const PLATFORMS = {
   },
 };
 
-const platformsOf = cfg => Object.assign({}, PLATFORMS, (cfg && cfg.platforms) || {});
 export function platformOf(cfg, node) {
   if (!cfg) return null;
   const n = (cfg.nodes || {})[node];
@@ -67,8 +66,6 @@ export function platformProfile(cfg, node) {
   if (p.autoRepair) for (const kind of ['node-reboot', 'rma']) p.executors[kind] = { webhook: p.autoRepairNote || `${p.name || k} repairs this node itself: check its repair status.` };
   return p;
 }
-export const knownPlatforms = cfg => Object.keys(platformsOf(cfg));
-
 // spec.providerID → { provider, zone?, project?, instance }: aws:///us-east-1a/i-0abc…, gce://project/zone/name, azure:///…/name
 export function cloudIdentity(providerID) {
   const p = String(providerID || ''), m = p.match(/^(\w+):\/\/(.*)$/);

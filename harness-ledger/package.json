@@ -5,7 +5,15 @@
   "private": true,
   "description": "Where agent harnesses waste model resources, across harnesses: cache misses, bloated tool output, repeats, retries, unused tools; in tokens, dollars and GPU time.",
   "type": "module",
-  "bin": { "harness-ledger": "tools/harness-ledger.mjs" },
-  "scripts": { "test": "node --test tests/*.test.mjs", "demo": "node tools/harness-ledger.mjs demo" },
-  "engines": { "node": ">=22" }
+  "bin": {
+    "harness-ledger": "tools/harness-ledger.mjs"
+  },
+  "scripts": {
+    "test": "node --test tests/*.test.mjs",
+    "demo": "node tools/harness-ledger.mjs demo",
+    "test:coverage": "node --test --experimental-test-coverage --test-coverage-exclude='tests/**' --test-coverage-exclude='../**' --test-coverage-lines=94 --test-coverage-branches=70 tests/*.test.mjs"
+  },
+  "engines": {
+    "node": ">=22"
+  }
 }

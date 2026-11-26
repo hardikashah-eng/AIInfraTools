@@ -5,6 +5,48 @@ change the `--json` output, and when it does the change is listed here (see [sch
 
 ## Unreleased
 
+### Code quality
+
+- **Lint gate:** ESLint recommended rules on every pull request (`eslint.config.mjs`, `.github/workflows/lint.yml`),
+  starting from zero findings.
+- **Removed:**
+  - four exports nothing used (`STATES`, `slowRequests`, `NUM_FIELDS`, `knownPlatforms`, and the helper behind the last);
+  - 20 unused locals and imports;
+  - a no-op self-assignment in the sizer UI;
+  - nine needless regex escapes;
+  - a literal byte-order mark in a regex.
+- **One copy of fleetops' statistics:** `fleetops/src/stats.mjs` replaces 11 copies of median, percentile and the seeded
+  generator. Each copy's exact behaviour is kept, so no result moved.
+- **Weekly format check:** `scripts/check-formats.mjs` and `.github/workflows/formats.yml`.
+  - Its first run found that the Argo Rollouts schemas had been vendored from v1.9.3 while v1.10.2 is current. They are
+    refreshed; the manifests pass both.
+
+### Integrations, and the loop between the tools
+
+- **OpenCost:** `harness-ledger economics --opencost FILE|URL` (its `/inferenceCost/total`) or `--opencost-prom URL` (its
+  `llm_cost_per_million_tokens` and `llm_cache_savings_fraction` gauges) uses OpenCost's measured self-host cost per token.
+  - The price per delivered input token is turned into a price per prefilled token.
+  - A deployment whose label join failed (zero cost) is explained, not used.
+- **NVSentinel:** `fleetops data import nvsentinel` reads its health events: event-exporter CloudEvents, datastore
+  documents, HealthEventResource objects and bare events, with XIDs classified through gpu-health's table.
+  - Root-cause analysis uses them as evidence.
+  - gpu-health defers to NVSentinel on nodes it is remediating: one informational `external-remediation` action instead
+    of a second repair ladder (`deferToExternal: false` to turn this off).
+- **llm-d canaries:** `fleetops shadow canary start|advance|approve|status` steps two LLMInferenceServices' route weights
+  by the judge's verdict.
+  - A rollback is written at once with `--live`.
+  - A step up is queued for a person and written only after `approve --by NAME`.
+  - Manifests and patches are checked against KServe's CRD schema (v1alpha2, vendored).
+- **The loop:**
+  - `shadow plan` records its configs.
+  - `compare` and `prom` with `--plan` refit the candidate's sizer efficiencies when the prediction was off by more than
+    15%, into `<store>/calibration/sizer.json`. `shadow plan`, `inference-sizer --calibration` and
+    `harness-ledger economics --calibration` read it.
+  - Promoted changes are recorded in `<store>/shadow/promoted.jsonl`.
+- `shadow prom` takes `--plan` (prediction vs measurement, as `compare` does).
+- **Recovered:** the agent unit economics work (`harness-ledger economics`, `validate-economics`) had been merged into a
+  feature branch instead of `main`; it is included here.
+
 ### Shadow upgrades inside the rollout tools
 
 - **`fleetops shadow prom`** judges a canary from its own per-version vLLM metrics in Prometheus (llm-d controlled
@@ -16,7 +58,7 @@ change the `--json` output, and when it does the change is listed here (see [sch
   - `--save` keeps the series; `--file` reruns them; `--demo` shows the trap.
 - **`fleetops shadow serve`** runs the judge as a service for Argo Rollouts (an AnalysisTemplate web metric) and
   Flagger (`rollout` and `confirm-promotion` webhooks): promote, rollback or wait.
-  - Manifests in `fleetops/deploy/shadow-gate/`, checked against the real CRD schemas (Argo Rollouts v1.9.3, Flagger
+  - Manifests in `fleetops/deploy/shadow-gate/`, checked against the real CRD schemas (Argo Rollouts v1.10.2, Flagger
     v1.45.0, Prometheus Operator v0.95.2).
   - Selectors are checked as label matchers before any query is built.
 - **`fleetops/deploy/shadow-live/`**: a kit that runs everything on three 1-GPU L4 nodes against real vLLM engines
@@ -24,6 +66,25 @@ change the `--json` output, and when it does the change is listed here (see [sch
 - `shadow replay` takes `--max-isl` / `--max-osl` to fit long agent sessions to a small model's context.
 - `compare`'s decision logic is shared (`decide`); with no latency data at all the decision is now *extend the test*,
   not *promote*.
+
+### Agent unit economics
+
+- **`harness-ledger economics`** reports what a successful agent task costs and what changing it is worth.
+  - **Cost per resolved task** and the share of spend on failed tasks.
+  - **Fixes ranked by what they save per resolved task:** each waste cause, plus a step cap computed exactly from each
+    session's calls.
+  - **Self-hosting vs the API:** the same workload sized with the Inference Sizer for an open model (FleetScope's agentic
+    path: real arrivals, cache reuse, the KV working set; busiest day's peak).
+    - The result is a break-even GPU-hour price per resolved task, and with `--gpu-rate` the volume from which
+      self-hosting wins.
+    - `--self-host-price` uses measured prices (OpenCost) instead.
+    - `--self-host-success-rate` and `--token-scale` (calls per task) carry the open model's quality and verbosity.
+- **`validate-economics`** on TraceLab's workload with SWE-bench success rates (`docs/VALIDATION-ECONOMICS.md`; a CI job
+  in `validate.yml`).
+  - One team's volume (about $5,600 a month of API spend at Sonnet-class prices) favours the API: self-hosting pays only
+    below about $0.25–0.50 a GPU-hour.
+  - At $3 a GPU-hour on B200, self-hosting wins from about 8–16× that volume.
+  - Half the calls exceed the open models' 128k context.
 
 ### Shadow upgrades
 

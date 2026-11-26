@@ -1,0 +1,27 @@
+{
+  "data": {
+    "inferenceCosts": {
+      "Qwen/Qwen3-32B:llm-d-namespace": {
+        "properties": { "modelName": "Qwen/Qwen3-32B" },
+        "window": { "start": "2026-11-19T00:00:00Z", "end": "2026-11-26T00:00:00Z" },
+        "costBasis": "allocation",
+        "totalCost": 42.50,
+        "promptTokens": 12000000,
+        "generationTokens": 3000000,
+        "totalTokens": 15000000,
+        "costPerMillionTokens": 2.83,
+        "inputCost": 28.40,
+        "outputCost": 14.10,
+        "inputCostPerMillionTokens": 2.37,
+        "outputCostPerMillionTokens": 4.70,
+        "cacheSavingsFraction": 0.067,
+        "allocationMethod": "compute_time"
+      },
+      "llama3:unlabelled": {
+        "properties": { "modelName": "llama3" }, "costBasis": "allocation", "totalCost": 0, "promptTokens": 1000, "generationTokens": 100,
+        "inputCostPerMillionTokens": 0, "outputCostPerMillionTokens": 0, "allocationMethod": ""
+      }
+    },
+    "window": { "start": "2026-11-19T00:00:00Z", "end": "2026-11-26T00:00:00Z" }
+  }
+}

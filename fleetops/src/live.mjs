@@ -17,8 +17,9 @@ import * as Inc from './incidents.mjs';
 import { goodput } from './goodput.mjs';
 import { agentState, decisions, paused, setPaused, AGENT_DEFAULTS } from './agent.mjs';
 import { can } from './security.mjs';
+import { medianUpper } from './stats.mjs';
 
-const median = a => { const s = a.filter(Number.isFinite).sort((x, y) => x - y); return s.length ? s[Math.floor(s.length / 2)] : null; };
+const median = a => medianUpper(a, null);
 const readJson = f => { try { return JSON.parse(fs.readFileSync(f, 'utf8')); } catch { return null; } };
 const readJsonl = (f, n = 200) => { try { return fs.readFileSync(f, 'utf8').trim().split('\n').filter(Boolean).slice(-n).map(l => JSON.parse(l)); } catch { return []; } };
 

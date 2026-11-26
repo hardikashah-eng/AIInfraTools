@@ -46,7 +46,7 @@ export function ethtool(text, { node, iface = 'eth0', t = Math.floor(Date.now() 
   if (!node) throw new Error('ethtool needs --node');
   const r = { t, switch: node, port: iface, nic: true, source: 'ethtool' };
   for (const line of String(text).split(/\r?\n/)) {
-    const m = line.match(/^\s*([\w.\-]+):\s*(\d+)\s*$/); if (!m) continue;
+    const m = line.match(/^\s*([\w.-]+):\s*(\d+)\s*$/); if (!m) continue;
     const k = m[1], v = +m[2];
     if (/^(rx|tx)_prio\d+_pause$|^(rx|tx)_pause_ctrl_phy$|^(rx|tx)_global_pause$/.test(k)) add(r, 'pfcPause', v);
     else if (/^rx_discards_phy$|^tx_discards_phy$/.test(k)) add(r, 'xmitDiscards', v);

@@ -20,11 +20,11 @@ import { Store } from '../../gpu-health/src/actions.mjs';
 import { run as runAction, fill, SAFE } from '../../gpu-health/src/executors.mjs';
 import { toGpuHealth } from './export.mjs';
 import { checkEgress } from './security.mjs';
+import { medianUpper as median } from './stats.mjs';
 
 const require = createRequire(import.meta.url);
 const E = require('../../fleetscope/src/engine.js'), FO = require('../../fleetscope/src/optimize.js');
 const RISK_W = { low: 1, medium: 0.8, high: 0.5 };
-const median = a => { const s = a.filter(Number.isFinite).sort((x, y) => x - y); return s.length ? s[Math.floor(s.length / 2)] : NaN; };
 
 // ---------- candidates ----------
 

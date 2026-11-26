@@ -102,7 +102,7 @@
   function capacityPlan(o) {
     o = Object.assign({}, CAP_DEFAULTS, o || {});
     const H = 730, months = [];
-    const strat = { demand: [], rent: [], reserved: [], hybrid: [], owned: [] }, DAYS = H / 24;
+    const DAYS = H / 24;
     let owned = o.onPremStart;
     const deliveries = [];
     for (let m = 0; m < o.months; m++) {

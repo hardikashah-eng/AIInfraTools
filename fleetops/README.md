@@ -11,6 +11,7 @@ cd fleetops
 node tools/fleetops.mjs data import exporter dcgm-scrape.prom --store /var/lib/fleet-data      # DCGM / AMD / SambaNova exporters
 node tools/fleetops.mjs data import vllm metrics.prom --before metrics-1h-ago.prom --pool chat-h200
 node tools/fleetops.mjs data import k8s-nodes nodes.json; node tools/fleetops.mjs data import k8s-pods pods.json
+node tools/fleetops.mjs data import nvsentinel events.jsonl                                      # NVSentinel health events (gpu-health defers to it)
 node tools/fleetops.mjs data import sacct sacct.txt                                              # Slurm job outcomes
 node tools/fleetops.mjs data import git-log infra-git.log --repo infra                          # change feed from a GitOps repo
 node tools/fleetops.mjs data summary
@@ -115,6 +116,11 @@ It also works from a canary's own metrics and inside the rollout tools people al
 - **`shadow serve`** is that judge as a service: an Argo Rollouts analysis step (`POST /verdict`) or Flagger webhooks.
   The manifests are in [deploy/shadow-gate/](deploy/shadow-gate/).
 - [deploy/shadow-live/](deploy/shadow-live/) runs it all on three L4 nodes against real vLLM engines (not run yet).
+- **`shadow canary`** steps an llm-d canary (two LLMInferenceServices in one routing group) by the judge's verdict:
+  - roll back at once;
+  - queue each step up for a person's approval.
+- **With `--plan`**, a verdict whose prediction was off by more than 15% recalibrates the sizer. Planning, the Inference
+  Sizer and `harness-ledger economics` all read the result.
 
 ## Serving: what fits, what it carries, deploy it
 
@@ -234,6 +240,8 @@ src/shadow.mjs           shadow upgrades: plan, matched-load compare, verdicts, 
 src/shadow-replay.mjs    paired replay to two OpenAI-compatible endpoints; greedy same-answers check
 src/shadow-prom.mjs      a canary's per-version vLLM metrics from Prometheus, judged at matched load
 src/shadow-gate.mjs      the judge for Argo Rollouts (web metric) and Flagger (webhooks)
+src/shadow-canary.mjs    an llm-d canary (LLMInferenceService route weights) stepped by the judge, steps up approved by a person
+src/adapters/nvsentinel.mjs  NVSentinel health events → log records; the nodes it is remediating
 src/optimize.mjs         candidates, selection, staged rollout through gpu-health's queue, guards, rollback, verify
 tools/fleetops.mjs       CLI
 tools/fetch-public-data.sh

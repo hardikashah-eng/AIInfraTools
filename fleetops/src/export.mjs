@@ -2,6 +2,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { toGpuHealthFaults } from './adapters/logs.mjs';
+import { remediating } from './adapters/nvsentinel.mjs';
 import { findSdc, toGpuHealthResults } from './sdc.mjs';
 
 const jsonl = rows => rows.map(r => JSON.stringify(r)).join('\n') + (rows.length ? '\n' : '');
@@ -25,7 +26,10 @@ export function toGpuHealth(store, { from, to } = {}) {
     return Object.assign({ t: j.t, kind: 'job-end', job: j.job, status: j.status === 'ok' ? 'ok' : 'failed', cause: j.cause || 'unknown' }, d ? { node: d.node, gpu: String(d.gpu) } : {}, j.lostGpuHours != null ? { lostGpuHours: j.lostGpuHours } : {});
   });
   // device faults seen only in logs (dmesg XIDs, AER, AMD RAS) reach gpu-health as fault results
-  results.push(...toGpuHealthFaults(store.query('log', { from, to })));
+  const logs = store.query('log', { from, to });
+  results.push(...toGpuHealthFaults(logs));
+  // nodes NVSentinel is remediating: gpu-health defers to it rather than queue its own repairs
+  for (const [k, r] of remediating(logs, { now: to ?? Infinity })) { const [node, gpu] = k.split('/'); results.push(Object.assign({ t: r.t, kind: 'external-remediation', node, by: r.by, action: r.action, check: r.check }, gpu != null ? { gpu } : {})); }
   // silent data corruption found in the store reaches gpu-health as sdc results (it quarantines with fault class sdc)
   results.push(...toGpuHealthResults(findSdc(store, { from, to })));
   return { samples, jobs: jobList, results };

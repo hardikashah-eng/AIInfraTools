@@ -25,6 +25,21 @@ cd fleetops && npm test            # or gpu-health, fleetscope, inference-sizer,
 
 The browser tools (FleetScope, Inference Sizer) build a single HTML file: `node build.mjs` in their folder.
 
+## Code quality
+
+- **Lint:** `npm run lint` (after `npm install --no-save eslint@9 @eslint/js@9 globals@15`) runs ESLint's recommended
+  rules: undefined names, unused imports and locals, unreachable code, needless escapes. CI runs it on every pull
+  request (`.github/workflows/lint.yml`). Keep it at zero.
+- **No copies of shared helpers inside a tool:** fleetops' statistics live in `fleetops/src/stats.mjs`. Tools don't
+  share code with each other unless the skill bundles carry it (`scripts/build-skills.mjs`), because each tool ships on
+  its own.
+- **Tests come with the change.** A bug fix adds the test that would have caught it. Every tool's tests run in CI.
+- **Formats stay current:** `npm run check:formats` compares each upstream format the tools read or write with its
+  latest version: vLLM metrics; the Argo Rollouts, Flagger, Prometheus Operator, KServe and LWS schemas; NVSentinel
+  events; OpenCost; OpenTelemetry GenAI and OpenInference attributes; TraceLab. `.github/workflows/formats.yml` runs it
+  weekly and opens a "format drift" issue when anything moved. A breaking change (something read is gone, or a shipped
+  manifest fails the new schema) fails the run. When you add a format, add its check there.
+
 ## Output schemas
 
 Agents and scripts depend on the `--json` output. If you change it on purpose, run `node scripts/schemas.mjs --update`

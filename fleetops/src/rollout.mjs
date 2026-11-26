@@ -8,6 +8,7 @@
 import { loadConfig as ghLoad } from '../../gpu-health/src/config.mjs';
 import { Store } from '../../gpu-health/src/actions.mjs';
 import { run as runAction, fill } from '../../gpu-health/src/executors.mjs';
+import { median } from './stats.mjs';
 
 const H = 3600, DAY = 86400;
 export const ROLLOUT_POLICY = {
@@ -16,7 +17,6 @@ export const ROLLOUT_POLICY = {
   busbwDrop: 0.1, computeSlowdown: 0.05, ttftSlowdown: 0.1, minSamples: 20,
   appliedShare: 0.8,                       // share of a wave's nodes that must report the new version before judging it
 };
-const median = a => { const s = a.filter(Number.isFinite).sort((x, y) => x - y); return s.length ? (s.length % 2 ? s[(s.length - 1) / 2] : (s[s.length / 2 - 1] + s[s.length / 2]) / 2) : NaN; };
 const mode = a => { const m = new Map(); for (const v of a) if (v != null) m.set(String(v), (m.get(String(v)) || 0) + 1); let b = null, n = 0; for (const [k, c] of m) if (c > n) { b = k; n = c; } return b; };
 // P(X ≥ k) for X ~ Poisson(λ)
 export function poissonSf(k, lam) { if (k <= 0) return 1; let term = Math.exp(-lam), cdf = term; for (let i = 1; i < k; i++) { term *= lam / i; cdf += term; } return Math.max(0, 1 - cdf); }
