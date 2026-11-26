@@ -74,6 +74,21 @@ node scripts/fleetscope/tools/fleetscope.mjs compare --base scenarios/prod --hea
 
 This returns `verdict` (`pass`, `fail` or `nochange`), `checks` (SLO, cost, allocation and goodput, each base vs head with its threshold), `changes` and `owners`. It exits 1 when a check fails. Thresholds come from the head's `thresholds.json`. For using this as a CI gate, see [references/CI.md](references/CI.md).
 
+## Agentic workloads
+
+For agent traffic (multi-turn sessions with growing context and high prefix-cache reuse), size from a profile of real
+sessions rather than from mean ISL/OSL. The tool is `scripts/fleetscope/tools/agentic.mjs`:
+
+- `fit TRACE -o profile.json`: TRACE is `tracelab` (the public Claude Code and Codex trace, fetched and checked), an
+  AgentX or Mooncake trace, harness-ledger `llm_call` records, or a CSV/JSONL trace with session ids.
+- `size profile.json --sessions-per-hour N --model ID --gpu ID --json`: GPUs for compute and for the KV working set,
+  which binds, and what flat ISL/OSL sizing would have said.
+- `synth profile.json --sessions-per-hour N -o load.csv`: replay the load through `run --trace load.csv`.
+- `validate TRACE --markdown`: how well the profile stands in for held-out sessions.
+
+The timing in a profile comes from the providers that served the trace, not from the GPUs being sized. Say so, and see
+[references/AGENTIC.md](references/AGENTIC.md).
+
 ## Power and power caps
 
 ```bash

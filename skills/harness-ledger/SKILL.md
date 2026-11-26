@@ -50,6 +50,18 @@ Requires Node.js 22+. Paths are relative to this skill's folder. The CLI is
    or sessions behind them. When comparing harnesses, compare cost per successful task if outcomes are known, else
    cost and cache hit rate per session, and say which.
 
+## Outcomes and real data
+
+- `harness-ledger outcomes PATH… --json` reads outcome-labelled runs: SWE-bench `per_instance_details.json` (with its
+  `metadata.yaml`), or tasks as JSON/CSV `{ task, cost, calls, outcome }`. It reports cost per successful task, the
+  share of spend on failed tasks, and the call cap that saves the most while losing at most one point of success.
+- `--prices relative` prices every model in the same units (cache read 0.1, write 1.25, output 5 per fresh input
+  token), for comparing harnesses when real prices don't matter. Say the numbers are relative.
+- Real-data results: [references/VALIDATION-TRACELAB.md](references/VALIDATION-TRACELAB.md) (8,058 Claude Code and
+  Codex sessions: 22% of spend avoidable, mostly caches expiring in pauses) and
+  [references/VALIDATION-SWEBENCH.md](references/VALIDATION-SWEBENCH.md) (39% of spend goes to unresolved tasks; step
+  caps barely help).
+
 ## Methods
 
 How each cause is decided, its thresholds (`--cache-ttl`, `--big-result`), overlap handling and the GPU-time join:

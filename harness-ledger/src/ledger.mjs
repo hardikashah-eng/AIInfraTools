@@ -34,7 +34,8 @@ const group = (xs, k) => { const m = new Map(); for (const x of xs) { const v = 
 
 export function loadOutcomes(text) {
   if (!text) return new Map();
-  try { const j = JSON.parse(text); return new Map(Array.isArray(j) ? j.map(r => [String(r.session), norm(r.outcome)]) : Object.entries(j).map(([k, v]) => [k, norm(v)])); }
+  // { session: outcome }, [{ session, outcome }], or SWE-bench per_instance_details.json ({ instance: { resolved, … } })
+  try { const j = JSON.parse(text); return new Map(Array.isArray(j) ? j.map(r => [String(r.session ?? r.task), norm(r.outcome ?? r.resolved)]) : Object.entries(j).map(([k, v]) => [k, norm(v && typeof v === 'object' ? v.resolved ?? v.outcome : v)])); }
   catch { return new Map(String(text).split(/\r?\n/).slice(1).filter(Boolean).map(l => l.split(',')).map(([s, o]) => [s.trim(), norm(o)])); }
 }
 const norm = v => (/^(1|true|pass|passed|ok|success|succeeded|resolved|done)$/i.test(String(v).trim()) ? 'success' : /^(0|false|fail|failed|failure|error|unresolved|abandoned)$/i.test(String(v).trim()) ? 'failure' : 'unknown');
@@ -46,7 +47,8 @@ export function ledger(calls, { prices = DEFAULT_PRICES, engineSpans = null, rep
     const reqs = engineRequests(engineSpans), j = joinGpu(calls, reqs, replicaRates(replicas || {}, gpuPrices));
     gpuPrice = j.prices; gpu = { requests: j.requests, matched: j.matched, priced: gpuPrice.size, replicas: j.replicas };
   }
-  priceCalls(calls, table, gpuPrice);
+  // relative units and dollars don't mix: in relative mode GPU time is reported but every call is priced in units
+  priceCalls(calls, table, table.relative ? new Map() : gpuPrice);
   for (const c of calls) { const o = outcomes.get(c.session) || outcomes.get(c.parent) || c.outcome; if (o) c.outcome = o; }
   const findings = analyze(calls, opts);
   return { calls, findings, report: summarize(calls, findings, { table, gpu, opts: { ...DEFAULTS, ...opts } }) };
@@ -102,22 +104,25 @@ export function summarize(calls, findings, { table, gpu, opts } = {}) {
 const fmtN = n => (n == null ? '–' : n >= 1e9 ? (n / 1e9).toFixed(2) + 'B' : n >= 1e6 ? (n / 1e6).toFixed(2) + 'M' : n >= 1e4 ? (n / 1e3).toFixed(1) + 'k' : String(Math.round(n)));
 const fmt$ = n => (n == null ? '–' : n >= 100 ? '$' + n.toFixed(0) : n >= 1 ? '$' + n.toFixed(2) : n > 0 ? '$' + n.toFixed(4) : '$0');
 const pct = x => (x == null ? '–' : (100 * x).toFixed(x < 0.1 ? 1 : 0) + '%');
-export { fmtN, fmt$, pct };
+// relative units (--prices relative): the same numbers without a currency sign
+const fmtU = n => (n == null ? '–' : (n >= 100 ? n.toFixed(0) : n >= 1 ? n.toFixed(2) : n > 0 ? n.toFixed(4) : '0') + ' u');
+export const moneyFor = r => (r && r.pricing && r.pricing.currency === 'units' ? fmtU : fmt$);
+export { fmtN, fmt$, fmtU, pct };
 
 export function text(r) {
-  const t = r.totals, L = [];
+  const t = r.totals, L = [], $ = moneyFor(r);
   L.push(`harness-ledger: ${t.calls} model calls in ${t.sessions} sessions from ${t.harnesses.join(', ') || 'no harness'}`);
   L.push(`  tokens ${fmtN(t.tokens)} (input ${fmtN(t.input)}, of which from cache ${fmtN(t.cacheRead)} = ${pct(t.input ? t.cacheRead / t.input : null)}; output ${fmtN(t.output)})`);
-  L.push(`  cost ${fmt$(t.cost)} (${t.pricedCalls}/${t.calls} calls priced; ${r.pricing ? r.pricing.source : ''}${r.gpu ? `; ${r.gpu.priced} by GPU time` : ''})`);
+  L.push(`  cost ${$(t.cost)} (${t.pricedCalls}/${t.calls} calls priced; ${r.pricing ? r.pricing.source : ''}${r.gpu ? `; ${r.gpu.priced} by GPU time` : ''})`);
   if (t.unpricedCalls) L.push(`  unpriced models: ${t.unpricedModels.join(', ')} (add them to --prices)`);
-  L.push(`  avoidable ${fmt$(t.avoidableCost)}${t.avoidableShare != null ? ` (${pct(t.avoidableShare)} of cost)` : ''}: ${fmtN(t.avoidableFullPrice)} tokens of work at full price, ${fmtN(t.avoidableTokens - t.avoidableFullPrice)} of context re-read from cache${t.candidateCost ? `; plus ${fmt$(t.candidateCost)} in model-tier candidates` : ''}`);
-  if (r.outcomes.known) L.push(`  outcomes: ${r.outcomes.successes} succeeded, ${r.outcomes.failures} failed (${fmt$(r.outcomes.costOnFailure)} spent on failed tasks); cost per successful task ${fmt$(r.outcomes.costPerSuccess)}`);
+  L.push(`  avoidable ${$(t.avoidableCost)}${t.avoidableShare != null ? ` (${pct(t.avoidableShare)} of cost)` : ''}: ${fmtN(t.avoidableFullPrice)} tokens of work at full price, ${fmtN(t.avoidableTokens - t.avoidableFullPrice)} of context re-read from cache${t.candidateCost ? `; plus ${$(t.candidateCost)} in model-tier candidates` : ''}`);
+  if (r.outcomes.known) L.push(`  outcomes: ${r.outcomes.successes} succeeded, ${r.outcomes.failures} failed (${$(r.outcomes.costOnFailure)} spent on failed tasks); cost per successful task ${$(r.outcomes.costPerSuccess)}`);
   L.push('', 'Where it goes, by cause:');
   L.push(`  ${'cost'.padStart(9)}  ${'full-price'.padStart(10)}  ${'re-read'.padStart(8)}  ${'count'.padStart(5)}`);
-  for (const c of r.byCause) L.push(`  ${fmt$(c.cost).padStart(9)}  ${fmtN(c.fullPrice).padStart(10)}  ${fmtN(c.tokens - c.fullPrice).padStart(8)}  ${String(c.findings).padStart(5)}  ${c.label}`);
+  for (const c of r.byCause) L.push(`  ${$(c.cost).padStart(9)}  ${fmtN(c.fullPrice).padStart(10)}  ${fmtN(c.tokens - c.fullPrice).padStart(8)}  ${String(c.findings).padStart(5)}  ${c.label}`);
   if (!r.byCause.length) L.push('  nothing found');
-  if (r.byHarness.length > 1) { L.push('', 'By harness:'); for (const h of r.byHarness) L.push(`  ${h.harness.padEnd(14)} ${String(h.sessions).padStart(4)} sessions  ${fmt$(h.cost).padStart(9)}  avoidable ${fmt$(h.avoidableCost).padStart(8)}  cache hit ${pct(h.cacheHit)}`); }
-  if (r.byTool.length) { L.push('', 'Tools behind the waste:'); for (const x of r.byTool.slice(0, 8)) L.push(`  ${x.tool.padEnd(22)} ${x.cause.padEnd(20)} ${String(x.count).padStart(4)}×  ${fmtN(x.tokens).padStart(8)} tok  ${fmt$(x.cost)}`); }
+  if (r.byHarness.length > 1) { L.push('', 'By harness:'); for (const h of r.byHarness) L.push(`  ${h.harness.padEnd(14)} ${String(h.sessions).padStart(4)} sessions  ${$(h.cost).padStart(9)}  avoidable ${$(h.avoidableCost).padStart(8)}  cache hit ${pct(h.cacheHit)}`); }
+  if (r.byTool.length) { L.push('', 'Tools behind the waste:'); for (const x of r.byTool.slice(0, 8)) L.push(`  ${x.tool.padEnd(22)} ${x.cause.padEnd(20)} ${String(x.count).padStart(4)}×  ${fmtN(x.tokens).padStart(8)} tok  ${$(x.cost)}`); }
   L.push('', 'Fix first:'); for (const c of r.byCause.filter(c => c.cost > 0 || c.tokens > 0).slice(0, 3)) L.push(`  ${c.label}: ${c.fix}`);
   return L.join('\n') + '\n';
 }

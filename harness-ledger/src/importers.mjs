@@ -203,17 +203,43 @@ export function langfuse(input, { harness = 'langfuse' } = {}) {
   return dedupe(calls);
 }
 
+// ---------- TraceLab ----------
+// The UW SyFI coding-agent trace (github.com/uw-syfi/TraceLab, CC BY 4.0): one model call per line from Claude Code and
+// Codex, with the provider's cache accounting, timing events and tool calls (names, result sizes, errors; no content,
+// no arguments, so repeats can't be checked).
+export function tracelab(text) {
+  const out = [];
+  for (const o of lines(text)) {
+    if (!o || o.input_tokens_total == null || !o.timing_events) continue;
+    out.push(tracelabCall(o));
+  }
+  return dedupe(out.filter(Boolean));
+}
+export function tracelabCall(o) {
+  const ts = (o.timing_events || []).map(e => toSec(e.timestamp)).filter(Number.isFinite);
+  if (!ts.length) return null;
+  const claude = o.provider === 'claude' || o.claude_cache_read_input_tokens != null;
+  const inT = (o.timing_events || []).filter(e => /user_message|tool_result/.test(e.event_type)).map(e => toSec(e.timestamp)).filter(Number.isFinite);
+  const t = inT.length ? Math.max(...inT) : Math.min(...ts), end = Math.max(...ts);
+  return call({ t, harness: claude ? 'claude-code' : 'codex', session: o.session_id, id: o.round_id || o.trace_key, model: o.model, provider: claude ? 'anthropic' : 'openai',
+    input: num(o.input_tokens_total) || 0, cacheRead: claude ? (num(o.claude_cache_read_input_tokens) ?? 0) : (num(o.prefix_tokens) ?? 0), cacheWrite: claude ? (num(o.claude_cache_creation_input_tokens) ?? 0) : 0,
+    output: num(o.output_tokens) || 0, reasoning: num(o.reasoning_output_tokens),
+    toolCalls: (o.tools || []).map(x => { const tc = { name: x.tool_name, id: x.tool_call_id }; if (x.result_chars != null) tc.resultTokens = Math.ceil(x.result_chars / 4); if (x.is_error) tc.error = true; return tc; }),
+    durS: Math.max(0, end - t), source: 'tracelab' });
+}
+
 // Which importer reads this file? By name first, then by content.
 export function detect(text, file = '') {
   if (/rollout-.*\.jsonl$/.test(file)) return 'codex';
   const head = String(text).slice(0, 20000);
+  if (/"input_tokens_total"/.test(head) && /"timing_events"/.test(head)) return 'tracelab';
   if (/"resourceSpans"|"gen_ai\.|"openinference\.span\.kind"|"llm\.token_count\./.test(head)) return 'otel';
   if (/"type"\s*:\s*"(session_meta|turn_context|event_msg|response_item)"/.test(head)) return 'codex';
   if (/"sessionId"\s*:/.test(head) && /"type"\s*:\s*"(assistant|user|summary|system)"/.test(head)) return 'claude-code';
   if (/"type"\s*:\s*"GENERATION"|"usageDetails"/.test(head)) return 'langfuse';
   return null;
 }
-export const IMPORTERS = { 'claude-code': claudeCode, codex, otel, openinference: otel, langfuse };
+export const IMPORTERS = { 'claude-code': claudeCode, codex, otel, openinference: otel, langfuse, tracelab };
 export function importText(text, { kind, file, harness } = {}) {
   const k = kind || detect(text, file); const f = IMPORTERS[k];
   if (!f) throw new Error(`can't tell what ${file || 'this input'} is; pass --format ${Object.keys(IMPORTERS).join('|')}`);

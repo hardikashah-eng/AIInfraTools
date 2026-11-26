@@ -12,6 +12,7 @@ export const TOOLS = {
   fleetscope: { file: 'fleetscope/tools/fleetscope.mjs', what: 'replay LLM traffic on a modelled hybrid GPU fleet; what-ifs and stress suites' },
   'fleetscope-plan': { file: 'fleetscope/tools/fleetscope-plan.mjs', what: 'capacity plans from FleetScope scenarios' },
   'live-twin': { file: 'fleetscope/tools/live-twin.mjs', what: 'forecast traffic from Prometheus and predict SLO breaches' },
+  agentic: { file: 'fleetscope/tools/agentic.mjs', what: 'agentic workload profiles from real agent traces: synthesize sessions, size GPUs (compute and KV working set)' },
   'convert-trace': { file: 'fleetscope/tools/convert-trace.mjs', what: 'convert public traces to FleetScope workloads' },
   'gpu-health': { file: 'gpu-health/tools/gpu-health.mjs', what: 'health checks, utilization and savings, fixes behind an approval queue' },
   ledger: { file: 'gpu-ledger/tools/ledger.mjs', what: 'GPU-hours and cost by org, team and person: useful, idle, lost; FOCUS export' },

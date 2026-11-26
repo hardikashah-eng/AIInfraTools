@@ -58,6 +58,10 @@ Upload a log to the Trace replay node: vLLM OpenTelemetry spans, gateway JSON lo
 
 ![Trace import](docs/img/trace-import.png)
 
+### Agentic workloads: profiles from real agent sessions
+
+`tools/agentic.mjs` fits a profile of how agent sessions behave (context growth, cache reuse, tool-loop pace, human pauses, compactions, subagents) from a real trace, generates sessions from it at any load, and sizes GPUs counting both compute and the KV cache that idle sessions hold between turns. On the public TraceLab trace (8,058 Claude Code and Codex sessions), a profile fitted on 70% of sessions matches replaying the other 30% within 1–8% on cache hit, call rate and prefill and output tokens/s; sizing the same calls from mean ISL/OSL without cache reuse asks for 440 GPUs where 40 do. See [docs/AGENTIC.md](docs/AGENTIC.md) and [docs/VALIDATION-AGENTIC.md](docs/VALIDATION-AGENTIC.md).
+
 ### Closed-loop replay of recorded sessions
 
 A recorded agent log (150 sessions, 1,516 turns) replayed as sessions: each turn waits for the previous answer and keeps the recorded think time between them, so a slower fleet sees less traffic instead of an impossible backlog. On 4 on-prem H100s, turns run a median 16 s behind the log, and simulated TTFT p99 is 9.6 s against 1.2 s recorded: this fleet is far slower than the one that produced the log. Replaying the same log by timestamps gives a p99 of 34 s. See [docs/TRACES.md](docs/TRACES.md#closed-loop-replay).

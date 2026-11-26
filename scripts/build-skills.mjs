@@ -27,7 +27,8 @@ function docRefs(tool) {
 
 const SKILLS = {
   'inference-sizer': { tool: 'inference-sizer', code: ['src', 'tools', 'package.json'], refs: { 'README.md': 'OVERVIEW.md', 'docs/METHOD.md': 'METHOD.md', 'docs/SPEC-SHEETS.md': 'SPEC-SHEETS.md', 'docs/ACCELERATORS.md': 'ACCELERATORS.md' }, assets: { 'specs/example.json': 'example.json' } },
-  'fleetscope': { tool: 'fleetscope', code: ['src', 'tools', 'package.json'], with: { 'inference-sizer': ['src/accelerators.js', 'package.json'] }, refs: { 'docs/ASK.md': 'ASK.md', 'docs/TRACES.md': 'TRACES.md', 'docs/CI.md': 'CI.md', 'docs/CALIBRATION.md': 'CALIBRATION.md' }, assets: { 'scenarios/hybrid-chat': 'scenarios/hybrid-chat' }, generate: { 'references/NODE-TYPES.md': fleetNodeTypes } },
+  // agentic.mjs sizes with the Inference Sizer's catalog and model
+  'fleetscope': { tool: 'fleetscope', code: ['src', 'tools', 'package.json'], with: { 'inference-sizer': ['src/accelerators.js', 'src/catalog.js', 'src/model.js', 'package.json'] }, refs: { 'docs/ASK.md': 'ASK.md', 'docs/TRACES.md': 'TRACES.md', 'docs/CI.md': 'CI.md', 'docs/CALIBRATION.md': 'CALIBRATION.md', 'docs/AGENTIC.md': 'AGENTIC.md' }, assets: { 'scenarios/hybrid-chat': 'scenarios/hybrid-chat' }, generate: { 'references/NODE-TYPES.md': fleetNodeTypes } },
   'hybrid-tracing': { tool: 'hybrid-tracing', code: ['src', 'tools', 'clock', 'collector', 'deploy', 'package.json'], refs: { 'README.md': 'OVERVIEW.md', 'docs/CLOCKS.md': 'CLOCKS.md' }, assets: {} },
   'fleetops': { tool: 'fleetops', code: ['src', 'tools', 'deploy', 'install', 'examples', 'Dockerfile', 'package.json'],
     // fleetops imports these tools' code through ../../<tool>/src, so they sit next to it under scripts/
@@ -35,7 +36,7 @@ const SKILLS = {
     refs: docRefs('fleetops'), assets: {} },
   'gpu-ledger': { tool: 'gpu-ledger', code: ['src', 'tools', 'examples', 'package.json'], with: { 'inference-sizer': ['src', 'package.json'] }, refs: { 'README.md': 'OVERVIEW.md', 'docs/METHOD.md': 'METHOD.md' }, assets: { 'examples/ledger.example.json': 'ledger.example.json', 'examples/people.example.csv': 'people.example.csv' } },
   // harness-ledger prices self-hosted calls with gpu-ledger's rate card, which reads the accelerator registry
-  'harness-ledger': { tool: 'harness-ledger', code: ['src', 'tools', 'package.json'], with: { 'gpu-ledger': ['src/core.mjs', 'package.json'], 'inference-sizer': ['src/accelerators.js', 'package.json'] }, refs: docRefs('harness-ledger'), assets: {} },
+  'harness-ledger': { tool: 'harness-ledger', code: ['src', 'tools', 'package.json'], with: { 'gpu-ledger': ['src/core.mjs', 'package.json'], 'inference-sizer': ['src/accelerators.js', 'package.json'], fleetscope: ['tools/tracelab-data.mjs', 'package.json'] }, refs: docRefs('harness-ledger'), assets: {} },
   'gpu-health': { tool: 'gpu-health', code: ['src', 'tools', 'examples', 'deploy', 'package.json'], refs: { 'README.md': 'OVERVIEW.md', 'docs/CONFIG.md': 'CONFIG.md', 'docs/RISK-PREDICTION.md': 'RISK-PREDICTION.md', 'docs/VENDORS.md': 'VENDORS.md', 'docs/FLAKINESS.md': 'FLAKINESS.md' }, assets: {} },
 };
 
