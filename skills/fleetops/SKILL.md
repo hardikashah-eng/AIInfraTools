@@ -205,6 +205,13 @@ To check an infra change (GPUs, engine or its config, network, topology, serving
   the decision with each metric's effect, interval, verdict and the naive number. Lead with the decision and the metric
   behind it; say when coverage (requests at matching load) is low or the prediction was off.
 - `shadow baseline save --name N --select SEL` and `shadow watch --name N --select SEL` for drift.
+- `shadow prom --prom URL --baseline 'M' --candidate 'M' [--select 'M'] --lookback S --json`: a canary from its own
+  vLLM metrics in Prometheus. M are Prometheus label matchers (`llm_isvc_name="chat-v2"` for llm-d,
+  `rollouts_pod_template_hash="…"` for Argo Rollouts, `app="NAME"` / `app="NAME-primary"` for Flagger). Report the
+  matched-load effect, not the naive per-version number, and say when coverage (canary traffic inside the baseline's
+  load range) is low. It only reads Prometheus.
+- `shadow serve` runs the judge for Argo Rollouts / Flagger; the manifests are in `fleetops/deploy/shadow-gate/`. Don't
+  apply manifests to a cluster unless the user asks.
 
 See [references/SHADOW.md](references/SHADOW.md).
 

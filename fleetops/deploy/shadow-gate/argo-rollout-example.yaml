@@ -1,0 +1,38 @@
+# A vLLM Rollout whose canary steps wait on the judge. Swap the image or args for the change you are testing (engine
+# version, --max-num-seqs, quantization…). Traffic split here is by replica count (1 of 4 pods); with a traffic router
+# (Gateway API, Istio…) use setWeight as usual.
+apiVersion: argoproj.io/v1alpha1
+kind: Rollout
+metadata: { name: chat, namespace: llm }
+spec:
+  replicas: 4
+  selector: { matchLabels: { app: chat } }
+  template:
+    metadata: { labels: { app: chat } }
+    spec:
+      containers:
+        - name: vllm
+          image: vllm/vllm-openai:v0.32.0
+          args: [--model, Qwen/Qwen2.5-1.5B-Instruct, --port, "8000"]
+          ports: [{ name: http, containerPort: 8000 }]
+          resources: { limits: { nvidia.com/gpu: 1 } }
+  strategy:
+    canary:
+      steps:
+        - setWeight: 25
+        - pause: { duration: 5m }        # let the canary see traffic before judging
+        - analysis:
+            templates: [{ templateName: fleetops-shadow-gate }]
+            args:
+              - name: stable-hash
+                valueFrom: { podTemplateHashValue: Stable }
+              - name: canary-hash
+                valueFrom: { podTemplateHashValue: Latest }
+        - setWeight: 50
+        - analysis:
+            templates: [{ templateName: fleetops-shadow-gate }]
+            args:
+              - name: stable-hash
+                valueFrom: { podTemplateHashValue: Stable }
+              - name: canary-hash
+                valueFrom: { podTemplateHashValue: Latest }

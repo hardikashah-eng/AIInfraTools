@@ -1,0 +1,34 @@
+# Argo Rollouts: the judge as an analysis step. Every 2 minutes the AnalysisRun asks the judge to compare the canary
+# ReplicaSet with the stable one at matched load. "promote" passes, "rollback" fails the run (Argo aborts the rollout),
+# "wait" (not settled yet) is inconclusive. Ten waits in a row leave the run Inconclusive and the rollout paused for a person.
+apiVersion: argoproj.io/v1alpha1
+kind: AnalysisTemplate
+metadata: { name: fleetops-shadow-gate, namespace: llm }
+spec:
+  args:
+    - name: stable-hash
+    - name: canary-hash
+    - name: select                       # what both versions share, as Prometheus label matchers
+      value: 'namespace="llm",app="chat"'
+    - name: lookback                     # seconds of canary traffic to judge
+      value: "900"
+  metrics:
+    - name: shadow-gate
+      interval: 2m
+      count: 10
+      successCondition: result == "promote"
+      failureCondition: result == "rollback"
+      failureLimit: 0
+      inconclusiveLimit: 9
+      consecutiveErrorLimit: 3           # the judge or Prometheus unreachable three times in a row fails the run
+      provider:
+        web:
+          method: POST
+          url: http://fleetops-shadow-gate.fleetops.svc:9410/verdict
+          timeoutSeconds: 60
+          jsonBody:
+            select: "{{args.select}}"
+            baseline: 'rollouts_pod_template_hash="{{args.stable-hash}}"'
+            candidate: 'rollouts_pod_template_hash="{{args.canary-hash}}"'
+            lookback: "{{args.lookback}}"
+          jsonPath: "{$.verdict}"

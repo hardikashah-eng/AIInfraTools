@@ -1,0 +1,51 @@
+# The shadow-upgrade judge (fleetops shadow serve) for Argo Rollouts and Flagger. It reads Prometheus and answers
+# promote / rollback / wait; the rollout controller decides what that does. No volume: decisions are logged to /tmp.
+# Flagger webhooks can't send a token, so the judge runs without one and the NetworkPolicy admits only the rollout
+# controllers' namespaces (edit them to match yours). For Argo Rollouts alone you can add --tokens instead.
+apiVersion: v1
+kind: Namespace
+metadata: { name: fleetops }
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata: { name: fleetops-shadow-gate, namespace: fleetops, labels: { app: fleetops-shadow-gate } }
+spec:
+  replicas: 1
+  selector: { matchLabels: { app: fleetops-shadow-gate } }
+  template:
+    metadata: { labels: { app: fleetops-shadow-gate } }
+    spec:
+      securityContext: { runAsNonRoot: true, runAsUser: 1000, seccompProfile: { type: RuntimeDefault } }
+      containers:
+        - name: judge
+          image: REGISTRY/fleetops:0.1
+          args: [shadow, serve, --prom, "http://prometheus-operated.monitoring.svc:9090", --host, 0.0.0.0, --port, "9410", --no-auth,
+                 --store, /tmp/fleetops, --lookback, "900", --baseline-lookback, "21600"]
+          env:
+            - { name: FLEETOPS_EGRESS_ALLOW, value: "prometheus-operated.monitoring.svc" }   # nothing else is ever called
+          ports: [{ name: http, containerPort: 9410 }]
+          readinessProbe: { httpGet: { path: /healthz, port: http }, periodSeconds: 10 }
+          livenessProbe: { httpGet: { path: /healthz, port: http }, periodSeconds: 30 }
+          resources: { requests: { cpu: 100m, memory: 128Mi }, limits: { memory: 512Mi } }
+          securityContext: { allowPrivilegeEscalation: false, readOnlyRootFilesystem: true, capabilities: { drop: [ALL] } }
+          volumeMounts: [{ name: tmp, mountPath: /tmp }]
+      volumes: [{ name: tmp, emptyDir: {} }]
+---
+apiVersion: v1
+kind: Service
+metadata: { name: fleetops-shadow-gate, namespace: fleetops }
+spec:
+  selector: { app: fleetops-shadow-gate }
+  ports: [{ name: http, port: 9410, targetPort: http }]
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata: { name: fleetops-shadow-gate, namespace: fleetops }
+spec:
+  podSelector: { matchLabels: { app: fleetops-shadow-gate } }
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+        - namespaceSelector: { matchLabels: { kubernetes.io/metadata.name: argo-rollouts } }
+        - namespaceSelector: { matchLabels: { kubernetes.io/metadata.name: flagger-system } }
+      ports: [{ port: 9410 }]

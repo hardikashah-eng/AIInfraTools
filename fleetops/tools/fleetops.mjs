@@ -40,6 +40,8 @@ import * as Adm from '../src/admission.mjs';
 import * as RO from '../src/rollout.mjs';
 import * as Shadow from '../src/shadow.mjs';
 import * as Replay from '../src/shadow-replay.mjs';
+import * as SProm from '../src/shadow-prom.mjs';
+import * as Gate from '../src/shadow-gate.mjs';
 import { goodputMarkdown, goodputHtml } from '../src/goodput-report.mjs';
 import * as LiveView from '../src/live.mjs';
 import * as Inject from '../src/inject.mjs';
@@ -211,7 +213,7 @@ Shadow upgrades (an infra change measured against the baseline at matched load b
   fleetops shadow plan --baseline-config b.json --candidate-config c.json [--trace FILE | --baseline SEL --from T --to T]
         [--effect 0.03] [--rps R] --out plan.json          predicted effect (Inference Sizer) and requests needed to see it
   fleetops shadow replay --trace FILE|profile.json --baseline URL --candidate URL [--model M] [--speed 1] [--max-requests N]
-        [--duration S] [--max-inflight 64] [--api-key-env VAR] [--out results.jsonl] [--live]
+        [--duration S] [--max-isl N --max-osl N] [--max-inflight 64] [--api-key-env VAR] [--out results.jsonl] [--live]
         the same requests to both endpoints at the same moments (dry run unless --live); results go to the store
   fleetops shadow answers --baseline URL --candidate URL [--prompts FILE] [--model M] [--live] --out answers.json
         greedy decoding on both: identical tokens, first divergence, log-probability drift
@@ -222,6 +224,14 @@ Shadow upgrades (an infra change measured against the baseline at matched load b
   fleetops shadow watch --name NAME --select SEL [--from T --to T]          drift of a service against its saved baseline
   fleetops shadow demo                                         a candidate that looks faster and isn't
   SEL: field=value or field~regex, comma-separated (variant=candidate, replica~vllm-new, pool=chat)
+  From a canary's own metrics (vLLM in Prometheus: llm-d controlled deployments, Argo Rollouts, Flagger):
+  fleetops shadow prom --prom URL --baseline 'M' --candidate 'M' [--select 'M'] [--lookback 3600 | --from T --to T]
+        [--baseline-lookback S] [--step 60] [--prom-token-env VAR] [--save FILE] [--gates g.json]
+        | --file saved.json | --demo      per-version windows judged at matched load (load per engine, prompt, cache)
+  fleetops shadow serve --prom URL [--select 'M' --baseline 'M' --candidate 'M'] [--lookback 900] [--baseline-lookback 21600]
+        [--port 9410] [--host H --tokens FILE | --no-auth]   the judge for Argo Rollouts (POST /verdict) and Flagger
+        (POST /flagger/rollout, /flagger/confirm-promotion); deploy/shadow-gate/ has the manifests
+  M: Prometheus label matchers, e.g. llm_isvc_name="chat-v2" or rollouts_pod_template_hash="6b9f",namespace="llm"
 
 Serving (Inference Sizer both ways, and a one-command vLLM deployment on Kubernetes):
   fleetops serving models | gpus                               the catalog (ids, sizes, Hugging Face repos; GPU types)
@@ -1051,7 +1061,7 @@ async function shadowCmd(store, cmd, rest, o) {
   }
   if (cmd === 'replay') {
     if (!opt('trace') || !opt('baseline') || !opt('candidate')) throw new Error('--trace FILE|profile.json --baseline URL --candidate URL [--live]');
-    const reqs = Replay.requestsFrom(await traceRows(opt('trace')), { speed: num('speed') || 1, maxRequests: num('max-requests') ?? 1000, durationS: num('duration') ?? Infinity });
+    const reqs = Replay.requestsFrom(await traceRows(opt('trace')), { speed: num('speed') || 1, maxRequests: num('max-requests') ?? 1000, durationS: num('duration') ?? Infinity, maxIsl: num('max-isl') ?? Infinity, maxOsl: num('max-osl') ?? Infinity });
     const arms = [arm('baseline', opt('baseline')), arm('candidate', opt('candidate'))];
     const res = await Replay.run(reqs, arms, { live: !!o.live, maxInflight: num('max-inflight') || 64, model: opt('model'), exact: !o['no-exact-output'] });
     if (res.dryRun) { if (J) { OUT.replay = res; return; } return say(`dry run: ${res.plan.requests} requests (${res.plan.sessions} sessions) over ${Math.round(res.plan.seconds)} s; ${res.plan.note}.\nAdd --live to send them.`); }
@@ -1097,7 +1107,45 @@ async function shadowCmd(store, cmd, rest, o) {
     if (J) { OUT.watch = Object.assign(r, { history: past }); return; }
     return say(`${r.note} (${r.current} requests vs baseline ${b.name} of ${fmt(b.t)})\n` + ['ttft', 'tpot', 'e2e'].map(k => { const m = r.metrics[k]; return `  ${k.padEnd(5)} ${pctS(m.effect)} (${pctS(m.lo)} to ${pctS(m.hi)}) ${m.verdict}`; }).join('\n') + `\n  last ${past.length} checks, TPOT: ${past.map(x => pctS(x.metrics.tpot)).join('  ')}`);
   }
-  throw new Error('fleetops shadow demo | plan | replay | answers | compare | baseline save|list | watch');
+  if (cmd === 'prom') {
+    let d, saved = null;
+    const promHeaders = () => (opt('prom-token-env') ? { authorization: `Bearer ${process.env[opt('prom-token-env')] || ''}` } : undefined);
+    if (o.demo) { const w = SProm.synthWindows(); d = { baseline: w.baseline, candidate: w.candidate, step: w.step }; }
+    else if (opt('file')) { saved = JSON.parse(read(opt('file'))); d = Object.assign({ step: saved.step }, SProm.fromSaved(saved)); }
+    else {
+      if (!opt('prom') || !opt('baseline') || !opt('candidate')) throw new Error("--prom URL --baseline 'matchers' --candidate 'matchers' (or --file saved.json, or --demo)");
+      const now = Math.floor(Date.now() / 1000), step = num('step') || 60, t1 = to ?? now, t0 = from ?? t1 - (num('lookback') || 3600);
+      saved = await SProm.fetchArms(opt('prom'), { select: opt('select'), baseline: opt('baseline'), candidate: opt('candidate'), from: t0, to: t1, baselineFrom: num('baseline-lookback') ? t1 - num('baseline-lookback') : t0, step, headers: promHeaders() });
+      d = saved;
+      if (opt('save')) { const { baseline, candidate, ...keep } = saved; fs.writeFileSync(opt('save'), JSON.stringify(keep) + '\n'); }
+    }
+    if (!d.baseline.length || !d.candidate.length) throw new Error(`no windows with requests: ${d.baseline.length} baseline, ${d.candidate.length} candidate (check the selectors and the time range)`);
+    const r = SProm.compareWindows(d.baseline, d.candidate, { step: d.step, gates: json('gates'), baseline: { gpus: num('baseline-gpus'), rate: num('baseline-rate') }, candidate: { gpus: num('candidate-gpus'), rate: num('candidate-rate') } });
+    fs.appendFileSync(path.join(dir, 'verdicts.jsonl'), JSON.stringify({ t: Math.floor(Date.now() / 1000), source: 'prometheus', baseline: (saved && saved.selectors && saved.selectors.baseline) || (o.demo ? 'demo' : opt('file')), candidate: (saved && saved.selectors && saved.selectors.candidate) || (o.demo ? 'demo' : opt('file')), decision: r.decision, why: r.why, metrics: r.metrics }) + '\n');
+    if (J) { OUT.shadow = r; return; }
+    const L = r.load, ld = x => `${x.windows} windows, ${x.requests} requests, ${x.concPerEngine.toFixed(1)} in flight per engine, prompt ${Math.round(x.isl || 0)}, cache hit ${x.hit != null && Number.isFinite(x.hit) ? (100 * x.hit).toFixed(0) + '%' : '–'}${Number.isFinite(x.ttftP95) ? `, TTFT p95 ${x.ttftP95.toFixed(2)} s (median window; shown, not judged)` : ''}`;
+    const text = shadowText(Object.assign({}, r, { paired: false })).split('\n');
+    text[1] = `baseline: ${ld(L.baseline)}\ncandidate: ${ld(L.candidate)}\neach canary window against the baseline at the same load (median of windows shown)`;
+    return say(text.join('\n').replace(/requests had matching load/g, 'canary traffic was within the baseline\'s load range').replace(/more per arm to settle/g, 'more minutes to settle'));
+  }
+  if (cmd === 'serve') {
+    if (!opt('prom')) throw new Error('--prom URL (the Prometheus that scrapes both versions)');
+    const port = num('port') || 9410, host = opt('host') || '127.0.0.1', tokens = opt('tokens') ? Sec.loadTokens(opt('tokens')) : null;
+    if (!tokens && !['127.0.0.1', 'localhost', '::1'].includes(host) && !o['no-auth']) throw new Error(`--host ${host} needs --tokens FILE (or --no-auth on a network only the rollout controller reaches: Flagger webhooks can't send a token)`);
+    const step = num('step') || 60, headers = opt('prom-token-env') ? { authorization: `Bearer ${process.env[opt('prom-token-env')] || ''}` } : undefined;
+    const defaults = { select: opt('select'), baseline: opt('baseline'), candidate: opt('candidate'), lookback: num('lookback') || 900, baselineLookback: num('baseline-lookback') || 21600 };
+    for (const k of Object.keys(defaults)) if (defaults[k] == null) delete defaults[k];
+    const evaluate = async p => {
+      const now = Math.floor(Date.now() / 1000), d = await SProm.fetchArms(opt('prom'), { select: p.select, baseline: p.baseline, candidate: p.candidate, from: now - p.lookback, to: now, baselineFrom: now - Math.max(p.lookback, p.baselineLookback), step, headers });
+      return SProm.compareWindows(d.baseline, d.candidate, { step, gates: json('gates') });
+    };
+    const logf = path.join(dir, 'gate.jsonl'), srv = Gate.gateServer(evaluate, { tokens, defaults, log: e => fs.appendFileSync(logf, JSON.stringify(e) + '\n') });
+    await new Promise(r => srv.listen(port, host, r));
+    console.log(`shadow judge on http://${host}:${port}  prometheus ${opt('prom')}  ${tokens ? `${tokens.length} token(s)` : 'open (no tokens)'}\n  POST /verdict (Argo Rollouts web metric)  POST /flagger/rollout  POST /flagger/confirm-promotion  GET /verdict?baseline=…&candidate=…  GET /healthz\n  canary window ${defaults.lookback} s, baseline history ${defaults.baselineLookback} s; decisions → ${logf}`);
+    const stop = () => { srv.close(); process.exit(0); }; process.on('SIGINT', stop); process.on('SIGTERM', stop);
+    return new Promise(() => {});
+  }
+  throw new Error('fleetops shadow demo | plan | replay | answers | compare | baseline save|list | watch | prom | serve');
 }
 
 async function rolloutCmd(store, cmd, o) {
