@@ -36,7 +36,8 @@ const SKILLS = {
     refs: docRefs('fleetops'), assets: {} },
   'gpu-ledger': { tool: 'gpu-ledger', code: ['src', 'tools', 'examples', 'package.json'], with: { 'inference-sizer': ['src', 'package.json'] }, refs: { 'README.md': 'OVERVIEW.md', 'docs/METHOD.md': 'METHOD.md' }, assets: { 'examples/ledger.example.json': 'ledger.example.json', 'examples/people.example.csv': 'people.example.csv' } },
   // harness-ledger prices self-hosted calls with gpu-ledger's rate card, which reads the accelerator registry
-  'harness-ledger': { tool: 'harness-ledger', code: ['src', 'tools', 'package.json'], with: { 'gpu-ledger': ['src/core.mjs', 'package.json'], 'inference-sizer': ['src/accelerators.js', 'package.json'], fleetscope: ['tools/tracelab-data.mjs', 'package.json'] }, refs: docRefs('harness-ledger'), assets: {} },
+  // economics sizes self-hosting with FleetScope's agentic path and the Inference Sizer
+  'harness-ledger': { tool: 'harness-ledger', code: ['src', 'tools', 'package.json'], with: { 'gpu-ledger': ['src/core.mjs', 'package.json'], 'inference-sizer': ['src/accelerators.js', 'src/catalog.js', 'src/model.js', 'package.json'], fleetscope: ['src/agentic.js', 'tools/tracelab-data.mjs', 'package.json'] }, refs: docRefs('harness-ledger'), assets: {} },
   'gpu-health': { tool: 'gpu-health', code: ['src', 'tools', 'examples', 'deploy', 'package.json'], refs: { 'README.md': 'OVERVIEW.md', 'docs/CONFIG.md': 'CONFIG.md', 'docs/RISK-PREDICTION.md': 'RISK-PREDICTION.md', 'docs/VENDORS.md': 'VENDORS.md', 'docs/FLAKINESS.md': 'FLAKINESS.md' }, assets: {} },
 };
 

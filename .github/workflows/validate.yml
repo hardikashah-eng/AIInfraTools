@@ -36,3 +36,12 @@ jobs:
         with:
           node-version: 22
       - run: node harness-ledger/tools/validate-swebench.mjs --markdown >> "$GITHUB_STEP_SUMMARY"
+  economics:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+      - name: Self-hosting vs the API on TraceLab's workload, with SWE-bench success rates
+        run: node --max-old-space-size=12000 harness-ledger/tools/validate-economics.mjs --markdown >> "$GITHUB_STEP_SUMMARY"

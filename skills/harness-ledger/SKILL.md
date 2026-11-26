@@ -50,6 +50,20 @@ Requires Node.js 22+. Paths are relative to this skill's folder. The CLI is
    or sessions behind them. When comparing harnesses, compare cost per successful task if outcomes are known, else
    cost and cache hit rate per session, and say which.
 
+## Unit economics
+
+- `harness-ledger economics PATH… [--outcomes FILE] --json`: cost per resolved task, the share of spend on failed
+  tasks, fixes ranked by what they save per resolved task (with an exact step cap from per-call records), and an upper
+  bound for all fixes together (they overlap).
+- Self-hosting vs the API: add `--self-host-model ID --gpu ID` (Inference Sizer catalog ids, e.g. `deepseek-v3` on
+  `H200`).
+  - Lead with the break-even GPU-hour price, and give the volume from which self-hosting wins only with `--gpu-rate`.
+  - Say which success rate is assumed (`--self-host-success-rate`, e.g. from SWE-bench) and how many calls exceed the
+    open model's context.
+  - With `--prices relative`, give `--unit-price` and say it's an assumption.
+- Don't present the self-hosting side as a recommendation to buy hardware. It is a model: GPUs only, sized for the
+  busiest day, kept on all month.
+
 ## Outcomes and real data
 
 - `harness-ledger outcomes PATH… --json` reads outcome-labelled runs: SWE-bench `per_instance_details.json` (with its
@@ -60,7 +74,8 @@ Requires Node.js 22+. Paths are relative to this skill's folder. The CLI is
 - Real-data results: [references/VALIDATION-TRACELAB.md](references/VALIDATION-TRACELAB.md) (8,058 Claude Code and
   Codex sessions: 22% of spend avoidable, mostly caches expiring in pauses) and
   [references/VALIDATION-SWEBENCH.md](references/VALIDATION-SWEBENCH.md) (39% of spend goes to unresolved tasks; step
-  caps barely help).
+  caps barely help), and [references/VALIDATION-ECONOMICS.md](references/VALIDATION-ECONOMICS.md) (self-hosting vs the API on
+  TraceLab's workload: one team's volume favours the API; pooled volume can flip it).
 
 ## Methods
 

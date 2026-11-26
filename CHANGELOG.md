@@ -25,6 +25,25 @@ change the `--json` output, and when it does the change is listed here (see [sch
 - `compare`'s decision logic is shared (`decide`); with no latency data at all the decision is now *extend the test*,
   not *promote*.
 
+### Agent unit economics
+
+- **`harness-ledger economics`** reports what a successful agent task costs and what changing it is worth.
+  - **Cost per resolved task** and the share of spend on failed tasks.
+  - **Fixes ranked by what they save per resolved task:** each waste cause, plus a step cap computed exactly from each
+    session's calls.
+  - **Self-hosting vs the API:** the same workload sized with the Inference Sizer for an open model (FleetScope's agentic
+    path: real arrivals, cache reuse, the KV working set; busiest day's peak).
+    - The result is a break-even GPU-hour price per resolved task, and with `--gpu-rate` the volume from which
+      self-hosting wins.
+    - `--self-host-price` uses measured prices (OpenCost) instead.
+    - `--self-host-success-rate` and `--token-scale` (calls per task) carry the open model's quality and verbosity.
+- **`validate-economics`** on TraceLab's workload with SWE-bench success rates (`docs/VALIDATION-ECONOMICS.md`; a CI job
+  in `validate.yml`).
+  - One team's volume (about $5,600 a month of API spend at Sonnet-class prices) favours the API: self-hosting pays only
+    below about $0.25–0.50 a GPU-hour.
+  - At $3 a GPU-hour on B200, self-hosting wins from about 8–16× that volume.
+  - Half the calls exceed the open models' 128k context.
+
 ### Shadow upgrades
 
 - **`fleetops shadow`** measures an infra change before it ships, against the baseline at matched load.

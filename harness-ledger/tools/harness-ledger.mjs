@@ -13,6 +13,7 @@ import { DEFAULT_PRICES } from '../src/prices.mjs';
 import { html } from '../src/html.mjs';
 import { demoInputs } from '../src/demo.mjs';
 import { tasksFromSwebench, tasksFromRows, outcomeReport, outcomeText } from '../src/outcomes.mjs';
+import { economics, economicsText } from '../src/economics.mjs';
 
 const HELP = `harness-ledger: where agent harnesses waste model resources (tokens, dollars, GPU time), across harnesses.
 
@@ -21,6 +22,8 @@ const HELP = `harness-ledger: where agent harnesses waste model resources (token
   harness-ledger import PATH… [--format F] --out calls.jsonl         convert to llm_call records (counts only, safe to share)
   harness-ledger outcomes PATH… [--json]                             outcome-labelled task runs (SWE-bench per_instance_details.json,
                                                                      or tasks as JSON/CSV): cost per success, spend on failures, call caps
+  harness-ledger economics PATH… [--outcomes FILE] [self-host options] [--json]   cost per resolved task, fixes ranked by
+                                                                     what they save per resolved task, and self-host vs API
   harness-ledger demo [--html FILE] [--json]                         three harnesses and a vLLM fleet, synthetic
   harness-ledger formats                                             what it reads
 
@@ -41,6 +44,19 @@ Report options:
   --outcomes FILE      session → success/failure (JSON object or CSV session,outcome): cost per successful task
   --since 7d|ISO       only calls after this    --harness NAME   label OTel/Langfuse input
   --cache-ttl S (300)  --big-result TOKENS (8000)   --json   --html FILE   --calls-out FILE
+
+Economics options (with the report options above):
+  --self-host-model ID --gpu ID      an open model and GPU from the Inference Sizer catalog (deepseek-v3 on H200, …): the
+                                     same workload sized for the busiest day's peak (compute and KV working set)
+  --ttft MS (2000) --tpot MS (50)    the targets it is sized for; --no-spare drops the sizer's spare node
+  --gpu-rate $/GPU-h                 what a GPU-hour costs you: monthly cost, which is cheaper, and the volume where it flips
+  --self-host-success-rate R         the open model's task success rate (e.g. from SWE-bench); --api-success-rate R when
+                                     there are no outcomes; --token-scale K when the open model makes K× the calls per task
+  --self-host-price FILE             measured self-host prices instead of sizing: { input, cacheRead?, output } $ per M
+                                     tokens (OpenCost's llm_cost_per_million_tokens, allocation basis)
+  --days N | --tasks-per-day N       the period the input covers, or the volume to plan for
+  --unit-price $ (with --prices relative)   dollars per relative unit (a million fresh input tokens) for the break-even
+  --demo                             the synthetic demo input
 `;
 
 function args(argv) {
@@ -118,6 +134,21 @@ export async function main(argv) {
     const { calls, files, skipped } = await load(dirs, { ...o, since: o.since || '30d' });
     process.stderr.write(`scanned ${files} files in ${dirs.join(', ')}${skipped.length ? `; ${skipped.length} not recognised` : ''}\n`);
     return report(calls, o);
+  }
+  if (cmd === 'economics') {
+    let calls, extra = {};
+    if (o.demo) { const d = demoInputs(); calls = d.files.flatMap(f => importText(f.text, { file: f.name })); extra = { engine: d.engine, replicas: d.replicas, outcomes: new Map(Object.entries(d.outcomes)) }; }
+    else { if (!paths.length) { process.stderr.write('harness-ledger economics: give files or folders (or --demo)\n'); return 2; } ({ calls } = await load(paths, o)); }
+    if (!calls.length) { process.stderr.write('harness-ledger: no model calls found in the input\n'); return 1; }
+    const opts = { prices: o.prices === 'relative' ? 'relative' : o.prices ? readJson(o.prices) : DEFAULT_PRICES, outcomes: extra.outcomes || loadOutcomes(o.outcomes ? read(o.outcomes) : null),
+      engineSpans: extra.engine || (o.engine ? read(o.engine) : null), replicas: extra.replicas || (o.replicas ? readJson(o.replicas) : null), gpuPrices: o['gpu-prices'] ? readJson(o['gpu-prices']) : {} };
+    if (o['cache-ttl']) opts.cacheTtlS = Number(o['cache-ttl']);
+    const r = ledger(calls, opts), n = k => (o[k] != null && o[k] !== true ? Number(o[k]) : undefined);
+    const E = economics(r.calls, r.report, { model: o['self-host-model'] || undefined, gpu: o.gpu || undefined, ttft: n('ttft'), tpot: n('tpot'), gpuRate: n('gpu-rate'),
+      selfSuccessRate: n('self-host-success-rate'), apiSuccessRate: n('api-success-rate'), tokenScale: n('token-scale'), days: n('days'), tasksPerDay: n('tasks-per-day'), unitPrice: n('unit-price'),
+      selfHostPrice: o['self-host-price'] ? readJson(o['self-host-price']) : null, cacheTtlS: opts.cacheTtlS, spare: !o['no-spare'] });
+    process.stdout.write(o.json ? JSON.stringify(E, null, 1) + '\n' : economicsText(E));
+    return 0;
   }
   if (cmd === 'outcomes') {
     if (!paths.length) { process.stderr.write('harness-ledger outcomes: give per_instance_details.json files, folders of them, or task JSON/CSV\n'); return 2; }
