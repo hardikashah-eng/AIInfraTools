@@ -14,34 +14,12 @@ import { createRequire } from 'node:module';
 import { fileURLToPath } from 'node:url';
 import { planDeployment } from '../src/serving.mjs';
 import { LLMD } from '../src/llmd.mjs';
+import { validate } from './crd-schema.mjs';
 
 const here = path.dirname(fileURLToPath(import.meta.url)), REAL = path.join(here, 'fixtures', 'real', 'llm-d'), require = createRequire(import.meta.url);
 let YAML = null; try { YAML = require('yaml'); } catch { /* optional */ }
 const crd = f => JSON.parse(zlib.gunzipSync(fs.readFileSync(path.join(REAL, f))).toString());
 
-// The structural subset of OpenAPI v3 the API server enforces for CRDs: types, required (after defaults), enums,
-// int-or-string, and
-// unknown fields (kubectl's default --validate=strict rejects them).
-function validate(schema, v, at = '', errs = []) {
-  if (v == null) return errs;
-  if (schema['x-kubernetes-int-or-string']) { if (!(Number.isInteger(v) || typeof v === 'string')) errs.push(`${at}: int or string, got ${typeof v}`); return errs; }
-  const t = schema.type, kind = Array.isArray(v) ? 'array' : Number.isInteger(v) ? 'integer' : typeof v;
-  const ok = !t || t === kind || (t === 'number' && kind === 'integer') || (t === 'object' && kind === 'object');
-  if (!ok) { errs.push(`${at || '/'}: ${t} expected, got ${kind}`); return errs; }
-  if (schema.enum && !schema.enum.includes(v)) errs.push(`${at}: ${JSON.stringify(v)} not in ${schema.enum.join('|')}`);
-  if (Number.isFinite(schema.minimum) && typeof v === 'number' && v < schema.minimum) errs.push(`${at}: ${v} < ${schema.minimum}`);
-  if (kind === 'array' && schema.items) v.forEach((x, i) => validate(schema.items, x, `${at}[${i}]`, errs));
-  if (kind === 'object') {
-    for (const r of schema.required || []) if (!(r in v) && (schema.properties || {})[r]?.default === undefined) errs.push(`${at}: missing ${r}`); // defaults apply before validation
-    const props = schema.properties || {};
-    for (const [k, x] of Object.entries(v)) {
-      if (props[k]) validate(props[k], x, `${at}.${k}`, errs);
-      else if (schema.additionalProperties && typeof schema.additionalProperties === 'object') validate(schema.additionalProperties, x, `${at}.${k}`, errs);
-      else if (schema.properties && !schema['x-kubernetes-preserve-unknown-fields'] && schema.additionalProperties !== true) errs.push(`${at}: unknown field ${k}`);
-    }
-  }
-  return errs;
-}
 const plan = () => planDeployment({ model: 'llama33-70b', gpu: 'H100', rate: 20, isl: 8000, osl: 300, mode: 'disagg', name: 'chat-pd', hfSecret: 'hf-token', cachePvc: 'models' });
 // from the YAML we emit, parsed back: the check covers the emitter too
 const ours = () => { const d = plan(); return { d, ds: YAML.parseAllDocuments(d.yaml).map(x => x.toJSON()).find(x => x.kind === 'DisaggregatedSet') }; };

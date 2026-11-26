@@ -5,6 +5,26 @@ change the `--json` output, and when it does the change is listed here (see [sch
 
 ## Unreleased
 
+### Shadow upgrades inside the rollout tools
+
+- **`fleetops shadow prom`** judges a canary from its own per-version vLLM metrics in Prometheus (llm-d controlled
+  deployments' `llm_isvc_name`, Argo Rollouts' pod-template hash, Flagger's `app` label, or any label matchers).
+  - Each canary window is compared with what the baseline shows at the same load per engine, prompt length and cache
+    hit (a local fit on the baseline's own history), with an interval and a verdict. Per-version means are shown beside it.
+  - On synthetic canaries at half or a quarter of the baseline's load, the effect lands within 1 point of the truth
+    where per-version means say 20–33% faster.
+  - `--save` keeps the series; `--file` reruns them; `--demo` shows the trap.
+- **`fleetops shadow serve`** runs the judge as a service for Argo Rollouts (an AnalysisTemplate web metric) and
+  Flagger (`rollout` and `confirm-promotion` webhooks): promote, rollback or wait.
+  - Manifests in `fleetops/deploy/shadow-gate/`, checked against the real CRD schemas (Argo Rollouts v1.9.3, Flagger
+    v1.45.0, Prometheus Operator v0.95.2).
+  - Selectors are checked as label matchers before any query is built.
+- **`fleetops/deploy/shadow-live/`**: a kit that runs everything on three 1-GPU L4 nodes against real vLLM engines
+  (paired replay, an in-cluster canary, the judge). Not run yet.
+- `shadow replay` takes `--max-isl` / `--max-osl` to fit long agent sessions to a small model's context.
+- `compare`'s decision logic is shared (`decide`); with no latency data at all the decision is now *extend the test*,
+  not *promote*.
+
 ### Shadow upgrades
 
 - **`fleetops shadow`** measures an infra change before it ships, against the baseline at matched load.

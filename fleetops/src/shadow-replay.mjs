@@ -22,16 +22,19 @@ const hash = x => { let h = 2166136261; for (const ch of String(x)) h = Math.imu
 
 // rows: FleetScope trace rows { t, isl, osl, session?, cached? }. The first request of a session gets its whole prompt;
 // each later one repeats the previous prompt and appends new text, as an agent loop does.
-export function requestsFrom(rows, { speed = 1, maxRequests = Infinity, durationS = Infinity, from = null } = {}) {
+// maxIsl / maxOsl fit a long agent trace to a small model's context: a session's prompt grows up to maxIsl and then
+// stays there (every later turn is a full prefix hit), output is capped at maxOsl.
+export function requestsFrom(rows, { speed = 1, maxRequests = Infinity, durationS = Infinity, from = null, maxIsl = Infinity, maxOsl = Infinity } = {}) {
   const sorted = [...rows].sort((a, b) => a.t - b.t), t0 = from ?? (sorted[0] ? sorted[0].t : 0), prefix = new Map(), out = [];
   for (const r of sorted) {
     const at = (r.t - t0) / speed; if (at > durationS || out.length >= maxRequests) break;
-    const sess = r.session != null ? String(r.session) : null, prev = sess ? prefix.get(sess) : null;
+    const sess = r.session != null ? String(r.session) : null, prev = sess ? prefix.get(sess) : null, isl = Math.min(Math.max(1, r.isl), maxIsl);
     let prompt;
-    if (prev && r.isl > prev.tokens) prompt = prev.text + text(hash(sess + ':' + out.length), r.isl - prev.tokens);
-    else prompt = text(hash((sess || 'r') + ':' + out.length + ':' + r.isl), Math.max(1, r.isl));
-    if (sess) prefix.set(sess, { text: prompt, tokens: Math.max(1, r.isl) });
-    out.push({ pair: out.length, at, session: sess, isl: r.isl, osl: Math.max(1, r.osl || 1), prompt });
+    if (prev && isl > prev.tokens) prompt = prev.text + text(hash(sess + ':' + out.length), isl - prev.tokens);
+    else if (prev && r.isl > maxIsl && prev.tokens === isl) prompt = prev.text;
+    else prompt = text(hash((sess || 'r') + ':' + out.length + ':' + r.isl), isl);
+    if (sess) prefix.set(sess, { text: prompt, tokens: isl });
+    out.push({ pair: out.length, at, session: sess, isl, osl: Math.min(maxOsl, Math.max(1, r.osl || 1)), prompt });
   }
   return out;
 }

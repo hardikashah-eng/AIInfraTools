@@ -1,0 +1,34 @@
+# Flagger: the judge as two webhooks. During analysis, "rollout" fails a check only when the judge says roll back
+# (after `threshold` failed checks Flagger rolls back); "confirm-promotion" holds the promotion until the judge says
+# promote. Flagger names the versions <name>-primary (stable) and <name> (canary): the PodMonitor copies the pod's
+# app label so the judge can tell them apart.
+apiVersion: flagger.app/v1beta1
+kind: Canary
+metadata: { name: chat, namespace: llm }
+spec:
+  targetRef: { apiVersion: apps/v1, kind: Deployment, name: chat }
+  service: { port: 8000 }
+  analysis:
+    interval: 2m
+    threshold: 2
+    maxWeight: 50
+    stepWeight: 10
+    webhooks:
+      - name: fleetops-shadow-gate
+        type: rollout
+        url: http://fleetops-shadow-gate.fleetops.svc:9410/flagger/rollout
+        timeout: 60s
+        metadata:
+          select: 'namespace="llm"'
+          baseline: 'app="chat-primary"'
+          candidate: 'app="chat"'
+          lookback: "900"
+      - name: fleetops-shadow-promote
+        type: confirm-promotion
+        url: http://fleetops-shadow-gate.fleetops.svc:9410/flagger/confirm-promotion
+        timeout: 60s
+        metadata:
+          select: 'namespace="llm"'
+          baseline: 'app="chat-primary"'
+          candidate: 'app="chat"'
+          lookback: "900"
