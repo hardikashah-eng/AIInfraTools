@@ -5,6 +5,29 @@ change the `--json` output, and when it does the change is listed here (see [sch
 
 ## Unreleased
 
+### Agentic workloads from real traces
+
+- **FleetScope agentic profiles** (`fleetscope/tools/agentic.mjs`, `aiinfra agentic`):
+  - fit a profile of how agent sessions behave from a real trace: TraceLab, AgentX "weka", Mooncake, harness-ledger
+    records or your own CSV/JSONL;
+  - generate sessions from a profile at any load;
+  - measure what a workload asks of a fleet: prefill after cache reuse, and the KV working set idle sessions hold;
+  - size GPUs for both compute and KV.
+
+  On TraceLab, a profile fitted on 70% of sessions matches the held-out 30% within 1–8% on cache hit, call rate, and
+  prefill and output rates. The KV working set comes out 28% low. Flat ISL/OSL sizing of the same calls asks for 440
+  GPUs where 40 do. Ingest reads AgentX, Mooncake and TraceLab traces, with prefix reuse computed from block hashes.
+- **harness-ledger on real data:**
+  - TraceLab importer, streamed;
+  - `--prices relative`;
+  - a report on 8,058 real sessions: 22% of spend avoidable, mostly caches expiring in pauses.
+- **harness-ledger outcomes:** cost per successful task, spend on failures, and what call caps would save. On SWE-bench
+  Verified across 11 models, 39% of spend goes to unresolved tasks, and caps save about 1% at no more than one point
+  of success lost.
+- **Sizer against AgentX** (`inference-sizer/tools/validate-agentx.mjs`): scores and calibrates the sizer on AgentX
+  agentic results. It needs the results downloaded from InferenceX.
+- Fix: price prefixes match only at a version boundary (`gpt-5` no longer prices `gpt-5.5`).
+
 ### New tool: harness-ledger
 
 - **Where agent harnesses waste model resources, across harnesses.** Importers for Claude Code transcripts, Codex

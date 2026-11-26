@@ -99,6 +99,19 @@ Otherwise the call is unpriced. Its tokens still count, and the report lists the
    cache), and its decode cost over its output tokens. Cache reads cost 0. A cache miss then costs the prefill the
    prefix cache would have skipped.
 
+## Outcomes
+
+`harness-ledger outcomes` reads runs whose tasks have a cost, a call count and an outcome: SWE-bench per-instance
+results, or tasks as JSON/CSV. Per run it reports:
+- cost per task and per successful task;
+- the share of spend on failed tasks;
+- calls per successful and per failed task;
+- a curve of call caps: for each cap N, every task is stopped at N calls. Each call is charged the task's average
+  cost, and a success that needed more than N calls counts as lost. That is a conservative estimate, because later
+  calls carry more context and cost more.
+
+The cap reported is the one that saves the most while losing at most one point of success rate.
+
 ## Validation
 
 - Token accounting matches ccusage on ccusage's own Codex fixtures: a subagent rollout (1,010 tokens) and a fork
@@ -111,4 +124,10 @@ Otherwise the call is unpriced. Its tokens still count, and the report lists the
   example of each cause in three harnesses' native formats and checks they're all found, the GPU cost adds up, and no
   text from the inputs reaches the output.
 
-Not yet validated on a large set of real sessions with known outcomes. Thresholds will move once it is.
+- On real use: TraceLab's 8,058 Claude Code and Codex sessions ([VALIDATION-TRACELAB.md](VALIDATION-TRACELAB.md)).
+  The cache-expired check rests on the measured hit rate by pause length. Changing the cache lifetime from 5 to 60
+  minutes and the oversized-output threshold from 8k to 20k tokens moves the avoidable total by one point; it changes
+  which cause the waste is labelled with, not how much there is.
+- Outcomes: SWE-bench Verified runs of mini-SWE-agent 2.x across 11 models ([VALIDATION-SWEBENCH.md](VALIDATION-SWEBENCH.md)).
+
+No real trace yet combines per-call usage with task outcomes, so the waste checks haven't been scored against success.

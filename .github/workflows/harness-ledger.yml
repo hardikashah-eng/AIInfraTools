@@ -5,6 +5,7 @@ on:
     paths:
       - 'harness-ledger/**'
       - 'gpu-ledger/src/core.mjs'
+      - 'fleetscope/tools/tracelab-data.mjs'
       - 'inference-sizer/src/accelerators.js'
       - '.github/workflows/harness-ledger.yml'
 permissions:

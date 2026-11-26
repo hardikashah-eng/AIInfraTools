@@ -17,3 +17,22 @@ jobs:
           node-version: 22
       - run: node inference-sizer/tools/validate-inferencex.mjs --markdown >> "$GITHUB_STEP_SUMMARY"
       - run: cd inference-sizer && node --test tests/inferencex.test.mjs
+  tracelab:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+      - name: Agentic profiles against held-out TraceLab sessions
+        run: node --max-old-space-size=12000 fleetscope/tools/agentic.mjs validate tracelab --hours 4 --markdown >> "$GITHUB_STEP_SUMMARY"
+      - name: harness-ledger on TraceLab
+        run: node --max-old-space-size=12000 harness-ledger/tools/validate-tracelab.mjs --markdown >> "$GITHUB_STEP_SUMMARY"
+  swebench:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+      - run: node harness-ledger/tools/validate-swebench.mjs --markdown >> "$GITHUB_STEP_SUMMARY"

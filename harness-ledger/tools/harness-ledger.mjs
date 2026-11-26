@@ -4,19 +4,23 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import zlib from 'node:zlib';
+import readline from 'node:readline';
 import { fileURLToPath } from 'node:url';
-import { importText, detect, IMPORTERS } from '../src/importers.mjs';
+import { importText, detect, IMPORTERS, tracelabCall } from '../src/importers.mjs';
 import { dedupe } from '../src/record.mjs';
 import { ledger, text, loadOutcomes } from '../src/ledger.mjs';
 import { DEFAULT_PRICES } from '../src/prices.mjs';
 import { html } from '../src/html.mjs';
 import { demoInputs } from '../src/demo.mjs';
+import { tasksFromSwebench, tasksFromRows, outcomeReport, outcomeText } from '../src/outcomes.mjs';
 
 const HELP = `harness-ledger: where agent harnesses waste model resources (tokens, dollars, GPU time), across harnesses.
 
   harness-ledger scan [--since 7d] [--claude DIR] [--codex DIR]       find local Claude Code and Codex logs and report on them
   harness-ledger report PATH… [options]                              report on logs, traces or exports (files or folders)
   harness-ledger import PATH… [--format F] --out calls.jsonl         convert to llm_call records (counts only, safe to share)
+  harness-ledger outcomes PATH… [--json]                             outcome-labelled task runs (SWE-bench per_instance_details.json,
+                                                                     or tasks as JSON/CSV): cost per success, spend on failures, call caps
   harness-ledger demo [--html FILE] [--json]                         three harnesses and a vLLM fleet, synthetic
   harness-ledger formats                                             what it reads
 
@@ -25,10 +29,12 @@ Inputs (detected from the file; --format to force):
   codex         Codex CLI/IDE rollouts: ~/.codex/sessions/YYYY/MM/DD/rollout-*.jsonl
   otel          OpenTelemetry GenAI or OpenInference spans: OTLP JSON or one span per line (any instrumented harness)
   langfuse      Langfuse observation exports (JSON or JSON lines)
+  tracelab      the TraceLab coding-agent trace (syfi_coding_trace.jsonl.gz: Claude Code and Codex, streamed)
   calls.jsonl   llm_call records written by "import"
 
 Report options:
-  --prices FILE        $/M tokens per model (input, cacheRead, cacheWrite, output, tier, downshift); defaults are examples
+  --prices FILE        $/M tokens per model (input, cacheRead, cacheWrite, output, tier, downshift); defaults are examples;
+                       --prices relative prices every model in the same units (cache read 0.1, write 1.25, output 5)
   --engine FILE        the serving engine's OTLP traces (vLLM llm_request spans) to charge self-hosted calls GPU time
   --replicas FILE      { "<pod>": { "gpus": 8, "gpuType": "H100", "rate": 2.5 } } or gpu-ledger usage records
   --gpu-prices FILE    gpu-ledger's price file, for replicas without a rate
@@ -60,9 +66,20 @@ function since(v) {
   const t = Date.parse(v); if (!Number.isFinite(t)) throw new Error(`--since: can't read ${v}`); return t / 1000;
 }
 
-function load(paths, o) {
+// Large line-per-call traces (TraceLab is 650 MB inflated) are streamed instead of read whole.
+async function streamLines(f, each) {
+  const s = fs.createReadStream(f), rl = readline.createInterface({ input: f.endsWith('.gz') ? s.pipe(zlib.createGunzip()) : s, crlfDelay: Infinity });
+  for await (const l of rl) { if (!l.trim()) continue; let o; try { o = JSON.parse(l); } catch { continue; } each(o); }
+}
+function head(f, n = 65536) {
+  const fd = fs.openSync(f, 'r'), b = Buffer.alloc(n), k = fs.readSync(fd, b, 0, n, 0); fs.closeSync(fd);
+  if (!f.endsWith('.gz')) return b.subarray(0, k).toString('utf8');
+  try { return zlib.gunzipSync(b.subarray(0, k), { finishFlush: zlib.constants.Z_SYNC_FLUSH }).toString('utf8'); } catch { return ''; }
+}
+async function load(paths, o) {
   const files = paths.flatMap(p => walk(p)), calls = [], skipped = [];
   for (const f of files) {
+    if ((o.format || detect(head(f), f)) === 'tracelab') { await streamLines(f, x => { const c = x && x.input_tokens_total != null && tracelabCall(x); if (c) calls.push(c); }); continue; }
     const txt = read(f);
     if (/^\s*\{"kind":"llm_call"/.test(txt)) { for (const l of txt.split(/\r?\n/)) if (l.trim()) calls.push(JSON.parse(l)); continue; }
     const kind = o.format || detect(txt, f);
@@ -75,7 +92,7 @@ function load(paths, o) {
 
 function report(calls, o, extra = {}) {
   if (!calls.length) { process.stderr.write('harness-ledger: no model calls found in the input\n'); return 1; }
-  const opts = { prices: o.prices ? readJson(o.prices) : DEFAULT_PRICES, outcomes: extra.outcomes || loadOutcomes(o.outcomes ? read(o.outcomes) : null),
+  const opts = { prices: o.prices === 'relative' ? 'relative' : o.prices ? readJson(o.prices) : DEFAULT_PRICES, outcomes: extra.outcomes || loadOutcomes(o.outcomes ? read(o.outcomes) : null),
     engineSpans: extra.engine || (o.engine ? read(o.engine) : null), replicas: extra.replicas || (o.replicas ? readJson(o.replicas) : null), gpuPrices: o['gpu-prices'] ? readJson(o['gpu-prices']) : {} };
   if (o['cache-ttl']) opts.cacheTtlS = Number(o['cache-ttl']);
   if (o['big-result']) opts.bigResultTokens = Number(o['big-result']);
@@ -87,7 +104,7 @@ function report(calls, o, extra = {}) {
   return 0;
 }
 
-export function main(argv) {
+export async function main(argv) {
   const o = args(argv), [cmd, ...paths] = o._;
   if (!cmd || o.help || cmd === 'help') { process.stdout.write(HELP); return 0; }
   if (cmd === 'formats') { process.stdout.write(HELP.slice(HELP.indexOf('Inputs'), HELP.indexOf('Report options'))); return 0; }
@@ -98,14 +115,31 @@ export function main(argv) {
   if (cmd === 'scan') {
     const home = os.homedir(), dirs = [o.claude || path.join(process.env.CLAUDE_CONFIG_DIR || path.join(home, '.claude'), 'projects'), o.codex || path.join(process.env.CODEX_HOME || path.join(home, '.codex'), 'sessions')].filter(d => fs.existsSync(d));
     if (!dirs.length) { process.stderr.write('harness-ledger scan: no ~/.claude/projects or ~/.codex/sessions here; pass --claude DIR or --codex DIR, or use "report PATH"\n'); return 1; }
-    const { calls, files, skipped } = load(dirs, { ...o, since: o.since || '30d' });
+    const { calls, files, skipped } = await load(dirs, { ...o, since: o.since || '30d' });
     process.stderr.write(`scanned ${files} files in ${dirs.join(', ')}${skipped.length ? `; ${skipped.length} not recognised` : ''}\n`);
     return report(calls, o);
+  }
+  if (cmd === 'outcomes') {
+    if (!paths.length) { process.stderr.write('harness-ledger outcomes: give per_instance_details.json files, folders of them, or task JSON/CSV\n'); return 2; }
+    const tasks = [];
+    for (const f of paths.flatMap(p => walk(p)).concat(paths.flatMap(p => (fs.statSync(p).isDirectory() ? fs.readdirSync(p).filter(x => x.endsWith('.csv')).map(x => path.join(p, x)) : p.endsWith('.csv') ? [p] : [])))) {
+      const run = path.basename(f).replace(/\.(json|csv)(\.gz)?$/, '').replace(/^per_instance_details$/, path.basename(path.dirname(f)));
+      if (f.endsWith('.csv')) { const [h, ...ls] = read(f).trim().split(/\r?\n/); const ks = h.split(',').map(x => x.trim()); tasks.push(...tasksFromRows(ls.map(l => Object.fromEntries(l.split(',').map((v, i) => [ks[i], v.trim()]))), { run })); continue; }
+      const j = readJson(f);
+      if (Array.isArray(j)) { tasks.push(...tasksFromRows(j, { run })); continue; }
+      // a sibling metadata.yaml (SWE-bench experiments layout) names the model
+      const meta = [f.replace(/\.json$/, '.yaml'), path.join(path.dirname(f), 'metadata.yaml')].find(x => fs.existsSync(x));
+      const name = meta && (read(meta).match(/^\s*name:\s*(.+)$/m) || [])[1];
+      tasks.push(...tasksFromSwebench(j, { run, model: name ? name.trim() : null }));
+    }
+    const R = outcomeReport(tasks);
+    process.stdout.write(o.json ? JSON.stringify(R, null, 1) + '\n' : outcomeText(R));
+    return R.runs.length ? 0 : 1;
   }
   if (cmd === 'import' || cmd === 'report') {
     if (!paths.length) { process.stderr.write(`harness-ledger ${cmd}: give files or folders\n`); return 2; }
     if (o.format && !IMPORTERS[o.format]) { process.stderr.write(`--format: one of ${Object.keys(IMPORTERS).join(', ')}\n`); return 2; }
-    const { calls, files, skipped } = load(paths, o);
+    const { calls, files, skipped } = await load(paths, o);
     if (skipped.length) process.stderr.write(`not recognised (pass --format): ${skipped.slice(0, 5).join(', ')}${skipped.length > 5 ? ` and ${skipped.length - 5} more` : ''}\n`);
     if (cmd === 'report') return report(calls, o);
     const body = calls.map(c => JSON.stringify(c)).join('\n') + (calls.length ? '\n' : '');
@@ -116,5 +150,5 @@ export function main(argv) {
 }
 
 if (process.argv[1] && fs.realpathSync(process.argv[1]) === fileURLToPath(import.meta.url)) {
-  try { process.exitCode = main(process.argv.slice(2)); } catch (e) { process.stderr.write(`harness-ledger: ${e.message}\n`); process.exitCode = 1; }
+  main(process.argv.slice(2)).then(c => { process.exitCode = c; }, e => { process.stderr.write(`harness-ledger: ${e.message}\n`); process.exitCode = 1; });
 }
