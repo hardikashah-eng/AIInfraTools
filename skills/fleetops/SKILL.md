@@ -212,6 +212,14 @@ To check an infra change (GPUs, engine or its config, network, topology, serving
   load range) is low. It only reads Prometheus.
 - `shadow serve` runs the judge for Argo Rollouts / Flagger; the manifests are in `fleetops/deploy/shadow-gate/`. Don't
   apply manifests to a cluster unless the user asks.
+- `shadow canary start|advance|approve|status` steps an llm-d canary by the judge.
+  - **Never run `canary approve`** unless the user names the step and gives their name for `--by`.
+  - Never add `--live` unless the user asks for that run.
+  - A rollback is written at once with `--live`; a step up only after the user's approval.
+- With `--plan`, a verdict whose prediction was off by more than 15% writes `<store>/calibration/sizer.json`. Say that it
+  did, and that `harness-ledger economics --calibration` and `inference-sizer --calibration` can use it.
+- `data import nvsentinel FILE` reads NVSentinel health events (CloudEvents, datastore documents, HealthEventResource
+  lists). gpu-health then defers to NVSentinel on the nodes it is remediating.
 
 See [references/SHADOW.md](references/SHADOW.md).
 

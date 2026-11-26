@@ -2,11 +2,14 @@
 // each session's own calls, and self-hosting vs the API (sized with the Inference Sizer, or at measured prices).
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import fs from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { call } from '../src/record.mjs';
 import { ledger } from '../src/ledger.mjs';
+import { fromRest, fromPrometheus, toSelfHostPrice } from '../src/opencost.mjs';
 import { economics, economicsText, exactCaps, breakEven, busiestDay, typicalDay, period, scaleStats, sizerSettings, gpusFor, rankFixes } from '../src/economics.mjs';
 
 const CLI = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'tools', 'harness-ledger.mjs');
@@ -100,4 +103,41 @@ test('CLI: economics --demo (text and JSON) and with a self-hosted model', () =>
 test('rankFixes keeps model-tier changes apart as candidates', () => {
   const report = { totals: { cost: 10 }, outcomes: { successes: 2 }, byCause: [{ cause: 'cache-miss', label: 'm', cost: 3, candidate: false, fix: 'x' }, { cause: 'model-tier', label: 't', cost: 4, candidate: true, fix: 'y' }] };
   const f = rankFixes(report, []); assert.deepEqual(f.rows.map(r => r.cause), ['cache-miss']); assert.deepEqual(f.candidates.map(r => r.cause), ['model-tier']); assert.equal(f.rows[0].perResolved, 1.5);
+});
+
+// OpenCost: the /inferenceCost/total answer below is the example from OpenCost's docs/inference-cost-tracking.md
+// (Apache-2.0), plus an unlabelled deployment with no cost, as a failed allocation join looks.
+const OC = JSON.parse(fs.readFileSync(path.join(path.dirname(fileURLToPath(import.meta.url)), 'fixtures', 'opencost-inference-total.json'), 'utf8'));
+
+test('OpenCost: the REST answer, the model picked, a failed label join explained, the price per prefilled token', () => {
+  const r = fromRest(OC, { model: 'Qwen3-32B' });
+  assert.deepEqual([r.model, r.namespace, r.input, r.output, r.cacheSavings, r.allocationMethod], ['Qwen/Qwen3-32B', 'llm-d-namespace', 2.37, 4.70, 0.067, 'compute_time']);
+  assert.throws(() => fromRest(OC, { model: 'llama3' }), /no cost on it.*model label/);
+  assert.throws(() => fromRest(OC, { model: 'nope' }), /have: Qwen\/Qwen3-32B:llm-d-namespace/);
+  const p = toSelfHostPrice(r);
+  assert.ok(Math.abs(p.input - 2.37 / (1 - 0.067)) < 1e-12, 'delivered-token price → per prefilled token'); assert.equal(p.cacheRead, 0); assert.equal(p.output, 4.70);
+});
+
+test('OpenCost from Prometheus: the gauges it exports, averaged', async () => {
+  const seen = [];
+  const fetcher = async u => { const q = decodeURIComponent(new URL(u).searchParams.get('query')); seen.push(q); const res = q.includes('llm_cache_savings_fraction')
+    ? [{ metric: { model_name: 'm', namespace: 'ns' }, value: [0, '0.5'] }]
+    : [{ metric: { model_name: 'm', namespace: 'ns', phase: 'prompt', allocation_method: 'compute_time' }, value: [0, '1.0'] }, { metric: { model_name: 'm', namespace: 'ns', phase: 'generation', allocation_method: 'compute_time' }, value: [0, '3.0'] }];
+    return { ok: true, json: async () => ({ status: 'success', data: { result: res } }) }; };
+  const r = await fromPrometheus('http://prom', { model: 'm', fetcher });
+  assert.deepEqual([r.input, r.output, r.cacheSavings], [1, 3, 0.5]);
+  assert.match(seen[0], /avg_over_time\(llm_cost_per_million_tokens\{cost_basis="allocation",model_name="m",phase=~"prompt\|generation"\}\[24h\]\)/);
+  assert.equal(toSelfHostPrice(r).input, 2);
+});
+
+test('CLI: economics --opencost FILE, and --calibration changes the sizing', () => {
+  const run = a => spawnSync(process.execPath, [CLI, 'economics', '--demo', '--days', '30', ...a], { encoding: 'utf8' });
+  const oc = run(['--opencost', path.join(path.dirname(fileURLToPath(import.meta.url)), 'fixtures', 'opencost-inference-total.json'), '--opencost-model', 'Qwen/Qwen3-32B']);
+  assert.equal(oc.status, 0, oc.stderr); assert.match(oc.stdout, /OpenCost allocation cost for Qwen\/Qwen3-32B/); assert.match(oc.stdout, /utilization they were measured at/);
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'cal-')), f = path.join(dir, 'sizer.json');
+  fs.writeFileSync(f, JSON.stringify({ version: 1, sizer: { 'H100|llama33-70b': { effPrefill: 0.2, effDecodeBW: 0.33, effDecodeComp: 0.15, fitOn: 'test: a slower engine' } } }));
+  const base = JSON.parse(run(['--self-host-model', 'llama33-70b', '--gpu', 'H100', '--tasks-per-day', '2000', '--json']).stdout).selfHost;
+  const cal = JSON.parse(run(['--self-host-model', 'llama33-70b', '--gpu', 'H100', '--tasks-per-day', '2000', '--calibration', f, '--json']).stdout).selfHost;
+  assert.equal(base.calibrated, null); assert.match(cal.calibrated, /slower engine/);
+  assert.ok(cal.gpus > base.gpus, `measured efficiencies are used: ${cal.gpus} vs ${base.gpus}`);
 });

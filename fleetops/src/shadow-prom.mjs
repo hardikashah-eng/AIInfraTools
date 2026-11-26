@@ -167,9 +167,15 @@ export function compareWindows(bw, cw, opt = {}) {
     if (B.rate && C.rate) { const cb = B.rate / 3600 / (tb / 1e6), cc = C.rate / 3600 / (tc / 1e6); metrics.costPerMTok = { baseline: cb, candidate: cc, effect: cc / cb - 1, note: 'at the load each version saw' }; }
   }
   const load = ws => ({ windows: ws.length, requests: Math.round(sum(ws, 'n')), concPerEngine: median(ws.map(w => w.conc)), isl: median(ws.map(w => w.isl).filter(Number.isFinite)), hit: median(ws.map(w => w.hit).filter(Number.isFinite)), ttftP95: median(ws.map(w => w.ttftP95).filter(Number.isFinite)), e2eP95: median(ws.map(w => w.e2eP95).filter(Number.isFinite)) });
-  const d = decide(metrics, null, null, { unit: 'minutes of canary traffic' });
+  let prediction = null;
+  if (opt.predicted) {
+    const rows = [];
+    for (const [k, p] of Object.entries(opt.predicted)) { const m = metrics[k]; const meas = m ? (m.effect ?? null) : null; if (meas == null || !Number.isFinite(p) || !Number.isFinite(meas)) continue; rows.push({ metric: k, predicted: p, measured: meas, off: (1 + meas) / (1 + p) - 1 }); }
+    prediction = { rows, holds: rows.every(r => Math.abs(r.off) <= G.prediction) };
+  }
+  const d = decide(metrics, null, prediction, { unit: 'minutes of canary traffic' });
   if (d.why === 'no latency data to judge yet') d.why = `too little canary traffic to judge yet (needs ${opt.minWin || 5} windows and ${opt.minRequests || 200} requests inside the baseline's load range)`;
-  return { decision: d.decision, why: d.why, verdict: verdictOf(d.decision), source: 'prometheus', step, requests: { baseline: Math.round(sum(bw, 'n')), candidate: Math.round(sum(cw, 'n')) }, load: { baseline: load(bw), candidate: load(cw) }, metrics, gates: G };
+  return { decision: d.decision, why: d.why, verdict: verdictOf(d.decision), source: 'prometheus', step, prediction, requests: { baseline: Math.round(sum(bw, 'n')), candidate: Math.round(sum(cw, 'n')) }, load: { baseline: load(bw), candidate: load(cw) }, metrics, gates: G };
 }
 // one word for rollout controllers
 export const verdictOf = d => (d === 'promote' ? 'promote' : d === 'roll back' ? 'rollback' : 'wait');

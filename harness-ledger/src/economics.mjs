@@ -49,11 +49,15 @@ export function scaleStats(st, x) {
 
 // ---------- self-hosting: GPUs from the Inference Sizer ----------
 // The sizer's production defaults: whole nodes, plus one spare node (spare: false drops it)
-export function sizerSettings({ model = 'deepseek-v3', gpu = 'H200', ttft = 2000, tpot = 50, spare = true } = {}) {
+// calibration: a sizer profile ({ sizer: { "<gpu>|<model>": { effPrefill, effDecodeBW, effDecodeComp } } }) from fleetops
+// calibrate or a promoted shadow upgrade: measured engine efficiencies instead of spec-sheet defaults
+export function sizerSettings({ model = 'deepseek-v3', gpu = 'H200', ttft = 2000, tpot = 50, spare = true, calibration = null } = {}) {
   const m = C.MODELS.find(x => x.id === model), g = C.GPUS.find(x => x.id === gpu);
   if (!m) throw new Error(`unknown model ${model}: one of ${C.MODELS.map(x => x.id).join(', ')}`);
   if (!g) throw new Error(`unknown GPU ${gpu}: one of ${C.GPUS.map(x => x.id).join(', ')}`);
-  return Object.assign({}, M.SETTINGS, m, g, { ttft: +ttft, tpot: +tpot, ctx: m.maxCtx || M.SETTINGS.ctx, modelId: m.id, gpuId: g.id, nPlus1: spare !== false });
+  const cal = calibration && calibration.sizer && (calibration.sizer[`${g.id}|${m.id}`] || calibration.sizer[`${g.id}|*`]);
+  const eff = cal ? Object.fromEntries(['effPrefill', 'effDecodeBW', 'effDecodeComp', 'stepMs'].filter(k => typeof cal[k] === 'number').map(k => [k, cal[k]])) : {};
+  return Object.assign({}, M.SETTINGS, m, g, eff, { ttft: +ttft, tpot: +tpot, ctx: m.maxCtx || M.SETTINGS.ctx, modelId: m.id, gpuId: g.id, nPlus1: spare !== false, calibrated: cal ? (cal.fitOn || 'calibration profile') : null });
 }
 // calls longer than the open model's context are capped to it (and counted: the open model can't serve them as they are)
 export function peakStats(rows, s, { cacheTtlS = 300 } = {}) {
@@ -132,7 +136,7 @@ export function economics(calls, report, opt = {}) {
     const s = sizerSettings(opt), rows = rowsOf(calls), k = scale * tokenScale;
     const pk = peakStats(rows, s, opt), sized = gpusFor(pk.stats, s, k), sizedTyp = pk.typical ? gpusFor(pk.typical, s, k) : null;
     const unit = units ? (opt.unitPrice || 1) : 1, be = breakEven({ apiMonthly: monthly, apiRate, selfRate, gpus: sized.gpus, gpuRate: opt.gpuRate ?? null, unit });
-    out.selfHost = { model: s.modelId, gpu: s.gpuId, ttft: s.ttft, tpot: s.tpot, gpus: sized.gpus, compute: sized.compute, kvGpus: sized.kvGpus, bound: sized.bound, mode: sized.mode,
+    out.selfHost = { model: s.modelId, gpu: s.gpuId, ttft: s.ttft, tpot: s.tpot, calibrated: s.calibrated, gpus: sized.gpus, compute: sized.compute, kvGpus: sized.kvGpus, bound: sized.bound, mode: sized.mode,
       peak: { calls: pk.peakDayCalls, rpsP95: pk.stats.rps.p95 * k, cacheHit: pk.stats.cacheHit, kvTokensP95: pk.stats.kvTokens.p95 * k }, overContext: pk.overContext, overContextShare: pk.calls ? pk.overContext / pk.calls : 0, tokenScale, spare: s.nPlus1,
       typicalDay: sizedTyp ? { calls: pk.typicalDayCalls, gpus: sizedTyp.gpus, breakEvenGpuRate: breakEven({ apiMonthly: monthly, apiRate, selfRate, gpus: sizedTyp.gpus, unit: units ? (opt.unitPrice || 1) : 1 }).breakEvenGpuRate } : null,
       successRates: { api: apiRate, self: selfRate, assumed: opt.selfSuccessRate == null }, gpuRate: opt.gpuRate ?? null, unitPrice: units ? unit : null, ...be };
@@ -162,7 +166,7 @@ export function economicsText(E) {
   for (const c of E.fixes.candidates) L.push(`  candidate: ${c.label}, ${$(c.saves)}: check task success before switching`);
   const S = E.selfHost;
   if (S && S.model) {
-    L.push('', `Self-hosting ${S.model} on ${S.gpu} (TTFT ${S.ttft} ms, TPOT ${S.tpot} ms) for the busiest day's peak: ${S.gpus ?? 'no layout meets the targets'} GPUs (compute ${S.compute ?? '–'}, KV working set ${S.kvGpus}; bound by ${S.bound}; whole nodes${S.spare ? ', one spare' : ''})`);
+    L.push('', `Self-hosting ${S.model} on ${S.gpu} (TTFT ${S.ttft} ms, TPOT ${S.tpot} ms${S.calibrated ? `; measured efficiencies: ${S.calibrated}` : '; spec-sheet efficiencies'}) for the busiest day's peak: ${S.gpus ?? 'no layout meets the targets'} GPUs (compute ${S.compute ?? '–'}, KV working set ${S.kvGpus}; bound by ${S.bound}; whole nodes${S.spare ? ', one spare' : ''})`);
     L.push(`  peak ${S.peak.rpsP95.toFixed(2)} calls/s (p95 minute of the busiest day, ${N(S.peak.calls)} calls), cache hit ${P(S.peak.cacheHit)}${S.typicalDay ? `; a typical day (${N(S.typicalDay.calls)} calls) needs ${S.typicalDay.gpus ?? '–'}` : ''}`);
     if (S.overContext) L.push(`  ${P(S.overContextShare)} of calls are longer than ${S.model}'s context: capped here, which flatters self-hosting (the open model would need compaction, or can't do those tasks as they are)`);
     if (S.successRates.api != null) L.push(`  success: API ${P(S.successRates.api)}, self-hosted ${P(S.successRates.self)}${S.successRates.assumed ? ' (assumed the same: pass --self-host-success-rate)' : ''}`);
@@ -171,6 +175,6 @@ export function economicsText(E) {
     if (S.selfMonthly != null) L.push(`  at $${S.gpuRate}/GPU-hour: ${$f(S.selfMonthly, 'USD')} a month self-hosted vs ${$f(S.apiMonthly, 'USD')} on the API → ${S.cheaper === 'self-host' ? 'self-hosting' : 'the API'} is cheaper (${(S.perResolvedRatio).toFixed(2)}× per resolved task)`);
     const xf = v => (v.from == null ? null : `${v.from < 1 ? v.from.toFixed(2) : v.from.toFixed(1)}×`);
     if (S.volume) L.push(`  volume where self-hosting becomes cheaper: ${xf(S.volume) ? `about ${xf(S.volume)} this volume with this workload's own bursts` : S.volume.note.replace(/^not cheaper anywhere/, 'never with this workload\'s own bursts,')}${S.volumeTypical ? `; ${xf(S.volumeTypical) ? `about ${xf(S.volumeTypical)}` : 'never'} if peaks were like a typical day (many teams' bursts don't line up)` : ''}`);
-  } else if (S) L.push('', `Self-hosted at measured prices (${S.source}): ${$f(S.monthly, 'USD')} a month vs ${$f(S.apiMonthly, 'USD')} on the API → ${S.cheaper === 'self-host' ? 'self-hosting' : 'the API'} is cheaper (${S.perResolvedRatio.toFixed(2)}× per resolved task)`);
+  } else if (S) L.push('', `Self-hosted at measured prices (${S.source}): ${$f(S.monthly, 'USD')} a month vs ${$f(S.apiMonthly, 'USD')} on the API → ${S.cheaper === 'self-host' ? 'self-hosting' : 'the API'} is cheaper (${S.perResolvedRatio.toFixed(2)}× per resolved task)`, '  measured prices hold at the utilization they were measured at: a much smaller or larger volume changes them (size it with --self-host-model instead)');
   return L.join('\n') + '\n';
 }

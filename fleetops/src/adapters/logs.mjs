@@ -144,5 +144,5 @@ export function ncclLog(text, { node, job, t: t0, keepInfo = true } = {}) {
 // Device faults from logs, as gpu-health results: { t, kind: 'fault', node, gpu, code }.
 export function toGpuHealthFaults(logs) {
   return logs.filter(l => l.gpu != null && DEVICE_CLASSES.has(l.class) && l.severity !== 'ignore' && l.severity !== 'info')
-    .map(l => ({ t: l.t, kind: 'fault', node: l.node, gpu: l.gpu, code: l.code, source: 'log' }));
+    .map(l => ({ t: l.t, kind: 'fault', node: l.node, gpu: l.gpu, code: l.code, source: l.source === 'nvsentinel' ? 'nvsentinel' : 'log' }));
 }

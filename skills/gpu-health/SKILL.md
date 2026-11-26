@@ -15,6 +15,7 @@ Requires Node.js 22+. Paths below are relative to this skill's folder. The CLI i
 - **Never approve an action on the user's behalf.** Approve only the action ids the user names, and only after they say to. Record their name with `--by` (ask for it if unknown). Never pass your own name.
 - **Never run anything for real unless the user explicitly asks.** Execution is a dry run unless both locks are open: `--live` on the command line, and `"policy": {"dryRun": false}` in the config. Do not set either one unless the user explicitly asks for live execution and confirms the specific actions. Show the dry-run commands first.
 - **Don't edit the policy to get around approval.** Don't change `policy.actions` modes, limits or executors to get past an approval or a limit. If a limit refuses an action, report it.
+- **When NVSentinel is remediating a node**, an `external-remediation` action says so. Don't propose or run gpu-health's own repair for that node; say NVSentinel is handling it.
 - **Don't work around a refusal.** If the queue refuses an action (it's stale, or over a blast-radius limit), say why and suggest re-running `analyze`. Don't run the kubectl or ssh commands yourself instead.
 
 ## Workflow

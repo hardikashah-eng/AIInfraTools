@@ -194,12 +194,57 @@ export function testSize({ sigma = 0.6, delta = 0.03, paired = true, pairedShare
   const n = Math.ceil((paired ? 1 : 2) * k * s * s / (d * d));
   return { requestsPerArm: n, sigma, delta, paired, seconds: rps ? n / rps : null };
 }
+// ---------- calibration: what measurements taught the sizer ----------
+// A profile is the one fleetops calibrate writes and the Inference Sizer reads (--calibration):
+// { version, sizer: { "<gpu>|<model>": { effPrefill, effDecodeBW, effDecodeComp, fitOn, source } } }
+export const EFF_KEYS = ['effPrefill', 'effDecodeBW', 'effDecodeComp'];
+const EFF_CAP = { effPrefill: 0.9, effDecodeBW: 0.95, effDecodeComp: 0.9 }; // as calibrate.mjs: past these it is a model gap
+export function calibrationFor(profile, config) {
+  const p = profile && profile.sizer && (profile.sizer[`${config.gpu}|${config.model}`] || profile.sizer[`${config.gpu}|*`]);
+  return p ? Object.fromEntries(EFF_KEYS.filter(k => typeof p[k] === 'number').map(k => [k, p[k]])) : null;
+}
+// a config with the profile's efficiencies for its GPU and model (its own effs still win)
+export function applyCalibration(config, profile) { const c = calibrationFor(profile, config); return c ? Object.assign({}, config, { effs: Object.assign({}, c, config.effs || {}), calibrated: true }) : config; }
+
+// When the measured effect of a change is off the prediction by more than the gate, fit the candidate's efficiencies
+// so the sizer predicts what was measured: TPOT through the decode efficiencies, then TTFT through prefill, each by a
+// one-dimensional search on a multiplier (capped as calibrate.mjs caps them). The baseline is taken as calibrated:
+// measurements are relative, candidate against baseline. Only metrics with a settled verdict are used.
+export function recalibrate(planObj, metrics, { gate = GATES.prediction } = {}) {
+  if (!planObj || !planObj.configs || !planObj.workload) return null;
+  const { baseline, candidate } = planObj.configs, w = planObj.workload, settled = m => m && ['worse', 'better', 'same'].includes(m.verdict) && Number.isFinite(m.effect);
+  const pb = predict(baseline, w), base = Object.assign({}, M.SETTINGS, candidate.effs || {});
+  const eff0 = Object.fromEntries(EFF_KEYS.map(k => [k, base[k]])), eff = Object.assign({}, eff0), rows = [];
+  const ratio = (k, e) => { const pc = predict(Object.assign({}, candidate, { effs: e }), w); return pc[k] / pb[k]; };
+  const fit = (k, keys) => {
+    if (!settled(metrics[k])) return;
+    const want = 1 + metrics[k].effect, now = ratio(k, eff), off = want / now - 1;
+    if (Math.abs(off) <= gate) { rows.push({ metric: k, predicted: now - 1, measured: metrics[k].effect, off, changed: false }); return; }
+    const at = m => { const e = Object.assign({}, eff); for (const x of keys) e[x] = Math.min(EFF_CAP[x], eff0[x] * m); return e; };
+    // latency falls as efficiency rises: find the multiplier whose predicted ratio meets the measured one
+    let lo = 0.05, hi = Math.max(...keys.map(x => EFF_CAP[x] / eff0[x]));
+    if (ratio(k, at(hi)) > want || ratio(k, at(lo)) < want) { rows.push({ metric: k, predicted: now - 1, measured: metrics[k].effect, off, changed: false, note: 'outside what efficiencies can explain: a model gap, not a calibration' }); return; }
+    for (let i = 0; i < 40; i++) { const mid = Math.sqrt(lo * hi); if (ratio(k, at(mid)) > want) lo = mid; else hi = mid; }
+    Object.assign(eff, at(hi));
+    rows.push({ metric: k, predicted: now - 1, measured: metrics[k].effect, off, changed: true, after: ratio(k, eff) - 1 });
+  };
+  fit('tpot', ['effDecodeBW', 'effDecodeComp']);
+  fit('ttft', ['effPrefill']);
+  const changed = rows.some(r => r.changed);
+  return { key: `${candidate.gpu}|${candidate.model}`, changed, rows, before: eff0, eff: Object.fromEntries(EFF_KEYS.map(k => [k, +eff[k].toFixed(4)])) };
+}
+export function mergeProfile(profile, rc, { fitOn, t = Math.floor(Date.now() / 1000) } = {}) {
+  const p = profile && typeof profile === 'object' ? JSON.parse(JSON.stringify(profile)) : { version: 1, sizer: {} };
+  p.sizer = p.sizer || {}; p.sizer[rc.key] = Object.assign({}, p.sizer[rc.key] || {}, rc.eff, { fitOn, source: 'fleetops-shadow', at: t });
+  p.generatedAt = t; return p;
+}
+
 export function plan({ baseline, candidate, workload, delta = 0.03, rps = null, paired = true }) {
   const pb = predict(baseline, workload), pc = predict(candidate, workload);
   const tokB = pb.outPerGpu, tokC = pc.outPerGpu;
   const predicted = { ttft: pc.ttft / pb.ttft - 1, tpot: pc.tpot / pb.tpot - 1, tokPerGpuS: tokC / tokB - 1 };
   if (baseline.rate && candidate.rate) predicted.costPerMTok = (candidate.rate / tokC) / (baseline.rate / tokB) - 1;
-  return { workload, baseline: { ttft: pb.ttft, tpot: pb.tpot, tokPerGpuS: tokB }, candidate: { ttft: pc.ttft, tpot: pc.tpot, tokPerGpuS: tokC }, predicted,
+  return { workload, configs: { baseline, candidate }, baseline: { ttft: pb.ttft, tpot: pb.tpot, tokPerGpuS: tokB }, candidate: { ttft: pc.ttft, tpot: pc.tpot, tokPerGpuS: tokC }, predicted,
     test: testSize({ sigma: workload.sigma || 0.6, delta, paired, rps }),
     note: 'Predictions are the Inference Sizer at the workload\'s median prompt, output, cache hit and calls in flight; calibrate it (fleetops calibrate) for numbers to trust.' };
 }

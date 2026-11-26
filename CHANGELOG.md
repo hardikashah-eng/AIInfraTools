@@ -5,6 +5,32 @@ change the `--json` output, and when it does the change is listed here (see [sch
 
 ## Unreleased
 
+### Integrations, and the loop between the tools
+
+- **OpenCost:** `harness-ledger economics --opencost FILE|URL` (its `/inferenceCost/total`) or `--opencost-prom URL` (its
+  `llm_cost_per_million_tokens` and `llm_cache_savings_fraction` gauges) uses OpenCost's measured self-host cost per token.
+  - The price per delivered input token is turned into a price per prefilled token.
+  - A deployment whose label join failed (zero cost) is explained, not used.
+- **NVSentinel:** `fleetops data import nvsentinel` reads its health events: event-exporter CloudEvents, datastore
+  documents, HealthEventResource objects and bare events, with XIDs classified through gpu-health's table.
+  - Root-cause analysis uses them as evidence.
+  - gpu-health defers to NVSentinel on nodes it is remediating: one informational `external-remediation` action instead
+    of a second repair ladder (`deferToExternal: false` to turn this off).
+- **llm-d canaries:** `fleetops shadow canary start|advance|approve|status` steps two LLMInferenceServices' route weights
+  by the judge's verdict.
+  - A rollback is written at once with `--live`.
+  - A step up is queued for a person and written only after `approve --by NAME`.
+  - Manifests and patches are checked against KServe's CRD schema (v1alpha2, vendored).
+- **The loop:**
+  - `shadow plan` records its configs.
+  - `compare` and `prom` with `--plan` refit the candidate's sizer efficiencies when the prediction was off by more than
+    15%, into `<store>/calibration/sizer.json`. `shadow plan`, `inference-sizer --calibration` and
+    `harness-ledger economics --calibration` read it.
+  - Promoted changes are recorded in `<store>/shadow/promoted.jsonl`.
+- `shadow prom` takes `--plan` (prediction vs measurement, as `compare` does).
+- **Recovered:** the agent unit economics work (`harness-ledger economics`, `validate-economics`) had been merged into a
+  feature branch instead of `main`; it is included here.
+
 ### Shadow upgrades inside the rollout tools
 
 - **`fleetops shadow prom`** judges a canary from its own per-version vLLM metrics in Prometheus (llm-d controlled

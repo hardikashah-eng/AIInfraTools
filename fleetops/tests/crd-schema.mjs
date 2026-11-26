@@ -10,6 +10,8 @@ export function validate(schema, v, at = '', errs = []) {
   if (!ok) { errs.push(`${at || '/'}: ${t} expected, got ${kind}`); return errs; }
   if (schema.enum && !schema.enum.includes(v)) errs.push(`${at}: ${JSON.stringify(v)} not in ${schema.enum.join('|')}`);
   if (Number.isFinite(schema.minimum) && typeof v === 'number' && v < schema.minimum) errs.push(`${at}: ${v} < ${schema.minimum}`);
+  if (Number.isFinite(schema.maximum) && typeof v === 'number' && v > schema.maximum) errs.push(`${at}: ${v} > ${schema.maximum}`);
+  if (schema.pattern && typeof v === 'string' && !new RegExp(schema.pattern).test(v)) errs.push(`${at}: ${JSON.stringify(v)} doesn't match ${schema.pattern}`);
   if (kind === 'array' && schema.items) v.forEach((x, i) => validate(schema.items, x, `${at}[${i}]`, errs));
   if (kind === 'object') {
     for (const r of schema.required || []) if (!(r in v) && (schema.properties || {})[r]?.default === undefined) errs.push(`${at}: missing ${r}`); // defaults apply before validation

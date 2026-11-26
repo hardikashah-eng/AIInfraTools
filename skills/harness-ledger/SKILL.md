@@ -61,6 +61,9 @@ Requires Node.js 22+. Paths are relative to this skill's folder. The CLI is
   - Say which success rate is assumed (`--self-host-success-rate`, e.g. from SWE-bench) and how many calls exceed the
     open model's context.
   - With `--prices relative`, give `--unit-price` and say it's an assumption.
+  - `--opencost FILE|URL` or `--opencost-prom URL` uses OpenCost's measured self-host cost. Say that it holds at the
+    utilization it was measured at.
+  - `--calibration FILE` uses measured efficiencies (fleetops); say which.
 - Don't present the self-hosting side as a recommendation to buy hardware. It is a model: GPUs only, sized for the
   busiest day, kept on all month.
 

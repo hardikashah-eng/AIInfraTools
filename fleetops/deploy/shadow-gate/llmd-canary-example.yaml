@@ -1,0 +1,35 @@
+# An llm-d canary: two LLMInferenceServices (KServe v1alpha2) in one routing group. The controller turns their weights
+# into weighted backendRefs on each member's HTTPRoute; weights are proportional (0–1,000,000). Here the candidate starts
+# at 1%. `fleetops shadow canary start/advance` rewrites only spec.router.route on each (kubectl patch, merge).
+# Change the candidate's image or VLLM_ADDITIONAL_ARGS for the change under test.
+apiVersion: serving.kserve.io/v1alpha2
+kind: LLMInferenceService
+metadata: { name: chat-v1, namespace: llm }
+spec:
+  model: { uri: "hf://Qwen/Qwen2.5-7B-Instruct", name: Qwen/Qwen2.5-7B-Instruct }
+  replicas: 4
+  router:
+    route: { group: chat, weight: 990000 }
+    scheduler: {}
+  template:
+    containers:
+      - name: main
+        image: ghcr.io/llm-d/llm-d-cuda:v0.9.0
+        resources: { limits: { nvidia.com/gpu: "1" }, requests: { nvidia.com/gpu: "1" } }
+---
+apiVersion: serving.kserve.io/v1alpha2
+kind: LLMInferenceService
+metadata: { name: chat-v2, namespace: llm }
+spec:
+  model: { uri: "hf://Qwen/Qwen2.5-7B-Instruct", name: Qwen/Qwen2.5-7B-Instruct }
+  replicas: 1
+  router:
+    route: { group: chat, weight: 10000 }
+    scheduler: {}
+  template:
+    containers:
+      - name: main
+        image: ghcr.io/llm-d/llm-d-cuda:v0.9.0
+        env:
+          - { name: VLLM_ADDITIONAL_ARGS, value: "--max-num-seqs 128" }
+        resources: { limits: { nvidia.com/gpu: "1" }, requests: { nvidia.com/gpu: "1" } }

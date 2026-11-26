@@ -14,6 +14,7 @@ import { html } from '../src/html.mjs';
 import { demoInputs } from '../src/demo.mjs';
 import { tasksFromSwebench, tasksFromRows, outcomeReport, outcomeText } from '../src/outcomes.mjs';
 import { economics, economicsText } from '../src/economics.mjs';
+import { fromRest as opencostRest, fromPrometheus as opencostProm, toSelfHostPrice } from '../src/opencost.mjs';
 
 const HELP = `harness-ledger: where agent harnesses waste model resources (tokens, dollars, GPU time), across harnesses.
 
@@ -49,11 +50,15 @@ Economics options (with the report options above):
   --self-host-model ID --gpu ID      an open model and GPU from the Inference Sizer catalog (deepseek-v3 on H200, …): the
                                      same workload sized for the busiest day's peak (compute and KV working set)
   --ttft MS (2000) --tpot MS (50)    the targets it is sized for; --no-spare drops the sizer's spare node
+  --calibration FILE                 measured engine efficiencies (fleetops calibrate, or a promoted shadow upgrade's
+                                     <store>/calibration/sizer.json) instead of spec-sheet defaults
   --gpu-rate $/GPU-h                 what a GPU-hour costs you: monthly cost, which is cheaper, and the volume where it flips
   --self-host-success-rate R         the open model's task success rate (e.g. from SWE-bench); --api-success-rate R when
                                      there are no outcomes; --token-scale K when the open model makes K× the calls per task
-  --self-host-price FILE             measured self-host prices instead of sizing: { input, cacheRead?, output } $ per M
-                                     tokens (OpenCost's llm_cost_per_million_tokens, allocation basis)
+  --self-host-price FILE             measured self-host prices instead of sizing: { input, cacheRead?, output } $ per M tokens
+  --opencost FILE|URL                OpenCost's measured cost per token instead: its /inferenceCost/total answer (a saved file,
+                                     or the OpenCost URL), or --opencost-prom URL for its llm_cost_per_million_tokens gauges;
+                                     --opencost-model NAME --opencost-namespace NS pick the deployment (allocation basis)
   --days N | --tasks-per-day N       the period the input covers, or the volume to plan for
   --unit-price $ (with --prices relative)   dollars per relative unit (a million fresh input tokens) for the break-even
   --demo                             the synthetic demo input
@@ -144,9 +149,16 @@ export async function main(argv) {
       engineSpans: extra.engine || (o.engine ? read(o.engine) : null), replicas: extra.replicas || (o.replicas ? readJson(o.replicas) : null), gpuPrices: o['gpu-prices'] ? readJson(o['gpu-prices']) : {} };
     if (o['cache-ttl']) opts.cacheTtlS = Number(o['cache-ttl']);
     const r = ledger(calls, opts), n = k => (o[k] != null && o[k] !== true ? Number(o[k]) : undefined);
+    let selfHostPrice = o['self-host-price'] ? readJson(o['self-host-price']) : null;
+    const ocPick = { model: o['opencost-model'] || null, namespace: o['opencost-namespace'] || null };
+    if (o.opencost) {
+      const src = String(o.opencost);
+      const j = /^https?:\/\//.test(src) ? await (await fetch(`${src.replace(/\/$/, '')}/inferenceCost/total?window=${o['opencost-window'] || '7d'}&aggregate=model_name,namespace&costBasis=allocation`)).json() : readJson(src);
+      selfHostPrice = toSelfHostPrice(opencostRest(j, ocPick));
+    } else if (o['opencost-prom']) selfHostPrice = toSelfHostPrice(await opencostProm(String(o['opencost-prom']), { ...ocPick, window: o['opencost-window'] || '24h' }));
     const E = economics(r.calls, r.report, { model: o['self-host-model'] || undefined, gpu: o.gpu || undefined, ttft: n('ttft'), tpot: n('tpot'), gpuRate: n('gpu-rate'),
       selfSuccessRate: n('self-host-success-rate'), apiSuccessRate: n('api-success-rate'), tokenScale: n('token-scale'), days: n('days'), tasksPerDay: n('tasks-per-day'), unitPrice: n('unit-price'),
-      selfHostPrice: o['self-host-price'] ? readJson(o['self-host-price']) : null, cacheTtlS: opts.cacheTtlS, spare: !o['no-spare'] });
+      selfHostPrice, cacheTtlS: opts.cacheTtlS, spare: !o['no-spare'], calibration: o.calibration ? readJson(o.calibration) : null });
     process.stdout.write(o.json ? JSON.stringify(E, null, 1) + '\n' : economicsText(E));
     return 0;
   }

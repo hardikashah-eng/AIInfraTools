@@ -170,6 +170,45 @@ verdict. Flagger webhooks can't send a token, so the judge runs without one behi
 controllers' namespaces; with Argo alone, `--tokens` works too. The manifests are checked in CI against the real CRD
 schemas of Argo Rollouts v1.9.3, Flagger v1.45.0 and Prometheus Operator v0.95.2.
 
+### An llm-d canary, stepped by the judge
+
+`fleetops shadow canary` drives an llm-d canary: two LLMInferenceServices (KServe v1alpha2) in one routing group, each
+member's share set by `spec.router.route.weight` (proportional, up to 1,000,000). Example manifests are in
+`deploy/shadow-gate/llmd-canary-example.yaml`.
+
+| Command | What it does |
+| --- | --- |
+| `canary start --name N --namespace NS --group G --baseline ISVC --candidate ISVC [--steps 1,5,25,50,100] --live` | Writes the first weights (1% to the candidate). Without `--live` it prints the `kubectl patch` commands and starts nothing |
+| `canary advance --name N --prom URL \| --judge URL --live` | Asks the judge about the traffic since the last weight change |
+| `canary approve --name N --by NAME` | A person approves the queued step |
+| `canary status --name N` | Where the canary stands, and its history |
+
+What `advance` does with the judge's answer:
+- **rollback:** the candidate's weight goes to 0 at once, with `--live`. Stopping is always allowed.
+- **wait:** nothing changes.
+- **promote:** the next step is **queued for a person**. The next `advance --live` writes it only after `approve --by NAME`.
+  Raising a canary's share is never automatic, and each step bakes at least `--bake` seconds (600) first.
+
+Weights are written with `kubectl patch --type merge` on `spec.router.route`, so nothing else on the resources changes.
+Tests check the manifests and every patch against KServe's own CRD schema.
+
+### What a verdict teaches the other tools
+
+`shadow plan` records the configs it predicted for. With `--plan`, `compare` and `prom` compare that prediction with the
+measurement.
+- **The prediction was off by more than 15%:** the candidate's sizer efficiencies are refitted until the sizer predicts
+  what was measured.
+  - TPOT is refitted through the decode efficiencies, then TTFT through prefill. Measurements are relative, so the
+    baseline is taken as calibrated, and only settled metrics are used.
+  - The result goes into `<store>/calibration/sizer.json` (and a `calibration` record), in the profile format that
+    `fleetops calibrate` writes. Three readers use it:
+    - `shadow plan` (its next prediction for that GPU and model);
+    - `inference-sizer --calibration`;
+    - `harness-ledger economics --calibration`, so the self-host vs API break-even uses measured efficiencies.
+  - What efficiencies can't explain is reported as a model gap, not fitted.
+- **The decision is promote:** the change's measured effects (and tokens/s per GPU, when GPUs are given) are appended to
+  `<store>/shadow/promoted.jsonl`.
+
 ### On real engines
 
 `deploy/shadow-live/` runs everything on three 1-GPU L4 nodes: two vLLM versions differing by one known change
@@ -196,6 +235,8 @@ the candidate is. Some changes are expected to alter outputs, such as a new quan
 - Only model calls are sent. Nothing else a recorded agent did (tool calls, writes) is repeated.
 - API keys come from an environment variable named with `--api-key-env`, never from the command line.
 - `--max-inflight` (64) bounds the load on each endpoint, and `--max-requests` (1,000) the length of a run.
+- `shadow canary` writes weights only with `--live`. A rollback is written at once; a step up only after a person's
+  `approve --by NAME`. The tests never approve.
 - `shadow prom` and `shadow serve` only read Prometheus. `FLEETOPS_EGRESS_ALLOW` limits which hosts they may call; the
   judge's manifest allows the in-cluster Prometheus and nothing else.
 

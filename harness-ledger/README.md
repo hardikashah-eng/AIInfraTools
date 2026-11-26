@@ -99,8 +99,12 @@ harness-ledger economics traces/ --outcomes outcomes.csv --self-host-model deeps
   day's peak and kept on all month.
   - The result is a break-even: the GPU-hour price under which self-hosting is cheaper per resolved task (scaled by the
     two models' success rates). With `--gpu-rate`, it also gives the volume from which self-hosting wins.
-  - `--self-host-price` uses measured self-host prices per million tokens instead (OpenCost's
-    `llm_cost_per_million_tokens`).
+  - `--opencost FILE|URL` (OpenCost's `/inferenceCost/total`) or `--opencost-prom URL` (its `llm_cost_per_million_tokens`
+    gauges) uses OpenCost's measured self-host cost per token instead. Its price per delivered input token is turned into
+    a price per prefilled token, so a workload with a different cache hit rate is priced right. `--self-host-price` takes
+    prices by hand.
+  - `--calibration FILE` sizes with measured engine efficiencies, from `fleetops calibrate` or from a promoted shadow
+    upgrade's `<store>/calibration/sizer.json`.
   - Calls longer than the open model's context are counted and flagged.
 
 On TraceLab's workload, with SWE-bench success rates ([VALIDATION-ECONOMICS.md](docs/VALIDATION-ECONOMICS.md)):
