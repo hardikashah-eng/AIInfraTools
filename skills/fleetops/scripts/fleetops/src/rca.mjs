@@ -17,9 +17,9 @@ import { groups } from './adapters/topology.mjs';
 import { growth, ERROR_COUNTERS, CONGESTION_COUNTERS } from './adapters/fabric.mjs';
 import { findSdc } from './sdc.mjs';
 import { DEVICE_CLASSES } from './adapters/logs.mjs';
+import { medianUpper as median } from './stats.mjs';
 
 const H = 3600;
-const median = a => { const s = a.filter(Number.isFinite).sort((x, y) => x - y); return s.length ? s[Math.floor(s.length / 2)] : NaN; };
 const share = (counts, total) => [...counts.entries()].map(([k, n]) => ({ k, n, share: total ? n / total : 0 })).sort((a, b) => b.n - a.n);
 const count = (arr, f) => { const m = new Map(); for (const x of arr) for (const k of [].concat(f(x)).filter(v => v != null)) m.set(k, (m.get(k) || 0) + 1); return m; };
 const clamp01 = v => Math.max(0, Math.min(1, v));

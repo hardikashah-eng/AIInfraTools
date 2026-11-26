@@ -8,12 +8,11 @@
 // Paging (PagerDuty Events v2, Opsgenie Alerts, or a JSON webhook) is a dry run unless --live: nothing is sent otherwise.
 
 import { checkEgress } from './security.mjs';
+import { medianUpper as median } from './stats.mjs';
 
-export const STATES = ['open', 'acknowledged', 'mitigated', 'resolved'];
 const NEXT = { open: ['acknowledged', 'mitigated', 'resolved'], acknowledged: ['mitigated', 'resolved'], mitigated: ['resolved', 'acknowledged'], resolved: ['open'] };
 const EVENT_STATE = { opened: 'open', acknowledged: 'acknowledged', mitigated: 'mitigated', resolved: 'resolved', reopened: 'open' };
 const iso = t => new Date(t * 1000).toISOString().replace('.000Z', 'Z');
-const median = a => { const s = a.filter(Number.isFinite).sort((x, y) => x - y); return s.length ? s[Math.floor(s.length / 2)] : NaN; };
 
 // sev1 (worst) … sev4, from the symptom's size.
 export function severityOf(inc) {

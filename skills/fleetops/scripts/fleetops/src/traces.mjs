@@ -42,11 +42,6 @@ export function requestsFromSpans(spans, { poolAttr = 'gen_ai.request.model' } =
   return out.sort((x, y) => x.t - y.t);
 }
 
-// The slowest requests of a pool in a window: exemplars for a latency incident.
-export function slowRequests(store, { pool, from, to, by = 'ttft', top = 10 } = {}) {
-  return store.query('request', { from, to, where: r => (!pool || r.pool === pool) && Number.isFinite(r[by]) }).sort((a, b) => b[by] - a[by]).slice(0, top);
-}
-
 // PyTorch profiler trace (Chrome trace JSON from torch.profiler / Kineto) → step records for one rank.
 //   t0: epoch seconds of the trace's time zero when its timestamps are relative (default: baseTimeNanoseconds, else 0)
 export function kineto(json, { job, node, rank, t0 } = {}) {

@@ -3,7 +3,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { DataStore, whereFrom, openStore, SCHEMA } from '../src/store.mjs';
+import { whereFrom, openStore, SCHEMA } from '../src/store.mjs';
 import * as Retention from '../src/retention.mjs';
 import { migrate } from '../src/migrate.mjs';
 import * as Ingest from '../src/ingest.mjs';
@@ -17,6 +17,7 @@ import { readLines } from '../src/lines.mjs';
 import * as Philly from '../src/adapters/philly.mjs';
 import * as Pub from '../src/adapters/public.mjs';
 import * as Live from '../src/adapters/live.mjs';
+import * as NVS from '../src/adapters/nvsentinel.mjs';
 import { toEpoch } from '../src/adapters/time.mjs';
 import * as Logs from '../src/adapters/logs.mjs';
 import * as Topo from '../src/adapters/topology.mjs';
@@ -42,6 +43,7 @@ import * as Shadow from '../src/shadow.mjs';
 import * as Replay from '../src/shadow-replay.mjs';
 import * as SProm from '../src/shadow-prom.mjs';
 import * as Gate from '../src/shadow-gate.mjs';
+import * as Canary from '../src/shadow-canary.mjs';
 import { goodputMarkdown, goodputHtml } from '../src/goodput-report.mjs';
 import * as LiveView from '../src/live.mjs';
 import * as Inject from '../src/inject.mjs';
@@ -107,6 +109,8 @@ Sources (SOURCE):
                    XID, NVLink, PCIe AER, AMD RAS, MCE, IB link, NFS/Lustre, OOM (GPU index from nvidia-smi-q / amd-smi-static imports)
   app-log          NCCL / PyTorch job output                 [--node N] [--job J] [--t T]
   k8s-events       kubectl get events -A -o json             cordon/reboot/scale changes; NotReady/OOM/mount/evict logs
+  nvsentinel       NVSentinel health events: event-exporter CloudEvents, datastore documents, kubectl get healtheventresources -o json
+                   GPU faults (XIDs through gpu-health's table), what NVSentinel recommends and whether it is remediating
   helm-history     helm history REL -n NS -o json            [--release R] [--namespace NS]
   otlp-traces      OTLP/JSON traces (resourceSpans)          [--derive] (also write per-request records)
   kineto           PyTorch profiler trace JSON (one rank)    [--job J] [--node N] [--rank R] [--t0 T]   per-rank steps
@@ -220,6 +224,9 @@ Shadow upgrades (an infra change measured against the baseline at matched load b
   fleetops shadow compare --results FILE | --baseline SEL --candidate SEL [--from T --to T]
         [--plan plan.json] [--answers answers.json] [--baseline-gpus N --baseline-rate R --candidate-gpus N --candidate-rate R]
         [--baseline-nodes RE --candidate-nodes RE] [--gates gates.json]     matched-load verdict: promote, roll back, extend
+        with --plan: a prediction off by more than 15% refits the candidate's sizer efficiencies into
+        <store>/calibration/sizer.json (--calibration F; --no-recalibrate to skip), which plan, inference-sizer --calibration
+        and harness-ledger economics --calibration read; a promoted change is recorded in <store>/shadow/promoted.jsonl
   fleetops shadow baseline save --name NAME --select SEL [--from T --to T]  ·  fleetops shadow baseline list
   fleetops shadow watch --name NAME --select SEL [--from T --to T]          drift of a service against its saved baseline
   fleetops shadow demo                                         a candidate that looks faster and isn't
@@ -232,6 +239,12 @@ Shadow upgrades (an infra change measured against the baseline at matched load b
         [--port 9410] [--host H --tokens FILE | --no-auth]   the judge for Argo Rollouts (POST /verdict) and Flagger
         (POST /flagger/rollout, /flagger/confirm-promotion); deploy/shadow-gate/ has the manifests
   M: Prometheus label matchers, e.g. llm_isvc_name="chat-v2" or rollouts_pod_template_hash="6b9f",namespace="llm"
+  An llm-d canary (two LLMInferenceServices in one routing group) stepped by the judge:
+  fleetops shadow canary start --name N --namespace NS --group G --baseline ISVC --candidate ISVC [--steps 1,5,25,50,100]
+        [--bake 600] [--live]                           the first weights (printed, or written with --live)
+  fleetops shadow canary advance --name N --prom URL | --judge URL [--live]   rollback → weight 0 at once (with --live);
+        promote → the next step is queued for a person; it is written by the next advance --live after approval
+  fleetops shadow canary approve --name N --by NAME     a person approves the queued step   ·   canary status --name N
 
 Serving (Inference Sizer both ways, and a one-command vLLM deployment on Kubernetes):
   fleetops serving models | gpus                               the catalog (ids, sizes, Hugging Face repos; GPU types)
@@ -321,6 +334,7 @@ function importSource(store, src, files, o) {
       case 'exporter': put('device', Live.exporterScrape(read(f), { vendor: o.vendor !== true ? o.vendor : undefined, t: o.t ? time(o.t) : Math.floor(fs.statSync(f).mtimeMs / 1000), site: o.site })); break;
       case 'vllm': put('serving', [Live.vllmSnapshot(read(f), { before: o.before ? read(o.before) : undefined, windowS: o.window ? +o.window : undefined, t: o.t ? time(o.t) : Math.floor(fs.statSync(f).mtimeMs / 1000), pool: o.pool || 'default', model: o.model, gpu: o.gpu })]); break;
       case 'prom-range': if (!o.field) throw new Error('prom-range needs --field'); put('serving', Live.promRange(read(f), { field: o.field, pool: o.pool })); break;
+      case 'nvsentinel': { const r = NVS.nvsentinelEvents(read(f)); put('log', r.logs); if (r.unmatched) console.error(`${f}: ${r.unmatched} object(s) were not NVSentinel health events`); break; }
       case 'k8s-nodes': putInventory(Live.k8sNodes(read(f), { t: tOf(f) })); put('topology', Live.k8sNodeTopology(read(f), { t: tOf(f) })); put('log', Live.k8sNodeConditions(read(f), { t: tOf(f) })); break;
       case 'k8s-pods': put('placement', Live.k8sPods(read(f))); break;
       case 'slurm-nodes': putInventory(Live.slurmNodes(read(f), { t: tOf(f) })); break;
@@ -373,8 +387,8 @@ function importSource(store, src, files, o) {
         const inv = store.query('inventory', { where: r => r.source === 'philly' }), skus = Object.fromEntries(inv.map(r => [r.node, r.sku]));
         // the first N machines (by number) with 8 GPUs: a fixed, repeatable subset of the cluster
         if (limit) keep = new Set(inv.filter(r => r.devices === 8).map(r => r.node).sort((a, b) => +a.slice(1) - +b.slice(1)).slice(0, limit));
-        let batch = [], n = 0;
-        for (const s of Philly.gpuUtil(readLines(f), { from, to, stepMin: +(o.step || 10), machines: keep, skus })) { batch.push(s); if (batch.length >= 50000) { n += put('device', batch).written; batch = []; } }
+        let batch = [];
+        for (const s of Philly.gpuUtil(readLines(f), { from, to, stepMin: +(o.step || 10), machines: keep, skus })) { batch.push(s); if (batch.length >= 50000) { put('device', batch); batch = []; } }
         if (batch.length) put('device', batch);
         break;
       }
@@ -827,7 +841,7 @@ async function gameday(store, cmd, o) {
   if (!planFile) throw new Error('gameday PLAN.json --allow FILE [--live] [--cooldown 900] [--prom URL --loki URL]');
   const plan = JSON.parse(read(planFile)), allow = Inject.loadAllow(o.allow && o.allow !== true ? o.allow : process.env.FLEETOPS_INJECT_ALLOW);
   const steps = plan.steps || plan, cool = o.cooldown ? +o.cooldown : plan.cooldownS ?? 900, live = !!o.live;
-  const preps = steps.map(st => { const { fault, forS, ...params } = st; return { st, prep: Inject.prepare(fault, params, { allow }) }; }); // check every step before running any
+  const preps = steps.map(st => { const { fault, forS: _forS, ...params } = st; return { st, prep: Inject.prepare(fault, params, { allow }) }; }); // check every step before running any
   const done = [];
   for (const [i, { st, prep }] of preps.entries()) {
     if (!J) say(`step ${i + 1}/${preps.length}: ${prep.fault} on ${prep.nodes.join(', ') || prep.params.release || prep.params.host} for ${st.forS || 300} s (expect ${prep.expect || 'detection only'})`);
@@ -1041,6 +1055,29 @@ async function shadowCmd(store, cmd, rest, o) {
   const from = time(opt('from')), to = time(opt('to'));
   const requests = sel => store.query('request', { from, to, where: selector(sel) });
   const dir = path.join(store.dir, 'shadow'); fs.mkdirSync(dir, { recursive: true });
+  // the sizer calibration shadow verdicts keep: read by plan, the Inference Sizer (--calibration) and harness-ledger economics
+  const calFile = () => opt('calibration') || path.join(store.dir, 'calibration', 'sizer.json');
+  const calProfile = () => (fs.existsSync(calFile()) ? JSON.parse(read(calFile())) : null);
+  const learn = (r, planObj, label) => {
+    const out = [];
+    if (planObj && !o['no-recalibrate']) {
+      const rc = Shadow.recalibrate(planObj, r.metrics);
+      if (rc && rc.changed) {
+        const f = calFile(); fs.mkdirSync(path.dirname(f), { recursive: true });
+        const t = Math.floor(Date.now() / 1000), prof = Shadow.mergeProfile(calProfile(), rc, { fitOn: `shadow ${label}`, t });
+        fs.writeFileSync(f, JSON.stringify(prof, null, 1) + '\n'); store.append('calibration', [{ t, target: `sizer:${rc.key}`, tool: 'inference-sizer', eff: rc.eff, before: rc.before, rows: rc.rows, source: 'fleetops-shadow', fitOn: label }]);
+        out.push(`recalibrated ${rc.key} → ${f}: ` + rc.rows.filter(x => x.changed).map(x => `${x.metric} predicted ${pctS(x.predicted)}, measured ${pctS(x.measured)}`).join('; ') + ` (${Shadow.EFF_KEYS.filter(k => rc.before[k] !== rc.eff[k]).map(k => `${k} ${rc.before[k]}→${rc.eff[k]}`).join(', ')})`);
+        r.recalibrated = rc;
+      } else if (rc) for (const x of rc.rows.filter(y => y.note)) out.push(`${x.metric}: ${x.note}`);
+    }
+    // a promoted change's measured numbers go where planning and economics read them
+    if (r.decision === 'promote') {
+      const rec = { t: Math.floor(Date.now() / 1000), label, candidate: planObj && planObj.configs ? planObj.configs.candidate : null, effects: Object.fromEntries(['ttft', 'tpot', 'e2e', 'tokPerGpuS', 'costPerMTok'].filter(k => r.metrics[k] && Number.isFinite(r.metrics[k].effect)).map(k => [k, r.metrics[k].effect])),
+        tokPerGpuS: r.metrics.tokPerGpuS ? r.metrics.tokPerGpuS.candidate : null, calibration: r.recalibrated ? r.recalibrated.key : null };
+      fs.appendFileSync(path.join(dir, 'promoted.jsonl'), JSON.stringify(rec) + '\n'); out.push(`promoted: recorded in ${path.join(dir, 'promoted.jsonl')}${rec.calibration ? `; harness-ledger economics --calibration ${calFile()} uses it` : ''}`);
+    }
+    return out;
+  };
   const readJsonl = f => read(f).split('\n').filter(l => l.trim()).map(l => JSON.parse(l));
   const traceRows = async f => { if (/\.json$/.test(f)) { const j = JSON.parse(read(f)); if (j.kind === 'fleetscope.agentic-profile') { const A = (await import('module')).createRequire(import.meta.url)('../../fleetscope/src/agentic.js'); return A.synthesize(j, { sessionsPerHour: num('sessions-per-hour') || 600, horizonS: num('duration') || 600, seed: num('seed') || 1 }); } }
     const { loadRows } = await import('../../fleetscope/tools/agentic.mjs'); return (await loadRows(f)).rows; };
@@ -1051,12 +1088,14 @@ async function shadowCmd(store, cmd, rest, o) {
     return say(`demo in ${store.dir}: ${d.baseline.length} baseline and ${d.candidate.length} candidate requests (variant field). The candidate is 8% slower at any load but got less than half the traffic.\ntry: fleetops shadow compare --baseline variant=baseline --candidate variant=candidate --store ${store.dir}`);
   }
   if (cmd === 'plan') {
-    const b = json('baseline-config'), c = json('candidate-config'); if (!b || !c) throw new Error('--baseline-config b.json --candidate-config c.json: { model, gpu, tp, gpus?, rate? } (Inference Sizer ids)');
+    const prof = calProfile(), b0 = json('baseline-config'), c0 = json('candidate-config'); if (!b0 || !c0) throw new Error('--baseline-config b.json --candidate-config c.json: { model, gpu, tp, gpus?, rate? } (Inference Sizer ids)');
+    const b = Shadow.applyCalibration(b0, prof), c = Shadow.applyCalibration(c0, prof);
     const reqs = opt('trace') ? await traceRows(opt('trace')) : requests(opt('baseline'));
     if (!reqs.length) throw new Error('no workload: give --trace FILE, or --baseline SEL with request records in the store');
     const w = Shadow.workloadOf(reqs.map(r => Object.assign({ e2e: r.e2e ?? r.api ?? 0 }, r))), p = Shadow.plan({ baseline: b, candidate: c, workload: w, delta: num('effect') ?? 0.03, rps: num('rps') });
     if (opt('out')) fs.writeFileSync(opt('out'), JSON.stringify(p, null, 1) + '\n');
     if (J) { OUT.plan = p; return; }
+    if (b.calibrated || c.calibrated) say(`calibrated from ${calFile()}: ${[b, c].filter(x => x.calibrated).map(x => `${x.gpu}|${x.model}`).join(', ')}`);
     return say(`predicted (candidate vs baseline at median prompt ${Math.round(w.isl)}, output ${Math.round(w.osl)}, cache hit ${w.prefixHit.toFixed(0)}%, ${w.inflight} in flight):\n  TTFT ${pctS(p.predicted.ttft)}, TPOT ${pctS(p.predicted.tpot)}, tokens/s per GPU ${pctS(p.predicted.tokPerGpuS)}${p.predicted.costPerMTok != null ? `, $ per M tokens ${pctS(p.predicted.costPerMTok)}` : ''}\ntest: ${p.test.requestsPerArm} requests per arm to see a ${(100 * p.test.delta).toFixed(0)}% effect${p.test.paired ? ' (paired replay)' : ''}${p.test.seconds ? `, about ${Math.ceil(p.test.seconds / 60)} min at ${opt('rps')} req/s` : ''}\n${p.note}${opt('out') ? `\n→ ${opt('out')}` : ''}`);
   }
   if (cmd === 'replay') {
@@ -1088,8 +1127,9 @@ async function shadowCmd(store, cmd, rest, o) {
       baseline: { gpus: num('baseline-gpus'), rate: num('baseline-rate') }, candidate: { gpus: num('candidate-gpus'), rate: num('candidate-rate') },
       infra: opt('baseline-nodes') ? Shadow.infraSignals(store, { baselineNodes: re('baseline-nodes'), candidateNodes: re('candidate-nodes'), from, to }) : null });
     fs.appendFileSync(path.join(dir, 'verdicts.jsonl'), JSON.stringify({ t: Math.floor(Date.now() / 1000), baseline: opt('baseline') || opt('results'), candidate: opt('candidate') || opt('results'), decision: r.decision, why: r.why, metrics: r.metrics }) + '\n');
+    const learned = learn(r, plan, `${opt('baseline') || opt('results')} → ${opt('candidate') || ''}`);
     if (J) { OUT.shadow = r; return; }
-    return say(shadowText(r));
+    return say(shadowText(r) + (learned.length ? '\n\n' + learned.join('\n') : ''));
   }
   if (cmd === 'baseline') {
     const bdir = path.join(dir, 'baselines'); fs.mkdirSync(bdir, { recursive: true });
@@ -1117,16 +1157,18 @@ async function shadowCmd(store, cmd, rest, o) {
       const now = Math.floor(Date.now() / 1000), step = num('step') || 60, t1 = to ?? now, t0 = from ?? t1 - (num('lookback') || 3600);
       saved = await SProm.fetchArms(opt('prom'), { select: opt('select'), baseline: opt('baseline'), candidate: opt('candidate'), from: t0, to: t1, baselineFrom: num('baseline-lookback') ? t1 - num('baseline-lookback') : t0, step, headers: promHeaders() });
       d = saved;
-      if (opt('save')) { const { baseline, candidate, ...keep } = saved; fs.writeFileSync(opt('save'), JSON.stringify(keep) + '\n'); }
+      if (opt('save')) { const { baseline: _b, candidate: _c, ...keep } = saved; fs.writeFileSync(opt('save'), JSON.stringify(keep) + '\n'); } // the series, not the windows derived from them
     }
     if (!d.baseline.length || !d.candidate.length) throw new Error(`no windows with requests: ${d.baseline.length} baseline, ${d.candidate.length} candidate (check the selectors and the time range)`);
-    const r = SProm.compareWindows(d.baseline, d.candidate, { step: d.step, gates: json('gates'), baseline: { gpus: num('baseline-gpus'), rate: num('baseline-rate') }, candidate: { gpus: num('candidate-gpus'), rate: num('candidate-rate') } });
+    const planObj = json('plan');
+    const r = SProm.compareWindows(d.baseline, d.candidate, { step: d.step, gates: json('gates'), predicted: planObj && planObj.predicted, baseline: { gpus: num('baseline-gpus'), rate: num('baseline-rate') }, candidate: { gpus: num('candidate-gpus'), rate: num('candidate-rate') } });
     fs.appendFileSync(path.join(dir, 'verdicts.jsonl'), JSON.stringify({ t: Math.floor(Date.now() / 1000), source: 'prometheus', baseline: (saved && saved.selectors && saved.selectors.baseline) || (o.demo ? 'demo' : opt('file')), candidate: (saved && saved.selectors && saved.selectors.candidate) || (o.demo ? 'demo' : opt('file')), decision: r.decision, why: r.why, metrics: r.metrics }) + '\n');
+    const learned = learn(r, planObj, `prometheus ${(saved && saved.selectors && saved.selectors.candidate) || (o.demo ? 'demo' : opt('file'))}`);
     if (J) { OUT.shadow = r; return; }
     const L = r.load, ld = x => `${x.windows} windows, ${x.requests} requests, ${x.concPerEngine.toFixed(1)} in flight per engine, prompt ${Math.round(x.isl || 0)}, cache hit ${x.hit != null && Number.isFinite(x.hit) ? (100 * x.hit).toFixed(0) + '%' : '–'}${Number.isFinite(x.ttftP95) ? `, TTFT p95 ${x.ttftP95.toFixed(2)} s (median window; shown, not judged)` : ''}`;
     const text = shadowText(Object.assign({}, r, { paired: false })).split('\n');
     text[1] = `baseline: ${ld(L.baseline)}\ncandidate: ${ld(L.candidate)}\neach canary window against the baseline at the same load (median of windows shown)`;
-    return say(text.join('\n').replace(/requests had matching load/g, 'canary traffic was within the baseline\'s load range').replace(/more per arm to settle/g, 'more minutes to settle'));
+    return say(text.join('\n').replace(/requests had matching load/g, 'canary traffic was within the baseline\'s load range').replace(/more per arm to settle/g, 'more minutes to settle') + (learned.length ? '\n\n' + learned.join('\n') : ''));
   }
   if (cmd === 'serve') {
     if (!opt('prom')) throw new Error('--prom URL (the Prometheus that scrapes both versions)');
@@ -1145,7 +1187,42 @@ async function shadowCmd(store, cmd, rest, o) {
     const stop = () => { srv.close(); process.exit(0); }; process.on('SIGINT', stop); process.on('SIGTERM', stop);
     return new Promise(() => {});
   }
-  throw new Error('fleetops shadow demo | plan | replay | answers | compare | baseline save|list | watch | prom | serve');
+  if (cmd === 'canary') {
+    const sub = rest[0], cdir = path.join(dir, 'canaries'); fs.mkdirSync(cdir, { recursive: true });
+    const nm = opt('name'); if (!nm) throw new Error('--name NAME');
+    const file = path.join(cdir, nm.replace(/[^\w.-]/g, '_') + '.json'), audit = e => fs.appendFileSync(file.replace(/\.json$/, '.audit.jsonl'), JSON.stringify(Object.assign({ t: Math.floor(Date.now() / 1000) }, e)) + '\n');
+    const load = () => { if (!fs.existsSync(file)) throw new Error(`no canary ${nm}: fleetops shadow canary start first`); return JSON.parse(read(file)); };
+    const save = st => { const tmp = file + '.tmp'; fs.writeFileSync(tmp, JSON.stringify(st, null, 1)); fs.renameSync(tmp, file); };
+    const kubectl = opt('kubectl') || 'kubectl', show = r => (r.dryRun ? `dry run (add --live to write):\n${r.commands.map(c => '  ' + c.map(x => (/[\s{}"]/.test(x) ? `'${x}'` : x)).join(' ')).join('\n')}` : `written: ${r.commands.map(c => `${c[3]} → ${JSON.parse(c[9]).spec.router.route.weight}`).join(', ')}`);
+    if (sub === 'start') {
+      if (fs.existsSync(file) && !o.force) throw new Error(`canary ${nm} exists (status ${load().status}); --force to start over`);
+      const st = Canary.start({ name: nm, namespace: opt('namespace') || 'default', group: opt('group'), baseline: opt('baseline'), candidate: opt('candidate'), steps: opt('steps') ? opt('steps').split(',').map(Number) : undefined, bakeS: num('bake') ?? 600 });
+      const r = Canary.apply(st, Canary.share(st), { live: !!o.live, kubectl });
+      if (!r.dryRun) { save(st); audit({ event: 'start', share: Canary.share(st) }); } // a dry run starts nothing
+      if (J) { OUT.canary = { state: st, apply: r }; return; }
+      return say(`canary ${nm}: ${st.candidate} at ${Canary.share(st)}% of ${st.group}, ${st.baseline} the rest; steps ${st.steps.join(', ')}%\n${show(r)}`);
+    }
+    if (sub === 'status') { const st = load(); if (J) { OUT.canary = st; return; } return say(`${nm}: ${st.status}, ${st.candidate} at ${Canary.share(st)}% since ${fmt(st.since)}${st.pending ? `; step to ${st.steps[st.pending.toStep]}% ${st.pending.approvedBy ? `approved by ${st.pending.approvedBy}, written by the next advance --live` : 'waits for approval'}` : ''}\n` + st.history.slice(-8).map(h => `  ${fmt(h.t)}  ${h.event}${h.to != null ? ` → ${h.to}%` : ''}${h.by || h.approvedBy ? ` (${h.by || h.approvedBy})` : ''}${h.why ? `: ${h.why}` : ''}`).join('\n')); }
+    if (sub === 'approve') { const st = Canary.approve(load(), opt('by')); save(st); audit({ event: 'approved', by: opt('by'), to: st.steps[st.pending.toStep] }); if (J) { OUT.canary = st; return; } return say(`approved by ${opt('by')}: the step to ${st.steps[st.pending.toStep]}% is written by the next fleetops shadow canary advance --name ${nm} --live`); }
+    if (sub === 'advance') {
+      const st = load(), now = Math.floor(Date.now() / 1000), sel = Canary.selectors(st), lookback = Math.max(300, now - st.since);
+      let v;
+      if (st.status !== 'running') v = { verdict: 'wait', why: `canary is ${st.status}` };
+      else if (opt('judge')) { const r = await fetch(opt('judge').replace(/\/$/, '') + '/verdict', { method: 'POST', headers: Object.assign({ 'content-type': 'application/json' }, opt('judge-token-env') ? { authorization: `Bearer ${process.env[opt('judge-token-env')] || ''}` } : {}), body: JSON.stringify(Object.assign({}, sel, { lookback, baselineLookback: num('baseline-lookback') || 21600 })) }); if (!r.ok) throw new Error(`judge: HTTP ${r.status} ${await r.text()}`); v = await r.json(); }
+      else if (opt('prom')) { const step = num('step') || 60, d = await SProm.fetchArms(opt('prom'), Object.assign({}, sel, { from: now - lookback, to: now, baselineFrom: now - Math.max(lookback, num('baseline-lookback') || 21600), step, headers: opt('prom-token-env') ? { authorization: `Bearer ${process.env[opt('prom-token-env')] || ''}` } : undefined })); v = SProm.compareWindows(d.baseline, d.candidate, { step, gates: json('gates') }); }
+      else throw new Error('--prom URL (Prometheus scraping both members) or --judge URL (fleetops shadow serve)');
+      const { state, action } = Canary.decide(st, v.verdict, { now, why: v.why });
+      const r = action.patch ? Canary.apply(state, action.share, { live: !!o.live, kubectl }) : null;
+      // a step written only in a dry run hasn't happened: keep the approval for the live run
+      if (r && r.dryRun && action.type === 'apply') { if (J) { OUT.canary = { verdict: v.verdict, why: v.why, action, apply: r }; return; } return say(`${v.verdict}: ${action.note}\n${show(r)}`); }
+      if (r && r.dryRun && action.type === 'rollback') { audit({ event: 'rollback-dry-run', why: v.why }); if (J) { OUT.canary = { verdict: v.verdict, why: v.why, action, apply: r }; return; } return say(`ROLL BACK (${v.why})\n${show(r)}`); }
+      save(state); audit({ event: action.type, verdict: v.verdict, why: v.why, live: !!o.live, share: Canary.share(state) });
+      if (J) { OUT.canary = { verdict: v.verdict, why: v.why, action, apply: r, state }; return; }
+      return say(`${v.verdict}${v.why ? ` (${v.why})` : ''}: ${action.note || action.type}${r ? `\n${show(r)}` : ''}`);
+    }
+    throw new Error('fleetops shadow canary start | advance | approve | status');
+  }
+  throw new Error('fleetops shadow demo | plan | replay | answers | compare | baseline save|list | watch | prom | serve | canary');
 }
 
 async function rolloutCmd(store, cmd, o) {

@@ -1,3 +1,4 @@
+/* global FleetScenario */ // set by scenario.js, loaded first on the page
 /* FleetScope Inference view: serving deployments as pods — replicas wanted vs ready, start-up time,
    and contention with training and batch work for GPUs. Browser only. */
 (function () {

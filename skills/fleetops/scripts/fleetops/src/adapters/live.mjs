@@ -156,7 +156,7 @@ export function slurmNodes(text, { t = Math.floor(Date.now() / 1000) } = {}) {
 // "gpu[01-03,07],cpu5" → ["gpu01","gpu02","gpu03","gpu07","cpu5"]
 export function expandNodes(list) {
   const out = [];
-  for (const part of String(list || '').match(/[^,\[]+(\[[^\]]*\])?/g) || []) {
+  for (const part of String(list || '').match(/[^,[]+(\[[^\]]*\])?/g) || []) {
     const m = part.match(/^(.*)\[(.*)\]$/);
     if (!m) { if (part) out.push(part); continue; }
     for (const r of m[2].split(',')) {

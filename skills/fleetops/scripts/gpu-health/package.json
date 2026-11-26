@@ -5,11 +5,14 @@
   "private": true,
   "description": "GPU health checks, efficiency and savings analysis, and an approval queue that runs fixes once approved.",
   "type": "module",
-  "bin": { "gpu-health": "tools/gpu-health.mjs" },
+  "bin": {
+    "gpu-health": "tools/gpu-health.mjs"
+  },
   "scripts": {
     "test": "node --test tests/*.test.mjs",
     "demo": "node tools/gpu-health.mjs demo",
-    "serve": "node tools/gpu-health.mjs serve"
+    "serve": "node tools/gpu-health.mjs serve",
+    "test:coverage": "node --test --experimental-test-coverage --test-coverage-exclude='tests/**' --test-coverage-exclude='../**' --test-coverage-lines=93 --test-coverage-branches=70 tests/*.test.mjs"
   },
   "engines": {
     "node": ">=22"

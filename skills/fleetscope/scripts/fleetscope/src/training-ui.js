@@ -1,3 +1,4 @@
+/* global FleetScenario */ // set by scenario.js, loaded first on the page
 /* FleetScope Training view: one job seen four ways (GPUs, phases, scheduling, full). Browser only. */
 (function () {
   'use strict';

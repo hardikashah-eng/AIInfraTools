@@ -1,3 +1,4 @@
+/* global FleetScenario */ // set by scenario.js, loaded first on the page
 /* FleetScope cluster view: GPU allocation grid, scheduler policy what-ifs, workload timeline. Browser only. */
 (function () {
   'use strict';

@@ -92,7 +92,7 @@ export function otlpTracesToSpans(body) {
   for (const rs of body.resourceSpans || []) {
     const res = attrs((rs.resource || {}).attributes);
     for (const ss of rs.scopeSpans || []) for (const sp of ss.spans || []) {
-      const t = nano(sp.startTimeUnixNano), end = nano(sp.endTimeUnixNano);
+      const t = nano(sp.startTimeUnixNano);
       if (t == null || !sp.traceId || !sp.spanId) continue;
       const a = attrs(sp.attributes);
       const durS = sp.endTimeUnixNano != null ? Number(BigInt(String(sp.endTimeUnixNano)) - BigInt(String(sp.startTimeUnixNano))) / 1e9 : null; // exact, from integer nanoseconds

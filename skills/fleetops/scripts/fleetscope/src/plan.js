@@ -26,7 +26,7 @@
           const arr = [];
           while (i < lines.length && indent(lines[i]) === ind && lines[i].trim().startsWith('- ')) {
             const rest = lines[i].trim().slice(2);
-            if (/^[\w.\/-]+:(\s|$)/.test(rest)) { lines[i] = ' '.repeat(ind + 2) + rest; arr.push(block(ind + 2)); }
+            if (/^[\w./-]+:(\s|$)/.test(rest)) { lines[i] = ' '.repeat(ind + 2) + rest; arr.push(block(ind + 2)); }
             else { arr.push(scalar(rest)); i++; }
           }
           return arr;

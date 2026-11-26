@@ -12,9 +12,6 @@ import { VENDORS } from './vendors.mjs';
 // Fields a vendor doesn't report are simply absent; the checks that need them don't run (see coverage in vendors.mjs).
 // Jobs are joined later by (node, gpu); exporters that carry pod labels can set `job` directly.
 
-export const NUM_FIELDS = ['tensor', 'sm', 'dram', 'memUsedGB', 'memTotalGB', 'frameworkPeakGB', 'clockMHz', 'maxClockMHz', 'throttle', 'tempC', 'memTempC', 'powerW', 'powerLimitW', 'powerBrake',
-  'eccSbeTotal', 'eccDbeTotal', 'remapPending', 'remapFailed', 'remapUsed', 'remapSpare', 'pcieWidth', 'pcieWidthMax', 'pcieGen', 'pcieGenMax', 'linkErrTotal', 'linkUeTotal', 'faultCountTotal', 'cpuWait'];
-
 // NVML clock event (throttle) reason bits, as exported in DCGM_FI_DEV_CLOCKS_EVENT_REASONS
 export const CLOCK_REASON = { swPowerCap: 0x4, hwSlowdown: 0x8, swThermal: 0x20, hwThermal: 0x40, hwPowerBrake: 0x80 };
 

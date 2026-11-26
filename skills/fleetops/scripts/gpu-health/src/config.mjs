@@ -54,6 +54,8 @@ export const DEFAULTS = {
   },
   diagLevelByClass: { ecc: 3, bus: 3, link: 3, firmware: 2, pcie: 2, thermal: 3, slow: 3, stale: 1, power: 3, telemetry: 2, sdc: 4, platform: 3, default: 2 },
   // What may happen without a person. auto = executes at once; approve = queued for approval; never = suggestion only.
+  // Defer to an external remediator (NVSentinel) for nodes it is already handling: no second repair ladder
+  deferToExternal: true,
   policy: {
     dryRun: true,             // commands run only with this false AND --live
     limits: { maxQuarantineShare: 0.1, minQuarantinePerRun: 2, maxNodeRebootsPerRun: 1, maxNodeCordonsPerRun: 2, maxScaleOutStep: 4, maxActionAgeSec: 3600 },
@@ -65,6 +67,7 @@ export const DEFAULTS = {
       'reclaim-idle': 'approve', 'scale-in': 'approve', 'resize': 'approve',
       'deep-diag-next-boundary': 'auto', 'avoid-large-jobs': 'approve', 'label-capability': 'approve', 'repartition': 'approve',
       'swap-at-checkpoint': 'approve', 'drain-inference': 'approve',
+      'external-remediation': 'never',   // another system (NVSentinel) is remediating this node: shown, never run
       // used by the fleetops live agent: stopping new work on a node and telling people is automatic; anything that
       // moves running work, adds cost or undoes a change waits for a person (see fleetops examples/agent-policy.realtime.json)
       'cordon-node': 'auto', 'uncordon-node': 'approve', 'link-check': 'auto', 'hold-rollout': 'auto',

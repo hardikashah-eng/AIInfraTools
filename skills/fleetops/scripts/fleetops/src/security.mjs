@@ -55,7 +55,7 @@ export function visible(tenant, kind, r, ctx = {}) {
 // Span attributes that carry request content are dropped; secrets in log lines are masked. Counted, never stored.
 const CONTENT_KEY = /(^|\.)(prompt|prompts|completion|completions|messages|input\.value|output\.value|input_messages|output_messages|content|body)(\.|$)|gen_ai\.(prompt|completion|input|output)|llm\.(prompts|input|output)|http\.(request|response)\.body/i;
 const SECRETS = [
-  [/\bBearer\s+[A-Za-z0-9._~+\/=-]{12,}/g, 'Bearer [redacted]'],
+  [/\bBearer\s+[A-Za-z0-9._~+/=-]{12,}/g, 'Bearer [redacted]'],
   [/\b(sk|pk|rk)-[A-Za-z0-9_-]{16,}\b/g, '[redacted-key]'],
   [/\bAKIA[0-9A-Z]{16}\b/g, '[redacted-aws-key]'],
   [/\bgh[pousr]_[A-Za-z0-9]{30,}\b/g, '[redacted-token]'],

@@ -9,12 +9,12 @@
 //
 // Profiles are plain JSON so FleetScope graphs and the sizer (`--calibration`) can read them without this package.
 import { createRequire } from 'node:module';
+import { medianUpper as median } from './stats.mjs';
 
 const require = createRequire(import.meta.url);
 const E = require('../../fleetscope/src/engine.js'), Cal = require('../../fleetscope/src/calibrate.js'), TP = require('../../fleetscope/src/templates.js');
 const SM = require('../../inference-sizer/src/model.js'), SC = require('../../inference-sizer/src/catalog.js');
 
-const median = a => { const s = a.filter(Number.isFinite).sort((x, y) => x - y); return s.length ? s[Math.floor(s.length / 2)] : NaN; };
 const lookup = (k, s) => E.scaleTrace(E.genTrace(k, 7), s || 1, 7);
 
 // Benchmark model names → each tool's closest catalog model (same architecture).

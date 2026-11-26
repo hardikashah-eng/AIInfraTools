@@ -145,6 +145,17 @@ The page lists open actions with Approve, Reject and Dry-run/Execute buttons.
 - The page binds to localhost by default. Put it behind your SSO proxy before exposing it.
 - Real execution from the page also needs `--allow-live`.
 
+## Alongside NVSentinel
+
+If NVSentinel already runs on the cluster, it detects GPU faults and cordons, drains and remediates nodes itself.
+gpu-health doesn't queue a second repair ladder for a node NVSentinel is handling.
+- **How events arrive:** fleetops imports NVSentinel's events (`fleetops data import nvsentinel`), and
+  `fleetops data export gpu-health` passes on the faults and the nodes being remediated.
+- **What changes:** for those nodes, quarantine, drain, diagnostics and repairs become one `external-remediation` action
+  that names what NVSentinel is doing. Its mode is `never`: shown, never run.
+- **Turning it off:** `"deferToExternal": false` in the config keeps gpu-health's own actions. A remediation older than a
+  day isn't deferred to.
+
 ## Running it on a real fleet
 
 ```bash

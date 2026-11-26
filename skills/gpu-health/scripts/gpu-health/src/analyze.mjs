@@ -42,6 +42,9 @@ export function analyze({ samples, jobs = [], steps = [], probes = [], results =
     jobUsage: jobStats.map(js => ({ job: js.job.id, class: js.job.class, owner: js.job.owner || '', gpus: js.gpus.length, sku: js.sku, usage: js.cls, usageText: CLASS_TEXT[js.cls],
       tensorP50: js.st.tensorP50, smP50: js.st.smP50, dramP50: js.st.dramP50, effP50: js.st.effP50, effP95: js.st.effP95, memPeakGB: js.st.memPeakGB, memTotalGB: js.st.memTotalGB, memSource: js.st.memSource, hours: js.st.hours })),
   };
+  // nodes (or GPUs) another system is remediating now: { 'node' | 'node/gpu': { by, action, check, t } }
+  analysis.external = Object.fromEntries(results.filter(r => r.kind === 'external-remediation' && r.t <= now && now - r.t <= 24 * 3600).sort((a, b) => a.t - b.t)
+    .map(r => [r.gpu != null ? `${r.node}/${r.gpu}` : r.node, { by: r.by, action: r.action, check: r.check, t: r.t }]));
   analysis.suggestions = suggest(analysis, cfg);
   return analysis;
 }
