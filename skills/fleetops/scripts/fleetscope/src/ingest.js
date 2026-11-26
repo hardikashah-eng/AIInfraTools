@@ -5,6 +5,7 @@
      cached   prompt tokens served from a prefix cache, when the log records it
      ttft/queue/e2e  recorded latencies in seconds, used to compare with the simulation
      session  user or session id, when the log records one
+     agent    subagent id within a session (agentic traces), gap  seconds since the session's previous request ended
    Only timing and token counts are read; prompt and response text are never touched. */
 (function (root) {
   'use strict';
@@ -56,12 +57,15 @@
       if (t < 0) continue;
       if (t > opt.maxSeconds) { notes.push('kept the first ' + Math.round(opt.maxSeconds / 60) + ' minutes'); break; }
       if (trace.length >= opt.maxRows) { notes.push('kept the first ' + opt.maxRows.toLocaleString('en-US') + ' requests'); break; }
-      const row = { t, isl: Math.min(Math.round(r.isl), 200000), osl: Math.max(1, Math.min(Math.round(r.osl), 16000)) };
+      const row = { t, isl: Math.min(Math.round(r.isl), opt.maxIsl || 200000), osl: Math.max(1, Math.min(Math.round(r.osl), opt.maxOsl || 16000)) };
       if (isFinite(r.cached) && r.cached >= 0) row.cached = Math.min(Math.round(r.cached), row.isl - 1);
       if (isFinite(r.ttft) && r.ttft >= 0) row.ttft = r.ttft;
       if (isFinite(r.queue) && r.queue >= 0) row.queue = r.queue;
       if (isFinite(r.e2e) && r.e2e >= 0) row.e2e = r.e2e;
       if (r.session != null && r.session !== '') row.session = String(r.session);
+      if (r.agent != null && r.agent !== '') row.agent = String(r.agent);
+      if (isFinite(r.api) && r.api >= 0) row.api = r.api;
+      if (isFinite(r.tools)) row.tools = r.tools;
       trace.push(row);
     }
     if (bad) notes.push(bad + ' unreadable record' + (bad > 1 ? 's' : '') + ' skipped');
@@ -220,6 +224,84 @@
     return out;
   }
 
+  // ---------- agentic traces ----------
+  // Prefix reuse from block hashes: each request lists the hashes of its prompt's fixed-size blocks, chained so a block's
+  // hash depends on everything before it. The cached part of a request is the longest run of leading blocks some earlier
+  // request in the same scope already had: what an unbounded prefix cache would serve. scope 'session' (AgentX: hashes are
+  // session-scoped) or 'global' (Mooncake: one hash space for the whole trace).
+  function prefixReuse(rows, blockTokens, scope) {
+    const seen = new Map();
+    for (const r of rows) {
+      const key = scope === 'global' ? '' : (r.session || ''), set = seen.get(key) || new Set();
+      seen.set(key, set);
+      let n = 0; const h = r.hashes || [];
+      while (n < h.length && set.has(h[n])) n++;
+      for (const x of h) set.add(x);
+      r.cached = Math.min(r.isl, n * blockTokens);
+      delete r.hashes;
+    }
+    return rows;
+  }
+  // SemiAnalysis AgentX ("weka" traces, Apache-2.0): one JSON object per session { id, requests: [ { t, type, model, in,
+  // out, hash_ids, api_time, think_time? } | { type: 'subagent', agent_id, requests: [...] } ] }; t in seconds from the
+  // session start; in = 64-token hash blocks × 64. Sessions are laid end to end unless opt.sessionGapS spaces them.
+  function parseAgentX(docs, opt) {
+    opt = opt || {};
+    const rows = [];
+    let offset = 0;
+    const sessions = docs.map(d => (Array.isArray(d) ? { id: null, requests: d } : d)).filter(d => d && Array.isArray(d.requests));
+    sessions.forEach((d, i) => {
+      const id = String(d.id != null ? d.id : 'session-' + i), start = offset;
+      let end = start;
+      const add = (q, agent) => {
+        const t = start + (+q.t || 0), api = +q.api_time || 0;
+        rows.push({ t, isl: +q.in || 0, osl: +q.out || 1, session: id, agent, api, hashes: q.hash_ids || [], e2e: api || NaN });
+        end = Math.max(end, t + api);
+      };
+      for (const q of d.requests) {
+        if (q && q.type === 'subagent') for (const x of q.requests || []) add(x, String(q.agent_id || 'subagent'));
+        else if (q) add(q, null);
+      }
+      offset = opt.sessionGapS != null ? start + opt.sessionGapS : end;
+    });
+    rows.sort((a, b) => a.t - b.t);
+    prefixReuse(rows, opt.blockTokens || 64, 'session');
+    const out = finish(rows, 'AgentX agentic trace', [], Object.assign({ maxIsl: 2e6, maxOsl: 64000 }, opt));
+    out.stats.sessions = sessions.length;
+    out.notes.push('cached tokens: what an unbounded prefix cache would serve, from 64-token block hashes (within a session)');
+    return out;
+  }
+  // Mooncake (Kimi) traces: one request per line { timestamp (ms), input_length, output_length, hash_ids } with 512-token
+  // blocks in one hash space.
+  function parseMooncake(docs, opt) {
+    opt = opt || {};
+    const rows = docs.filter(d => d && d.input_length != null).map(d => ({ t: (+d.timestamp || 0) / 1000, isl: +d.input_length, osl: +d.output_length || 1, hashes: d.hash_ids || [] }));
+    rows.sort((a, b) => a.t - b.t);
+    prefixReuse(rows, opt.blockTokens || 512, 'global');
+    const out = finish(rows, 'Mooncake trace', [], Object.assign({ maxIsl: 2e6 }, opt));
+    out.notes.push('cached tokens: what an unbounded prefix cache would serve, from 512-token block hashes');
+    return out;
+  }
+  // TraceLab (UW SyFI coding-agent trace, CC BY 4.0): one model call per line, from Claude Code and Codex, with the
+  // provider's own cache accounting, timing events and tool calls.
+  function tracelabRow(o) {
+    const ev = o.timing_events || [], ts = ev.map(e => toSeconds(e.timestamp)).filter(isFinite);
+    if (!ts.length) return null;
+    const isClaude = o.claude_cache_read_input_tokens != null || o.provider === 'claude';
+    const cached = isClaude ? (+o.claude_cache_read_input_tokens || 0) : (+o.prefix_tokens || 0);
+    // the call starts at its input (user message or last tool result) and ends at its last model event
+    const inEv = ev.filter(e => /user_message|tool_result/.test(e.event_type)).map(e => toSeconds(e.timestamp)).filter(isFinite);
+    const outEv = ev.filter(e => /text|tool_call|reasoning|usage_report/.test(e.event_type)).map(e => toSeconds(e.timestamp)).filter(isFinite);
+    const t = inEv.length ? Math.max(...inEv) : Math.min(...ts), endT = outEv.length ? Math.max(...outEv) : t;
+    return { t, isl: +o.input_tokens_total || 0, osl: Math.max(1, (+o.output_tokens || 0)), cached, session: o.session_id, api: Math.max(0, endT - t), tools: (o.tools || []).length, model: o.model };
+  }
+  function parseTraceLab(docs, opt) {
+    const rows = docs.map(tracelabRow).filter(Boolean);
+    const out = finish(rows, 'TraceLab coding-agent trace', [], Object.assign({ maxIsl: 2e6, maxOsl: 64000 }, opt || {}));
+    out.notes.push('cached tokens as each provider reported them (Claude cache reads, Codex cached prefix)');
+    return out;
+  }
+
   // ---------- detection ----------
   function parseJsonLines(text) {
     const out = [];
@@ -239,7 +321,11 @@
       catch (e) { const jl = parseJsonLines(s); docs = jl.docs; bad = jl.bad; }
       if (!docs.length) throw new Error('The file looks like JSON but no record could be parsed.');
       let res;
+      const d0 = docs.find(d => d && typeof d === 'object');
       if (docs.some(d => d && (d.resourceSpans || d.batches))) res = parseOTLP(docs, opt);
+      else if (d0 && (Array.isArray(d0.requests) || (Array.isArray(d0) && d0[0] && d0[0].hash_ids))) res = parseAgentX(docs, opt);
+      else if (d0 && d0.input_length != null && d0.hash_ids) res = parseMooncake(docs, opt);
+      else if (d0 && d0.timing_events && d0.input_tokens_total != null) res = parseTraceLab(docs, opt);
       else if (docs.length === 1 && docs[0] && Array.isArray(docs[0].data) && docs[0].data.some(x => x && x.spans)) res = parseJaeger(docs[0], opt);
       else {
         const records = docs.length === 1 && docs[0] && Array.isArray(docs[0].data) ? docs[0].data : docs;
@@ -259,7 +345,7 @@
     return lines.join('\n') + '\n';
   }
 
-  const api = { parseTrace, parseCSV, toCSV, toSeconds, LIMITS };
+  const api = { parseTrace, parseCSV, toCSV, toSeconds, LIMITS, parseAgentX, parseMooncake, parseTraceLab, tracelabRow, prefixReuse, finish };
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
   else root.FleetIngest = api;
 })(typeof window !== 'undefined' ? window : this);

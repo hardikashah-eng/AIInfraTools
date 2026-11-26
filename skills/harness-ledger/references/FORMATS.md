@@ -85,9 +85,19 @@ Observation exports: a JSON array, `{"data": […]}` from the public API, JSON l
   size and `level: ERROR`.
 - Session: `sessionId` (from the observation or its trace), else the trace.
 
+## TraceLab
+
+The UW SyFI coding-agent trace ([github.com/uw-syfi/TraceLab](https://github.com/uw-syfi/TraceLab), CC BY 4.0), one
+model call per line, streamed (650 MB inflated):
+- **Usage:** `input_tokens_total` (includes cache); Claude rows have `claude_cache_read_input_tokens` and
+  `claude_cache_creation_input_tokens`; Codex rows have `prefix_tokens` (cached input).
+- **Timing:** the call starts at its last input event (user message or tool result) and ends at its last model event.
+- **Tools:** `tools[]` has names, `result_chars` (counted at 4 characters per token) and `is_error`. There are no
+  arguments, so repeated tool calls can't be checked.
+
 ## Outcomes
 
-`--outcomes` file: `{ "<session>": "success" | "failure" }`, a JSON array of `{ session, outcome }`, or CSV
+`--outcomes` file: `{ "<session>": "success" | "failure" }`, SWE-bench `per_instance_details.json` (`resolved`), a JSON array of `{ session, outcome }`, or CSV
 `session,outcome`. `pass`, `resolved`, `true` and `1` read as success; `fail`, `error`, `abandoned`, `false` and `0`
 as failure. A subagent session takes its parent's outcome.
 

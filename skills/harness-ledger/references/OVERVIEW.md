@@ -42,6 +42,7 @@ OpenAI's and OpenTelemetry's include them. See [FORMATS.md](FORMATS.md).
 | OpenTelemetry GenAI | OTLP JSON, or one span per line | `chat` spans' usage, `gen_ai.tool.definitions` (tools offered), `execute_tool` spans, `invoke_agent` names: Copilot, Gemini CLI, OpenAI Agents SDK, LangGraph and others through OpenLLMetry or OpenInference |
 | OpenInference | same | `llm.token_count.*`, `llm.tools.N`, TOOL spans (Arize Phoenix, LlamaIndex, CrewAI, DSPy) |
 | Langfuse | observation export | GENERATION usage and cost, TOOL observations, sessions |
+| TraceLab | `syfi_coding_trace.jsonl.gz` (streamed) | the public trace of 8,058 Claude Code and Codex sessions: cache accounting, timing, tool names, result sizes, errors |
 | vLLM (`--engine`) | OTLP `llm_request` spans | per-request prefill and decode time per replica, to charge self-hosted calls GPU time |
 
 ## What counts as waste
@@ -79,6 +80,23 @@ the total avoidable never exceeds the bill. The method, the thresholds and what 
 
 `--outcomes` (session → success/failure, JSON or CSV) adds cost on failed tasks and **cost per successful task**,
 the number to compare harnesses and configurations by.
+
+## On real data
+
+- **Real coding-agent use** ([VALIDATION-TRACELAB.md](VALIDATION-TRACELAB.md)). On TraceLab (8,058 Claude Code
+  and Codex sessions, 665k calls, in relative prices):
+  - 22% of spend was avoidable.
+  - 76% of that was prompt caches expiring during pauses, 18% was misses inside the cache lifetime, and 5% was
+    oversized tool output.
+  - Oversized tool output is a third of all the context re-read from cache.
+  - Claude Code's cache hit rate falls from 98% to 48% once a pause passes five minutes.
+- **Cost per successful task** ([VALIDATION-SWEBENCH.md](VALIDATION-SWEBENCH.md)). On SWE-bench Verified runs of
+  one scaffold across 11 models:
+  - the median run spends 39% of its budget on tasks it doesn't resolve;
+  - a call cap that loses at most a point of resolution rate saves about 1%;
+  - among models within 5 points of the best rate, cost per resolved task differs 10×.
+
+  `harness-ledger outcomes` runs this on any outcome-labelled runs.
 
 ## Privacy
 

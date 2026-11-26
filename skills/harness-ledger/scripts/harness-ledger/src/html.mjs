@@ -1,12 +1,12 @@
 // One self-contained HTML page: the funnel from tokens to avoidable dollars, causes, harnesses, tools, sessions, and
 // GPU replicas when the engine's trace was joined. Same palette and layout as gpu-ledger's page.
-import { CAUSES, fmtN, fmt$, pct } from './ledger.mjs';
+import { CAUSES, fmtN, pct, moneyFor } from './ledger.mjs';
 
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 const day = t => (t ? new Date(t * 1000).toISOString().slice(0, 16).replace('T', ' ') : '–');
 
 export function html(r, { title = 'Harness ledger: where agents waste model resources' } = {}) {
-  const t = r.totals;
+  const t = r.totals, fmt$ = moneyFor(r);
   const fmax = Math.max(1, ...r.funnel.map(f => f.tokens));
   const funnel = r.funnel.map((f, i) => {
     const avoid = /Avoidable/.test(f.stage);

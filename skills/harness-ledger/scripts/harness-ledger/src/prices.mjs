@@ -21,13 +21,20 @@ export const DEFAULT_PRICES = {
   },
 };
 
+// Relative units, when real prices aren't known or don't matter (comparing harnesses on the same footing): every model at
+// 1 per million fresh input tokens, cache reads 0.1, cache writes 1.25, output 5 — the usual shape of API price lists.
+export const RELATIVE = { relative: true, source: 'relative units (1 = a million fresh input tokens)', models: {} };
+const RELATIVE_ENTRY = { input: 1, cacheRead: 0.1, cacheWrite: 1.25, output: 5 };
+
 export function priceTable(prices = DEFAULT_PRICES) {
+  if (prices === 'relative' || (prices && prices.relative)) return { find: m => (m ? { key: '*', ...RELATIVE_ENTRY } : null), source: RELATIVE.source, asOf: null, currency: 'units', relative: true };
   const models = (prices && prices.models) || {};
   const keys = Object.keys(models).sort((a, b) => b.length - a.length);
   const find = model => {
     if (!model) return null;
     const m = String(model).toLowerCase().replace(/^(anthropic|openai|us\.anthropic|global\.anthropic|bedrock|vertex_ai)[./:]/, '');
-    const k = keys.find(x => m === x.toLowerCase()) || keys.find(x => m.startsWith(x.toLowerCase()));
+    // exact, or a prefix that ends where the id's next part starts ("gpt-5" prices "gpt-5-codex", not "gpt-5.5")
+    const k = keys.find(x => m === x.toLowerCase()) || keys.find(x => m.startsWith(x.toLowerCase()) && /^[-@:_]/.test(m.slice(x.length)));
     return k ? { key: k, ...models[k] } : null;
   };
   return { find, source: prices === DEFAULT_PRICES ? 'example prices (pass --prices)' : (prices.source || 'price file'), asOf: prices.asOf, currency: prices.currency || 'USD' };

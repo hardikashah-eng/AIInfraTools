@@ -99,4 +99,6 @@ In FleetScope, **Load graph JSON** runs it. The same recommendation replays at 9
 | `src/ui.js`, `src/fit-ui.js`, `src/index.src.html` | The page: the sizing view and the "What fits" view |
 | `specs/example.json` | Example spec sheet (one GPU, one model) |
 | `tools/size.mjs` | CLI |
+| `tools/validate-inferencex.mjs` | The sizer against InferenceX's measured runs ([docs/VALIDATION-INFERENCEX.md](docs/VALIDATION-INFERENCEX.md)) |
+| `tools/validate-agentx.mjs` | The sizer against AgentX agentic results (long contexts, high cache hits), with per-GPU calibration; run on results downloaded from InferenceX (`--results DIR`), adding missing models with `--hf-config` |
 | `tests/` | Catalog, model, "What fits" (in Node and in headless Chrome when there is one) and cross-tool FleetScope tests |
