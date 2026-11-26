@@ -38,6 +38,8 @@ import * as Storage from '../src/adapters/storage.mjs';
 import * as Power from '../src/power.mjs';
 import * as Adm from '../src/admission.mjs';
 import * as RO from '../src/rollout.mjs';
+import * as Shadow from '../src/shadow.mjs';
+import * as Replay from '../src/shadow-replay.mjs';
 import { goodputMarkdown, goodputHtml } from '../src/goodput-report.mjs';
 import * as LiveView from '../src/live.mjs';
 import * as Inject from '../src/inject.mjs';
@@ -204,6 +206,22 @@ Node admission and safe rollouts (a bad node or version stopped before it reache
         NCCL bandwidth, step compute in the same jobs, TTFT; a regression rolls the wave back and halts
   fleetops rollout check --field driver --version V [--from T --to T]    the same comparison, ad hoc
   fleetops rollout status --plan rollout.json  ·  fleetops rollout demo [--good]
+
+Shadow upgrades (an infra change measured against the baseline at matched load before it ships; docs/SHADOW.md):
+  fleetops shadow plan --baseline-config b.json --candidate-config c.json [--trace FILE | --baseline SEL --from T --to T]
+        [--effect 0.03] [--rps R] --out plan.json          predicted effect (Inference Sizer) and requests needed to see it
+  fleetops shadow replay --trace FILE|profile.json --baseline URL --candidate URL [--model M] [--speed 1] [--max-requests N]
+        [--duration S] [--max-inflight 64] [--api-key-env VAR] [--out results.jsonl] [--live]
+        the same requests to both endpoints at the same moments (dry run unless --live); results go to the store
+  fleetops shadow answers --baseline URL --candidate URL [--prompts FILE] [--model M] [--live] --out answers.json
+        greedy decoding on both: identical tokens, first divergence, log-probability drift
+  fleetops shadow compare --results FILE | --baseline SEL --candidate SEL [--from T --to T]
+        [--plan plan.json] [--answers answers.json] [--baseline-gpus N --baseline-rate R --candidate-gpus N --candidate-rate R]
+        [--baseline-nodes RE --candidate-nodes RE] [--gates gates.json]     matched-load verdict: promote, roll back, extend
+  fleetops shadow baseline save --name NAME --select SEL [--from T --to T]  ·  fleetops shadow baseline list
+  fleetops shadow watch --name NAME --select SEL [--from T --to T]          drift of a service against its saved baseline
+  fleetops shadow demo                                         a candidate that looks faster and isn't
+  SEL: field=value or field~regex, comma-separated (variant=candidate, replica~vllm-new, pool=chat)
 
 Serving (Inference Sizer both ways, and a one-command vLLM deployment on Kubernetes):
   fleetops serving models | gpus                               the catalog (ids, sizes, Hugging Face repos; GPU types)
@@ -507,6 +525,7 @@ async function main() {
   if (area === 'optimize') return optimize(store, cmd, o);
   if (area === 'admit') return admitCmd(store, cmd, o);
   if (area === 'rollout') return rolloutCmd(store, cmd, o);
+  if (area === 'shadow') return shadowCmd(store, cmd, rest, o);
   if (area === 'inject') return inject(store, cmd, o);
   if (area === 'incidents') return incidents(store, cmd, rest, o);
   if (area === 'backtest') return backtest(store, o);
@@ -985,6 +1004,100 @@ async function admitCmd(store, cmd, o) {
     return;
   }
   throw new Error('fleetops admit pending | check NODE [--record] | apply NODE [--live]');
+}
+
+// ---------- shadow upgrades ----------
+function selector(sel) {
+  if (!sel) return () => true;
+  const parts = String(sel).split(',').map(x => x.trim()).filter(Boolean).map(x => { const m = x.match(/^([\w.]+)(=|~)(.*)$/); if (!m) throw new Error(`selector "${x}": use field=value or field~regex`); return m[2] === '=' ? r => String(r[m[1]]) === m[3] : (re => r => re.test(String(r[m[1]] ?? '')))(new RegExp(m[3])); });
+  return r => parts.every(f => f(r));
+}
+const pctS = x => (x == null || !Number.isFinite(x) ? '–' : `${x >= 0 ? '+' : ''}${(100 * x).toFixed(1)}%`);
+function shadowText(r) {
+  const L = [`${r.decision.toUpperCase()}: ${r.why}`, `${r.requests.baseline} baseline and ${r.requests.candidate} candidate requests, ${r.paired ? 'paired (the same requests on both)' : 'compared at matched load'}`, ''];
+  L.push('  metric   candidate vs baseline (95% CI)          verdict        naive (no load matching)');
+  for (const k of ['ttft', 'tpot', 'e2e']) { const m = r.metrics[k]; if (!m || m.verdict === 'no data') { L.push(`  ${k.padEnd(8)} no data`); continue; }
+    L.push(`  ${k.padEnd(8)} ${pctS(m.effect).padStart(7)} (${pctS(m.lo)} to ${pctS(m.hi)})`.padEnd(51) + ` ${m.verdict.padEnd(14)} ${pctS(m.naive)}${m.coverage != null && m.coverage < 0.8 ? `   only ${(100 * m.coverage).toFixed(0)}% of baseline requests had matching load` : ''}${m.more ? `   ~${m.more} more per arm to settle` : ''}`); }
+  if (r.metrics.errorRate) L.push(`  errors   ${(100 * r.metrics.errorRate.baseline).toFixed(2)}% → ${(100 * r.metrics.errorRate.candidate).toFixed(2)}%`.padEnd(52) + r.metrics.errorRate.verdict);
+  if (r.metrics.tokPerGpuS) L.push(`  tok/s per GPU ${r.metrics.tokPerGpuS.baseline.toFixed(0)} → ${r.metrics.tokPerGpuS.candidate.toFixed(0)} (${pctS(r.metrics.tokPerGpuS.effect)}; ${r.metrics.tokPerGpuS.note})`);
+  if (r.metrics.costPerMTok) L.push(`  $ per M output tokens ${r.metrics.costPerMTok.baseline.toFixed(2)} → ${r.metrics.costPerMTok.candidate.toFixed(2)} (${pctS(r.metrics.costPerMTok.effect)})   ${r.metrics.costPerMTok.verdict}`);
+  if (r.answers) L.push(`  answers  ${r.answers.identical}/${r.answers.prompts} identical under greedy decoding; log-prob drift ${r.answers.meanAbsLogprobDiff != null ? r.answers.meanAbsLogprobDiff.toFixed(3) : '–'}   ${r.answers.verdict}`);
+  if (r.prediction) L.push('', `  prediction ${r.prediction.holds ? 'holds' : 'is off: recalibrate'}: ` + r.prediction.rows.map(x => `${x.metric} predicted ${pctS(x.predicted)}, measured ${pctS(x.measured)}`).join('; '));
+  if (r.infra) L.push('', '  infra: ' + Object.entries(r.infra).map(([k, v]) => v.effect != null ? `${k} ${pctS(v.effect)}` : `${k} ${v.baseline} → ${v.candidate}`).join(', '));
+  return L.join('\n');
+}
+async function shadowCmd(store, cmd, rest, o) {
+  const opt = k => (o[k] != null && o[k] !== true ? o[k] : undefined), json = k => (opt(k) ? JSON.parse(read(opt(k))) : undefined), num = k => (opt(k) != null ? +opt(k) : undefined);
+  const from = time(opt('from')), to = time(opt('to'));
+  const requests = sel => store.query('request', { from, to, where: selector(sel) });
+  const dir = path.join(store.dir, 'shadow'); fs.mkdirSync(dir, { recursive: true });
+  const readJsonl = f => read(f).split('\n').filter(l => l.trim()).map(l => JSON.parse(l));
+  const traceRows = async f => { if (/\.json$/.test(f)) { const j = JSON.parse(read(f)); if (j.kind === 'fleetscope.agentic-profile') { const A = (await import('module')).createRequire(import.meta.url)('../../fleetscope/src/agentic.js'); return A.synthesize(j, { sessionsPerHour: num('sessions-per-hour') || 600, horizonS: num('duration') || 600, seed: num('seed') || 1 }); } }
+    const { loadRows } = await import('../../fleetscope/tools/agentic.mjs'); return (await loadRows(f)).rows; };
+  const arm = (name, url) => ({ name, url, model: opt('model'), apiKey: opt('api-key-env') ? process.env[opt('api-key-env')] : undefined });
+  if (cmd === 'demo') {
+    const d = Shadow.synth(); store.append('request', [...d.baseline, ...d.candidate]);
+    if (J) { OUT.demo = { baseline: d.baseline.length, candidate: d.candidate.length }; return; }
+    return say(`demo in ${store.dir}: ${d.baseline.length} baseline and ${d.candidate.length} candidate requests (variant field). The candidate is 8% slower at any load but got less than half the traffic.\ntry: fleetops shadow compare --baseline variant=baseline --candidate variant=candidate --store ${store.dir}`);
+  }
+  if (cmd === 'plan') {
+    const b = json('baseline-config'), c = json('candidate-config'); if (!b || !c) throw new Error('--baseline-config b.json --candidate-config c.json: { model, gpu, tp, gpus?, rate? } (Inference Sizer ids)');
+    const reqs = opt('trace') ? await traceRows(opt('trace')) : requests(opt('baseline'));
+    if (!reqs.length) throw new Error('no workload: give --trace FILE, or --baseline SEL with request records in the store');
+    const w = Shadow.workloadOf(reqs.map(r => Object.assign({ e2e: r.e2e ?? r.api ?? 0 }, r))), p = Shadow.plan({ baseline: b, candidate: c, workload: w, delta: num('effect') ?? 0.03, rps: num('rps') });
+    if (opt('out')) fs.writeFileSync(opt('out'), JSON.stringify(p, null, 1) + '\n');
+    if (J) { OUT.plan = p; return; }
+    return say(`predicted (candidate vs baseline at median prompt ${Math.round(w.isl)}, output ${Math.round(w.osl)}, cache hit ${w.prefixHit.toFixed(0)}%, ${w.inflight} in flight):\n  TTFT ${pctS(p.predicted.ttft)}, TPOT ${pctS(p.predicted.tpot)}, tokens/s per GPU ${pctS(p.predicted.tokPerGpuS)}${p.predicted.costPerMTok != null ? `, $ per M tokens ${pctS(p.predicted.costPerMTok)}` : ''}\ntest: ${p.test.requestsPerArm} requests per arm to see a ${(100 * p.test.delta).toFixed(0)}% effect${p.test.paired ? ' (paired replay)' : ''}${p.test.seconds ? `, about ${Math.ceil(p.test.seconds / 60)} min at ${opt('rps')} req/s` : ''}\n${p.note}${opt('out') ? `\n→ ${opt('out')}` : ''}`);
+  }
+  if (cmd === 'replay') {
+    if (!opt('trace') || !opt('baseline') || !opt('candidate')) throw new Error('--trace FILE|profile.json --baseline URL --candidate URL [--live]');
+    const reqs = Replay.requestsFrom(await traceRows(opt('trace')), { speed: num('speed') || 1, maxRequests: num('max-requests') ?? 1000, durationS: num('duration') ?? Infinity });
+    const arms = [arm('baseline', opt('baseline')), arm('candidate', opt('candidate'))];
+    const res = await Replay.run(reqs, arms, { live: !!o.live, maxInflight: num('max-inflight') || 64, model: opt('model'), exact: !o['no-exact-output'] });
+    if (res.dryRun) { if (J) { OUT.replay = res; return; } return say(`dry run: ${res.plan.requests} requests (${res.plan.sessions} sessions) over ${Math.round(res.plan.seconds)} s; ${res.plan.note}.\nAdd --live to send them.`); }
+    store.append('request', res.records, { source: 'shadow-replay' });
+    if (opt('out')) fs.writeFileSync(opt('out'), res.records.map(r => JSON.stringify(r)).join('\n') + '\n');
+    if (J) { OUT.replay = { requests: res.records.length, errors: res.records.filter(r => r.error).length }; return; }
+    return say(`${res.records.length} measurements (${res.records.filter(r => r.error).length} errors) in ${store.dir}${opt('out') ? ` and ${opt('out')}` : ''}\nnext: fleetops shadow compare --baseline variant=baseline,source=shadow-replay --candidate variant=candidate,source=shadow-replay --store ${store.dir}`);
+  }
+  if (cmd === 'answers') {
+    if (!opt('baseline') || !opt('candidate')) throw new Error('--baseline URL --candidate URL [--prompts FILE] [--live]');
+    const prompts = opt('prompts') ? read(opt('prompts')).split('\n').map(l => l.trim()).filter(Boolean).map(l => (l.startsWith('{') ? JSON.parse(l).prompt : l)) : Replay.PROMPTS;
+    const res = await Replay.answers([arm('baseline', opt('baseline')), arm('candidate', opt('candidate'))], { prompts, live: !!o.live, model: opt('model'), maxTokens: num('max-tokens') || 64 });
+    if (opt('out') && !res.dryRun) fs.writeFileSync(opt('out'), JSON.stringify(res, null, 1) + '\n');
+    if (J) { OUT.answers = res; return; }
+    return say(res.dryRun ? `dry run: ${res.note}. Add --live to send them.` : `${res.identical}/${res.prompts} identical; first divergence at token ${res.meanFirstDivergence ?? '–'} on average; log-prob drift ${res.meanAbsLogprobDiff != null ? res.meanAbsLogprobDiff.toFixed(4) : '–'}${opt('out') ? ` → ${opt('out')}` : ''}`);
+  }
+  if (cmd === 'compare') {
+    let base, cand;
+    if (opt('results')) { const rs = readJsonl(opt('results')); base = rs.filter(r => r.variant === 'baseline'); cand = rs.filter(r => r.variant === 'candidate'); }
+    else { if (!opt('baseline') || !opt('candidate')) throw new Error('--results FILE, or --baseline SEL --candidate SEL'); base = requests(opt('baseline')); cand = requests(opt('candidate')); }
+    if (!base.length || !cand.length) throw new Error(`no requests: ${base.length} baseline, ${cand.length} candidate`);
+    const plan = json('plan'), re = k => (opt(k) ? new RegExp(opt(k)) : null);
+    const r = Shadow.compare(base, cand, { gates: json('gates'), predicted: plan && plan.predicted, answers: json('answers'),
+      baseline: { gpus: num('baseline-gpus'), rate: num('baseline-rate') }, candidate: { gpus: num('candidate-gpus'), rate: num('candidate-rate') },
+      infra: opt('baseline-nodes') ? Shadow.infraSignals(store, { baselineNodes: re('baseline-nodes'), candidateNodes: re('candidate-nodes'), from, to }) : null });
+    fs.appendFileSync(path.join(dir, 'verdicts.jsonl'), JSON.stringify({ t: Math.floor(Date.now() / 1000), baseline: opt('baseline') || opt('results'), candidate: opt('candidate') || opt('results'), decision: r.decision, why: r.why, metrics: r.metrics }) + '\n');
+    if (J) { OUT.shadow = r; return; }
+    return say(shadowText(r));
+  }
+  if (cmd === 'baseline') {
+    const bdir = path.join(dir, 'baselines'); fs.mkdirSync(bdir, { recursive: true });
+    if (rest[0] === 'list' || !rest[0]) { const xs = fs.readdirSync(bdir).filter(f => f.endsWith('.jsonl')).map(f => { const ls = readJsonl(path.join(bdir, f)); const b = ls[ls.length - 1]; return { name: b.name, saved: fmt(b.t), requests: b.requests, versions: ls.length }; }); if (J) { OUT.baselines = xs; return; } return say(xs.length ? xs.map(x => `${x.name}  ${x.requests} requests, saved ${x.saved} (${x.versions} version${x.versions > 1 ? 's' : ''})`).join('\n') : 'no baselines yet: fleetops shadow baseline save --name NAME --select SEL'); }
+    if (rest[0] === 'save') { if (!opt('name') || !opt('select')) throw new Error('--name NAME --select SEL'); const rs = requests(opt('select')); if (!rs.length) throw new Error('no requests match'); const b = Shadow.makeBaseline(opt('name'), rs, { meta: { select: opt('select'), from, to } }); fs.appendFileSync(path.join(bdir, opt('name').replace(/[^\w.-]/g, '_') + '.jsonl'), JSON.stringify(b) + '\n'); if (J) { OUT.baseline = { name: b.name, requests: b.requests, sample: b.sample.length }; return; } return say(`saved baseline ${b.name}: ${b.sample.length} of ${b.requests} requests`); }
+    throw new Error('fleetops shadow baseline save --name NAME --select SEL | list');
+  }
+  if (cmd === 'watch') {
+    if (!opt('name') || !opt('select')) throw new Error('--name NAME --select SEL [--from T --to T]');
+    const f = path.join(dir, 'baselines', opt('name').replace(/[^\w.-]/g, '_') + '.jsonl'); if (!fs.existsSync(f)) throw new Error(`no baseline ${opt('name')}: fleetops shadow baseline save first`);
+    const ls = readJsonl(f), b = ls[ls.length - 1], cur = requests(opt('select')); if (!cur.length) throw new Error('no current requests match');
+    const r = Shadow.drift(b, cur), hist = path.join(dir, 'watch-' + opt('name').replace(/[^\w.-]/g, '_') + '.jsonl');
+    fs.appendFileSync(hist, JSON.stringify({ t: Math.floor(Date.now() / 1000), from, to, metrics: Object.fromEntries(Object.entries(r.metrics).map(([k, v]) => [k, v.effect])), drifted: r.drifted }) + '\n');
+    const past = readJsonl(hist).slice(-8);
+    if (J) { OUT.watch = Object.assign(r, { history: past }); return; }
+    return say(`${r.note} (${r.current} requests vs baseline ${b.name} of ${fmt(b.t)})\n` + ['ttft', 'tpot', 'e2e'].map(k => { const m = r.metrics[k]; return `  ${k.padEnd(5)} ${pctS(m.effect)} (${pctS(m.lo)} to ${pctS(m.hi)}) ${m.verdict}`; }).join('\n') + `\n  last ${past.length} checks, TPOT: ${past.map(x => pctS(x.metrics.tpot)).join('  ')}`);
+  }
+  throw new Error('fleetops shadow demo | plan | replay | answers | compare | baseline save|list | watch');
 }
 
 async function rolloutCmd(store, cmd, o) {
