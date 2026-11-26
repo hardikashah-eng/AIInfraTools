@@ -39,6 +39,7 @@ The tests named below run in CI on every pull request. Sources and licenses for 
 | Root-cause rules find the planted cause through noise | 220 generated incidents, 22 scenario kinds, 17 rules, 0–2 distractors each | First run **73% top-1**; the misses were real weaknesses in the rules, fixed; now **99.5% top-1**. This measures the rules against our own generator, not accuracy on real incidents |
 | Training goodput and checkpoint advice | Demo week with planted badput | Each planted loss found; checkpoint interval from the measured interruption rate |
 | Silent data corruption detection | Simulated canary results | Detection logic tested; the canary hasn't run on a GPU |
+| Shadow upgrades judge an infra change at matched load | A candidate 8% slower at every load that got less than half the traffic; paired replays against two mock streaming endpoints; a numerics change that is faster but changes greedy outputs | Naive TPOT says **7.5% faster**; matched load finds **+7.8% (+6.5% to +9.3%)** and rolls back. Paired replay measures a 10% regression within 2 points. The numerics change is rolled back on answers |
 | gpu-health fault rules | Fixtures in the documented `nvidia-smi`/DCGM formats | No public dataset has XID, ECC or link-error history to test against |
 
 ## Not checked yet
@@ -47,6 +48,8 @@ The tests named below run in CI on every pull request. Sources and licenses for 
   and its slowdown measured, fault injection through the real collectors. The cheapest setup that covers most of it is
   a Kubernetes cluster of three 1-GPU NVIDIA L4 nodes (about $1–2 an hour on spot), plus two InfiniBand CPU nodes for
   an hour for the fabric counters.
+- **Shadow upgrades on live engines:** `fleetops shadow replay --live` against two real vLLM or SGLang deployments (an
+  engine upgrade, or one GPU type against another). The statistics are tested; the end-to-end run isn't.
 - **Root-cause accuracy on real incidents:** needs labeled postmortems (`rca bench --from-incidents`).
 - **Switch-side fabric counters:** public clouds don't expose their switches.
 - **The sizer at low latency:** needs profiles fitted per latency regime.

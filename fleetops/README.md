@@ -96,6 +96,19 @@ On Philly's real job traces, the 10 flaky nodes found in the first half of a wee
 
 See [docs/ADMISSION.md](docs/ADMISSION.md).
 
+## Shadow upgrades: measure an infra change before it ships
+
+`fleetops shadow` checks a change of GPUs, engine, config, networking, topology or serving layout against the baseline.
+1. `plan` predicts the effect with the Inference Sizer and sizes the test.
+2. `replay` sends the same recorded sessions to both endpoints at the same moments, and `answers` checks greedy outputs
+   match.
+3. `compare` judges TTFT, TPOT, end-to-end time, errors, cost per token and infra signals **at matched load**, each with
+   a confidence interval. The result is promote, roll back, extend the test, or recalibrate.
+
+`baseline` and `watch` catch a service drifting from its own history. In the demo, a candidate 8% slower got lighter
+traffic and looks 7.5% faster on a dashboard; the matched-load comparison finds +7.8% and rolls it back. See
+[docs/SHADOW.md](docs/SHADOW.md).
+
 ## Serving: what fits, what it carries, deploy it
 
 - **What fits:** `fleetops serving fit --gpu H100 --nodes 2 [--rate 5]` lists every catalog model with the load it carries on that hardware within the TTFT and TPOT targets (production and flat out), output tokens/s, $ per million tokens and the layout. With `--rate`, the models that carry it come first, largest first.
@@ -210,6 +223,8 @@ src/security.mjs         tokens, roles, tenant scopes, redaction, egress allowli
 src/incidents.mjs        lifecycle, paging, timeline page, postmortem draft, labels from confirmed causes
 src/traces.mjs           spans → requests with stages; Kineto traces and step logs → per-rank steps
 tools/bench-scale.mjs    ingest and 24 h root-cause benchmark
+src/shadow.mjs           shadow upgrades: plan, matched-load compare, verdicts, baselines and drift
+src/shadow-replay.mjs    paired replay to two OpenAI-compatible endpoints; greedy same-answers check
 src/optimize.mjs         candidates, selection, staged rollout through gpu-health's queue, guards, rollback, verify
 tools/fleetops.mjs       CLI
 tools/fetch-public-data.sh

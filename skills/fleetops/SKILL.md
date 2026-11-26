@@ -192,6 +192,22 @@ version safely.
   signal's ratio and p-value, and say when exposure is too low to judge.
 - Details: [references/ADMISSION.md](references/ADMISSION.md).
 
+## Shadow upgrades
+
+To check an infra change (GPUs, engine or its config, network, topology, serving layout) before it ships:
+
+- `shadow plan --baseline-config b.json --candidate-config c.json --trace FILE --rps R --out plan.json --json`: the
+  predicted effect and the requests per arm a test needs. Configs are Inference Sizer ids `{ model, gpu, tp, gpus?, rate? }`.
+- `shadow replay --trace FILE --baseline URL --candidate URL --model M`: dry run by default. **Add `--live` only when
+  the user asks to send traffic to those endpoints.** Results land in the store with `variant` and `pair`.
+- `shadow answers --baseline URL --candidate URL --model M --out answers.json`: also dry run unless `--live`.
+- `shadow compare --baseline SEL --candidate SEL [--plan plan.json] [--answers answers.json] [--…-gpus N --…-rate R] --json`:
+  the decision with each metric's effect, interval, verdict and the naive number. Lead with the decision and the metric
+  behind it; say when coverage (requests at matching load) is low or the prediction was off.
+- `shadow baseline save --name N --select SEL` and `shadow watch --name N --select SEL` for drift.
+
+See [references/SHADOW.md](references/SHADOW.md).
+
 ## Goodput and silent data corruption
 
 - **Goodput** (where training GPU-hours went; asked as "are we wasting GPUs", "how often should we checkpoint"):

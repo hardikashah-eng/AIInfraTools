@@ -5,6 +5,20 @@ change the `--json` output, and when it does the change is listed here (see [sch
 
 ## Unreleased
 
+### Shadow upgrades
+
+- **`fleetops shadow`** measures an infra change before it ships, against the baseline at matched load.
+  - **`plan`:** predicts the effect with the Inference Sizer and sizes the test.
+  - **`replay`:** the same recorded sessions to two OpenAI-compatible endpoints at the same moments, paired per
+    request, with session prefixes kept for the prefix cache. Dry run unless `--live`.
+  - **`answers`:** greedy tokens and log-probs compared on a prompt set.
+  - **`compare`:** stratified by calls in flight, prompt length and cache hit (or paired), with bootstrap intervals,
+    verdicts against gates, the naive number beside each, errors, tokens/s per GPU, $ per M tokens, infra signals, and
+    prediction vs measurement.
+  - **`baseline` / `watch`:** drift of a service against its own saved history.
+- Design and architecture: `fleetops/docs/SHADOW.md`. Tested on synthetic arms and mock endpoints; not yet run against
+  live engines.
+
 ### Agentic workloads from real traces
 
 - **FleetScope agentic profiles** (`fleetscope/tools/agentic.mjs`, `aiinfra agentic`):
