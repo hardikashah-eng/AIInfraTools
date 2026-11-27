@@ -1,0 +1,354 @@
+{
+ "$schema": "https://json-schema.org/draft/2020-12/schema",
+ "$id": "https://github.com/hardikashah-eng/AIInfraTools/schemas/fleetops.shadow.prom.schema.json",
+ "title": "aiinfra fleetops shadow prom --prom URL --baseline M --candidate M --json",
+ "type": "object",
+ "properties": {
+  "shadow": {
+   "type": "object",
+   "properties": {
+    "decision": {
+     "type": "string"
+    },
+    "gates": {
+     "type": "object",
+     "properties": {
+      "answers": {
+       "type": "object",
+       "properties": {
+        "logprob": {
+         "type": "number"
+        },
+        "match": {
+         "type": "number"
+        }
+       },
+       "required": [
+        "logprob",
+        "match"
+       ]
+      },
+      "costPerMTok": {
+       "type": "number"
+      },
+      "e2e": {
+       "type": "number"
+      },
+      "errorRate": {
+       "type": "number"
+      },
+      "prediction": {
+       "type": "number"
+      },
+      "tokPerGpuS": {
+       "type": "number"
+      },
+      "tpot": {
+       "type": "number"
+      },
+      "ttft": {
+       "type": "number"
+      }
+     },
+     "required": [
+      "answers",
+      "costPerMTok",
+      "e2e",
+      "errorRate",
+      "prediction",
+      "tokPerGpuS",
+      "tpot",
+      "ttft"
+     ]
+    },
+    "load": {
+     "type": "object",
+     "properties": {
+      "baseline": {
+       "type": "object",
+       "properties": {
+        "concPerEngine": {
+         "type": "number"
+        },
+        "e2eP95": {
+         "type": "null"
+        },
+        "hit": {
+         "type": "number"
+        },
+        "isl": {
+         "type": "number"
+        },
+        "requests": {
+         "type": "number"
+        },
+        "ttftP95": {
+         "type": "null"
+        },
+        "windows": {
+         "type": "number"
+        }
+       },
+       "required": [
+        "concPerEngine",
+        "e2eP95",
+        "hit",
+        "isl",
+        "requests",
+        "ttftP95",
+        "windows"
+       ]
+      },
+      "candidate": {
+       "type": "object",
+       "properties": {
+        "concPerEngine": {
+         "type": "number"
+        },
+        "e2eP95": {
+         "type": "null"
+        },
+        "hit": {
+         "type": "number"
+        },
+        "isl": {
+         "type": "number"
+        },
+        "requests": {
+         "type": "number"
+        },
+        "ttftP95": {
+         "type": "null"
+        },
+        "windows": {
+         "type": "number"
+        }
+       },
+       "required": [
+        "concPerEngine",
+        "e2eP95",
+        "hit",
+        "isl",
+        "requests",
+        "ttftP95",
+        "windows"
+       ]
+      }
+     },
+     "required": [
+      "baseline",
+      "candidate"
+     ]
+    },
+    "metrics": {
+     "type": "object",
+     "properties": {
+      "e2e": {
+       "type": "object",
+       "properties": {
+        "coverage": {
+         "type": "number"
+        },
+        "effect": {
+         "type": "number"
+        },
+        "hi": {
+         "type": "number"
+        },
+        "lo": {
+         "type": "number"
+        },
+        "mode": {
+         "type": "string"
+        },
+        "more": {
+         "type": "null"
+        },
+        "naive": {
+         "type": "number"
+        },
+        "verdict": {
+         "type": "string"
+        },
+        "windows": {
+         "type": "number"
+        }
+       },
+       "required": [
+        "coverage",
+        "effect",
+        "hi",
+        "lo",
+        "mode",
+        "more",
+        "naive",
+        "verdict",
+        "windows"
+       ]
+      },
+      "errorRate": {
+       "type": "object",
+       "properties": {
+        "baseline": {
+         "type": "number"
+        },
+        "candidate": {
+         "type": "number"
+        },
+        "diff": {
+         "type": "number"
+        },
+        "p": {
+         "type": "number"
+        },
+        "verdict": {
+         "type": "string"
+        }
+       },
+       "required": [
+        "baseline",
+        "candidate",
+        "diff",
+        "p",
+        "verdict"
+       ]
+      },
+      "tpot": {
+       "type": "object",
+       "properties": {
+        "coverage": {
+         "type": "number"
+        },
+        "effect": {
+         "type": "number"
+        },
+        "hi": {
+         "type": "number"
+        },
+        "lo": {
+         "type": "number"
+        },
+        "mode": {
+         "type": "string"
+        },
+        "more": {
+         "type": "null"
+        },
+        "naive": {
+         "type": "number"
+        },
+        "verdict": {
+         "type": "string"
+        },
+        "windows": {
+         "type": "number"
+        }
+       },
+       "required": [
+        "coverage",
+        "effect",
+        "hi",
+        "lo",
+        "mode",
+        "more",
+        "naive",
+        "verdict",
+        "windows"
+       ]
+      },
+      "ttft": {
+       "type": "object",
+       "properties": {
+        "coverage": {
+         "type": "number"
+        },
+        "effect": {
+         "type": "number"
+        },
+        "hi": {
+         "type": "number"
+        },
+        "lo": {
+         "type": "number"
+        },
+        "mode": {
+         "type": "string"
+        },
+        "more": {
+         "type": "null"
+        },
+        "naive": {
+         "type": "number"
+        },
+        "verdict": {
+         "type": "string"
+        },
+        "windows": {
+         "type": "number"
+        }
+       },
+       "required": [
+        "coverage",
+        "effect",
+        "hi",
+        "lo",
+        "mode",
+        "more",
+        "naive",
+        "verdict",
+        "windows"
+       ]
+      }
+     },
+     "required": [
+      "e2e",
+      "errorRate",
+      "tpot",
+      "ttft"
+     ]
+    },
+    "requests": {
+     "type": "object",
+     "properties": {
+      "baseline": {
+       "type": "number"
+      },
+      "candidate": {
+       "type": "number"
+      }
+     },
+     "required": [
+      "baseline",
+      "candidate"
+     ]
+    },
+    "source": {
+     "type": "string"
+    },
+    "step": {
+     "type": "number"
+    },
+    "verdict": {
+     "type": "string"
+    },
+    "why": {
+     "type": "string"
+    }
+   },
+   "required": [
+    "decision",
+    "gates",
+    "load",
+    "metrics",
+    "requests",
+    "source",
+    "step",
+    "verdict",
+    "why"
+   ]
+  }
+ },
+ "required": [
+  "shadow"
+ ]
+}

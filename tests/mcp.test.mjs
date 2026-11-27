@@ -47,9 +47,9 @@ test('handshake: negotiates the protocol, names the server, answers ping; notifi
   assert.equal(c.unsolicited.length, 0);
 });
 
-test('tools/list: 15 tools, valid input and output schemas, nothing that acts on infrastructure', async () => {
+test('tools/list: 19 tools, valid input and output schemas, nothing that acts on infrastructure', async () => {
   tools = (await c.send('tools/list')).result.tools;
-  assert.equal(tools.length, 16); assert.equal(new Set(tools.map(t => t.name)).size, 16);
+  assert.equal(tools.length, 19); assert.equal(new Set(tools.map(t => t.name)).size, 19);
   for (const t of tools) {
     assert.match(t.name, /^[a-z_]+$/); assert.ok(t.description.length > 30, t.name);
     assert.equal(t.inputSchema.type, 'object');
@@ -102,6 +102,25 @@ test('calls on data: GPU health, the ledger, root cause, power, trace skew', { t
   const g = generate({ requests: 60 }); fs.writeFileSync(path.join(dir, 'traces.json'), JSON.stringify(g.request));
   const sk = checked('fix_trace_skew', await call('fix_trace_skew', { traces: path.join(dir, 'traces.json') }));
   assert.ok(sk.after.startBeforeParent <= sk.before.startBeforeParent);
+});
+
+test('calls for the loop: a shadow verdict (store and Prometheus), a canary\'s status, agent economics', { timeout: 300000 }, async () => {
+  const cli = (...a) => execFileSync(process.execPath, [path.join(ROOT, 'bin', 'aiinfra.mjs'), ...a], { cwd: dir, encoding: 'utf8', maxBuffer: 1 << 26 });
+  const store = path.join(dir, 'sh'); cli('fleetops', 'shadow', 'demo', '--store', store, '--json');
+  const v = await call('shadow_verdict', { store, baseline: 'variant=baseline', candidate: 'variant=candidate' });
+  assert.ok(!v.isError, v.content[0].text); assert.equal(v.structuredContent.shadow.decision, 'roll back');
+  const sc = JSON.parse(fs.readFileSync(path.join(ROOT, 'schemas', 'fleetops.shadow.compare.schema.json'), 'utf8'));
+  assert.deepEqual(validate(sc, v.structuredContent), [], 'matches the compare schema');
+  const unreachable = await call('shadow_verdict', { store, prom: 'http://127.0.0.1:1', baselineMatchers: 'llm_isvc_name="a"', candidateMatchers: 'llm_isvc_name="b"' });
+  assert.ok(unreachable.isError, 'Prometheus mode reports an unreachable server as an error');
+  // a canary started outside the server (`true` stands in for kubectl); the server only reads it
+  cli('fleetops', 'shadow', 'canary', 'start', '--name', 'chat', '--group', 'chat', '--baseline', 'v1', '--candidate', 'v2', '--live', '--kubectl', 'true', '--store', store, '--json');
+  const cs = checked('canary_status', await call('canary_status', { store, name: 'chat' }));
+  assert.equal(cs.canary.status, 'running'); assert.equal(cs.canary.steps[0], 1);
+  assert.ok(!tools.some(t => /canary_(advance|approve)/.test(t.name)), 'advancing or approving a canary is a person\'s, outside the server');
+  const e = checked('agent_economics', await call('agent_economics', { paths: path.join(ROOT, 'harness-ledger/tests/fixtures'), days: 30, selfHostModel: 'qwen3-32b', gpu: 'H100', gpuRate: 2 }));
+  assert.ok(e.fixes && e.selfHost && e.selfHost.gpus > 0);
+  const sneaky = await call('canary_status', { store, name: '--live' }); assert.ok(sneaky.isError);
 });
 
 test('errors: unknown tool and method, a missing argument, bad JSON; and a smuggled --live is refused', async () => {

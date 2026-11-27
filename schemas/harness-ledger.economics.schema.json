@@ -1,0 +1,490 @@
+{
+ "$schema": "https://json-schema.org/draft/2020-12/schema",
+ "$id": "https://github.com/hardikashah-eng/AIInfraTools/schemas/harness-ledger.economics.schema.json",
+ "title": "aiinfra harness-ledger economics PATH… [--outcomes F] [--self-host-model M --gpu G] --json",
+ "type": "object",
+ "properties": {
+  "fixes": {
+   "type": "object",
+   "properties": {
+    "candidates": {
+     "type": "array",
+     "items": {
+      "type": "object",
+      "properties": {
+       "cause": {
+        "type": "string"
+       },
+       "fix": {
+        "type": "string"
+       },
+       "label": {
+        "type": "string"
+       },
+       "perResolved": {
+        "type": "number"
+       },
+       "saves": {
+        "type": "number"
+       }
+      },
+      "required": [
+       "cause",
+       "fix",
+       "label",
+       "perResolved",
+       "saves"
+      ]
+     }
+    },
+    "caps": {
+     "type": [
+      "array",
+      "null"
+     ],
+     "items": {
+      "type": "object",
+      "properties": {
+       "cap": {
+        "type": "number"
+       },
+       "costPerResolved": {
+        "type": "number"
+       },
+       "rateLossPts": {
+        "type": "number"
+       },
+       "saved": {
+        "type": "number"
+       },
+       "successesLost": {
+        "type": "number"
+       }
+      },
+      "required": [
+       "cap",
+       "costPerResolved",
+       "rateLossPts",
+       "saved",
+       "successesLost"
+      ]
+     }
+    },
+    "rows": {
+     "type": "array",
+     "items": {
+      "type": "object",
+      "properties": {
+       "cause": {
+        "type": "string"
+       },
+       "costPerResolvedAfter": {
+        "type": "number"
+       },
+       "cumulative": {
+        "type": "number"
+       },
+       "fix": {
+        "type": "string"
+       },
+       "kind": {
+        "type": "string"
+       },
+       "label": {
+        "type": "string"
+       },
+       "perResolved": {
+        "type": "number"
+       },
+       "saves": {
+        "type": "number"
+       },
+       "share": {
+        "type": "number"
+       }
+      },
+      "required": [
+       "cause",
+       "costPerResolvedAfter",
+       "cumulative",
+       "fix",
+       "kind",
+       "label",
+       "perResolved",
+       "saves",
+       "share"
+      ]
+     }
+    }
+   },
+   "required": [
+    "candidates",
+    "caps",
+    "rows"
+   ]
+  },
+  "perResolved": {
+   "type": "object",
+   "properties": {
+    "cost": {
+     "type": "number"
+    },
+    "costPerResolved": {
+     "type": [
+      "null",
+      "number"
+     ]
+    },
+    "costPerTask": {
+     "type": "number"
+    },
+    "failShare": {
+     "type": "number"
+    },
+    "failures": {
+     "type": "number"
+    },
+    "known": {
+     "type": "boolean"
+    },
+    "spentOnFailures": {
+     "type": "number"
+    },
+    "successRate": {
+     "type": [
+      "null",
+      "number"
+     ]
+    },
+    "successes": {
+     "type": "number"
+    },
+    "tasks": {
+     "type": "number"
+    },
+    "unknown": {
+     "type": "number"
+    }
+   },
+   "required": [
+    "cost",
+    "costPerResolved",
+    "costPerTask",
+    "failShare",
+    "failures",
+    "known",
+    "spentOnFailures",
+    "successRate",
+    "successes",
+    "tasks",
+    "unknown"
+   ]
+  },
+  "selfHost": {
+   "type": [
+    "null",
+    "object"
+   ],
+   "properties": {
+    "apiMonthly": {
+     "type": "number"
+    },
+    "bound": {
+     "type": "string"
+    },
+    "breakEvenGpuRate": {
+     "type": "number"
+    },
+    "calibrated": {
+     "type": "null"
+    },
+    "cheaper": {
+     "type": "string"
+    },
+    "compute": {
+     "type": "number"
+    },
+    "gpu": {
+     "type": "string"
+    },
+    "gpuRate": {
+     "type": "number"
+    },
+    "gpus": {
+     "type": "number"
+    },
+    "kvGpus": {
+     "type": "number"
+    },
+    "mode": {
+     "type": "string"
+    },
+    "model": {
+     "type": "string"
+    },
+    "monthly": {
+     "type": "number"
+    },
+    "overContext": {
+     "type": "number"
+    },
+    "overContextShare": {
+     "type": "number"
+    },
+    "peak": {
+     "type": "object",
+     "properties": {
+      "cacheHit": {
+       "type": "number"
+      },
+      "calls": {
+       "type": "number"
+      },
+      "kvTokensP95": {
+       "type": "number"
+      },
+      "rpsP95": {
+       "type": "number"
+      }
+     },
+     "required": [
+      "cacheHit",
+      "calls",
+      "kvTokensP95",
+      "rpsP95"
+     ]
+    },
+    "perResolvedRatio": {
+     "type": "number"
+    },
+    "qualityRatio": {
+     "type": "number"
+    },
+    "selfMonthly": {
+     "type": "number"
+    },
+    "source": {
+     "type": "string"
+    },
+    "spare": {
+     "type": "boolean"
+    },
+    "successRates": {
+     "type": "object",
+     "properties": {
+      "api": {
+       "type": [
+        "null",
+        "number"
+       ]
+      },
+      "assumed": {
+       "type": "boolean"
+      },
+      "self": {
+       "type": [
+        "null",
+        "number"
+       ]
+      }
+     },
+     "required": [
+      "api",
+      "assumed",
+      "self"
+     ]
+    },
+    "tokenScale": {
+     "type": "number"
+    },
+    "tpot": {
+     "type": "number"
+    },
+    "ttft": {
+     "type": "number"
+    },
+    "typicalDay": {
+     "type": "object",
+     "properties": {
+      "breakEvenGpuRate": {
+       "type": "number"
+      },
+      "calls": {
+       "type": "number"
+      },
+      "gpus": {
+       "type": "number"
+      }
+     },
+     "required": [
+      "breakEvenGpuRate",
+      "calls",
+      "gpus"
+     ]
+    },
+    "unitPrice": {
+     "type": "null"
+    },
+    "volume": {
+     "type": "object",
+     "properties": {
+      "curve": {
+       "type": "array",
+       "items": {
+        "type": "object",
+        "properties": {
+         "api": {
+          "type": "number"
+         },
+         "gpus": {
+          "type": "number"
+         },
+         "self": {
+          "type": "number"
+         },
+         "x": {
+          "type": "number"
+         }
+        },
+        "required": [
+         "api",
+         "gpus",
+         "self",
+         "x"
+        ]
+       }
+      },
+      "from": {
+       "type": "null"
+      },
+      "note": {
+       "type": "string"
+      }
+     },
+     "required": [
+      "curve",
+      "from",
+      "note"
+     ]
+    },
+    "volumeTypical": {
+     "type": "object",
+     "properties": {
+      "curve": {
+       "type": "array",
+       "items": {
+        "type": "object",
+        "properties": {
+         "api": {
+          "type": "number"
+         },
+         "gpus": {
+          "type": "number"
+         },
+         "self": {
+          "type": "number"
+         },
+         "x": {
+          "type": "number"
+         }
+        },
+        "required": [
+         "api",
+         "gpus",
+         "self",
+         "x"
+        ]
+       }
+      },
+      "from": {
+       "type": "null"
+      },
+      "note": {
+       "type": "string"
+      }
+     },
+     "required": [
+      "curve",
+      "from",
+      "note"
+     ]
+    }
+   },
+   "required": [
+    "apiMonthly",
+    "cheaper",
+    "perResolvedRatio",
+    "qualityRatio"
+   ]
+  },
+  "volume": {
+   "type": "object",
+   "properties": {
+    "apiMonthly": {
+     "type": "number"
+    },
+    "callsPerDay": {
+     "type": "number"
+    },
+    "currency": {
+     "type": "string"
+    },
+    "days": {
+     "type": "number"
+    },
+    "measured": {
+     "type": "boolean"
+    },
+    "monthTokens": {
+     "type": "object",
+     "properties": {
+      "cacheRead": {
+       "type": "number"
+      },
+      "cacheWrite": {
+       "type": "number"
+      },
+      "fresh": {
+       "type": "number"
+      },
+      "output": {
+       "type": "number"
+      }
+     },
+     "required": [
+      "cacheRead",
+      "cacheWrite",
+      "fresh",
+      "output"
+     ]
+    },
+    "scale": {
+     "type": "number"
+    },
+    "sessionsPerDay": {
+     "type": "number"
+    },
+    "short": {
+     "type": "boolean"
+    }
+   },
+   "required": [
+    "apiMonthly",
+    "callsPerDay",
+    "currency",
+    "days",
+    "measured",
+    "monthTokens",
+    "scale",
+    "sessionsPerDay",
+    "short"
+   ]
+  }
+ },
+ "required": [
+  "fixes",
+  "perResolved",
+  "selfHost",
+  "volume"
+ ]
+}

@@ -83,6 +83,28 @@ export const TOOLS = [
       engine: str('vLLM OTLP traces, for GPU time'), replicas: str('Replica GPUs and $/GPU-h (JSON)'), outcomes: str('Session outcomes (JSON or CSV)'), since: str('Only calls after this, e.g. 7d') } },
     cli: i => ['harness-ledger', 'report', ...String(i.paths).split(',').map(s => s.trim()).filter(Boolean)]
       .concat(...[['prices', i.prices], ['engine', i.engine], ['replicas', i.replicas], ['outcomes', i.outcomes], ['since', i.since]].filter(([, v]) => v).map(([k, v]) => [`--${k}`, String(v)]), '--json') },
+  { name: 'agent_economics', title: 'Cost per resolved agent task, and self-host vs API', schema: 'harness-ledger.economics', annotations: T,
+    description: 'From agent logs or traces (the same inputs as harness_waste): cost per resolved task, fixes ranked by what they save per resolved task, and, with selfHostModel and gpu, the GPU-hour price under which self-hosting an open model beats the API (sized with the Inference Sizer for the busiest day). opencost uses OpenCost\'s measured cost per token instead. A model, not a purchase recommendation.',
+    input: { type: 'object', required: ['paths'], properties: { paths: str('Files or folders, comma-separated'), outcomes: str('Session outcomes (JSON or CSV)'), prices: str('Price file ($/M tokens per model), or "relative"'),
+      selfHostModel: str('Open model from the sizer catalog, e.g. deepseek-v3'), gpu: str('GPU from the sizer catalog, e.g. H200'), gpuRate: num('$ per GPU-hour, for the monthly cost and the volume where self-hosting wins'),
+      selfHostSuccessRate: num('The open model\'s task success rate (0–1), e.g. from SWE-bench'), opencost: str('OpenCost /inferenceCost/total answer (file) for measured self-host cost'), opencostModel: str('Which OpenCost model to use'),
+      calibration: str('Sizer calibration profile (fleetops) for measured efficiencies'), days: num('Days the input covers'), tasksPerDay: num('Volume to plan for') } },
+    cli: i => ['harness-ledger', 'economics', ...String(i.paths).split(',').map(s => s.trim()).filter(Boolean)]
+      .concat(...[['outcomes', i.outcomes], ['prices', i.prices], ['self-host-model', i.selfHostModel], ['gpu', i.gpu], ['gpu-rate', i.gpuRate], ['self-host-success-rate', i.selfHostSuccessRate],
+        ['opencost', i.opencost], ['opencost-model', i.opencostModel], ['calibration', i.calibration], ['days', i.days], ['tasks-per-day', i.tasksPerDay]].filter(([, v]) => v !== undefined && v !== null && v !== '').map(([k, v]) => [`--${k}`, String(v)]), '--json') },
+  { name: 'shadow_verdict', title: 'Judge an infra change against the baseline', schema: 'fleetops.shadow.compare', schemaFor: i => (i.prom ? 'fleetops.shadow.prom' : 'fleetops.shadow.compare'), annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: true },
+    description: 'Compares a candidate (new GPUs, engine, config, topology) with the baseline at matched load: promote, roll back or extend, with each metric\'s effect and interval and the naive number beside it. Either request records in a fleetops store (baseline/candidate as field=value selectors), or a canary\'s per-version vLLM metrics in Prometheus (prom with baselineMatchers/candidateMatchers, e.g. llm_isvc_name="chat-v2"). Sends no traffic and changes no rollout; records the verdict in the store, and with plan refits the sizer\'s calibration when the prediction was off.',
+    input: { type: 'object', required: ['store'], properties: { store: str('fleetops store folder'),
+      baseline: str('Baseline requests in the store, e.g. variant=baseline'), candidate: str('Candidate requests, e.g. variant=candidate'),
+      prom: str('Prometheus URL (instead of store records)'), baselineMatchers: str('Prometheus label matchers for the baseline'), candidateMatchers: str('Prometheus label matchers for the candidate'),
+      select: str('Matchers both versions share, e.g. namespace="llm"'), lookback: num('Seconds of canary traffic to judge', { default: 3600 }), plan: str('plan.json from shadow plan (prediction vs measurement)') } },
+    cli: i => (i.prom
+      ? opt(opt(opt(['fleetops', 'shadow', 'prom', '--prom', i.prom, '--baseline', i.baselineMatchers || '', '--candidate', i.candidateMatchers || '', '--store', i.store], '--select', i.select), '--lookback', i.lookback), '--plan', i.plan)
+      : opt(['fleetops', 'shadow', 'compare', '--baseline', i.baseline || '', '--candidate', i.candidate || '', '--store', i.store], '--plan', i.plan)).concat('--json') },
+  { name: 'canary_status', title: 'Where an llm-d canary stands', schema: 'fleetops.shadow.canary', annotations: T,
+    description: 'An llm-d canary driven by the shadow judge: its share of traffic, status, a step waiting for approval, and its history. Read-only: advancing the canary or approving a step is done by a person outside this server.',
+    input: { type: 'object', required: ['store', 'name'], properties: { store: str('fleetops store folder'), name: str('Canary name') } },
+    cli: i => ['fleetops', 'shadow', 'canary', 'status', '--name', i.name, '--store', i.store, '--json'] },
   { name: 'rca_diagnose', title: 'Root cause of an incident', schema: 'fleetops.rca.diagnose', annotations: T,
     description: 'Ranks root-cause hypotheses for job failures, a latency regression or device faults in a window, with the evidence for each.',
     input: { type: 'object', required: ['store', 'symptom', 'from', 'to'], properties: { store: str('fleetops store folder'),
