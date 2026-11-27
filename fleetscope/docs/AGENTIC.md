@@ -82,6 +82,8 @@ per-stream tails got multiplied across streams. That is why the profile keeps pe
 Limits:
 - Timing comes from the providers that served the trace, not from your GPUs. The profile carries the shape of the work
   (growth, reuse, gaps, tool time), not latency.
-- The KV working set assumes contexts stay in GPU memory for the cache lifetime. Offloading to CPU memory or storage
-  needs fewer GPUs and adds reload time.
+- The KV working set assumes contexts stay in GPU memory for the cache lifetime. `size --kv-offload` models offload to
+  host memory instead (LMCache-style: 375 GB per GPU by default, `--cpu-kv-gb`): fewer GPUs when the working set binds,
+  at the cost of a PCIe reload when a session comes back. It is used only when that reload fits the TTFT target and
+  PCIe stays under 80% busy at the peak minute; the what-if is reported either way. SSD tiers are not modelled.
 - TraceLab is mostly coding agents. Fit your own profile for other kinds of agent.
