@@ -65,7 +65,8 @@ export function peakStats(rows, s, { cacheTtlS = 300 } = {}) {
   const day = busiestDay(fit), typ = typicalDay(fit);
   return { stats: A.workloadStats(day, { cacheTtlS }), typical: typ.length ? A.workloadStats(typ, { cacheTtlS }) : null, overContext: over, calls: rows.length, peakDayCalls: day.length, typicalDayCalls: typ.length };
 }
-export function gpusFor(stats, s, x = 1) { const r = A.sizeFor(scaleStats(stats, x), s, M); return r; }
+// sizeOpts: { kvOffload, offload: { cpuGBPerGpu, pcieGBs } } — contexts that don't fit in HBM held in host memory
+export function gpusFor(stats, s, x = 1, sizeOpts = {}) { return A.sizeFor(scaleStats(stats, x), s, M, sizeOpts); }
 
 // ---------- outcomes and fixes ----------
 export function perResolved(report) {
@@ -109,9 +110,9 @@ export function breakEven({ apiMonthly, apiRate = null, selfRate = null, gpus = 
 }
 // the volume (× today's) from which self-hosting is cheaper per resolved task at gpuRate: API cost grows with volume,
 // self-hosted cost in steps of GPUs
-export function breakEvenVolume(stats, s, { apiMonthly, gpuRate, q = 1, unit = 1, base = 1, lo = 1 / 64, hi = 256 } = {}) {
+export function breakEvenVolume(stats, s, { apiMonthly, gpuRate, q = 1, unit = 1, base = 1, lo = 1 / 64, hi = 256, sizeOpts = {} } = {}) {
   const pts = []; for (let x = lo; x <= hi * 1.0001; x *= Math.SQRT2) pts.push(x);
-  const at = x => { const r = gpusFor(stats, s, base * x); return { x, gpus: r.gpus, api: apiMonthly * unit * x, self: r.gpus == null ? null : r.gpus * gpuRate * HOURS_PER_MONTH / q }; };
+  const at = x => { const r = gpusFor(stats, s, base * x, sizeOpts); return { x, gpus: r.gpus, api: apiMonthly * unit * x, self: r.gpus == null ? null : r.gpus * gpuRate * HOURS_PER_MONTH / q }; };
   const curve = pts.map(at), first = curve.find(p => p.self != null && p.self < p.api);
   return { curve, from: first ? first.x : null, note: first ? null : `not cheaper anywhere up to ${hi / base >= 1 ? Math.round(hi / base) : hi}× today's volume` };
 }
@@ -134,16 +135,17 @@ export function economics(calls, report, opt = {}) {
   if (opt.model || opt.gpu) {
     // tokenScale: the open model makes k× the calls per task (same shape), so it serves k× the arrivals for the same work
     const s = sizerSettings(opt), rows = rowsOf(calls), k = scale * tokenScale;
-    const pk = peakStats(rows, s, opt), sized = gpusFor(pk.stats, s, k), sizedTyp = pk.typical ? gpusFor(pk.typical, s, k) : null;
+    const sizeOpts = { kvOffload: !!opt.kvOffload, offload: Object.fromEntries([['cpuGBPerGpu', opt.cpuKvGB], ['pcieGBs', opt.pcieGBs]].filter(([, v]) => v != null)) };
+    const pk = peakStats(rows, s, opt), sized = gpusFor(pk.stats, s, k, sizeOpts), sizedTyp = pk.typical ? gpusFor(pk.typical, s, k, sizeOpts) : null;
     const unit = units ? (opt.unitPrice || 1) : 1, be = breakEven({ apiMonthly: monthly, apiRate, selfRate, gpus: sized.gpus, gpuRate: opt.gpuRate ?? null, unit });
-    out.selfHost = { model: s.modelId, gpu: s.gpuId, ttft: s.ttft, tpot: s.tpot, calibrated: s.calibrated, gpus: sized.gpus, compute: sized.compute, kvGpus: sized.kvGpus, bound: sized.bound, mode: sized.mode,
+    out.selfHost = { model: s.modelId, gpu: s.gpuId, ttft: s.ttft, tpot: s.tpot, calibrated: s.calibrated, gpus: sized.gpus, compute: sized.compute, kvGpus: sized.kvGpus, bound: sized.bound, mode: sized.mode, offload: sized.offload, kvOffloadUsed: sized.kvOffloadUsed, power: sized.power,
       peak: { calls: pk.peakDayCalls, rpsP95: pk.stats.rps.p95 * k, cacheHit: pk.stats.cacheHit, kvTokensP95: pk.stats.kvTokens.p95 * k }, overContext: pk.overContext, overContextShare: pk.calls ? pk.overContext / pk.calls : 0, tokenScale, spare: s.nPlus1,
       typicalDay: sizedTyp ? { calls: pk.typicalDayCalls, gpus: sizedTyp.gpus, breakEvenGpuRate: breakEven({ apiMonthly: monthly, apiRate, selfRate, gpus: sizedTyp.gpus, unit: units ? (opt.unitPrice || 1) : 1 }).breakEvenGpuRate } : null,
       successRates: { api: apiRate, self: selfRate, assumed: opt.selfSuccessRate == null }, gpuRate: opt.gpuRate ?? null, unitPrice: units ? unit : null, ...be };
     if (opt.gpuRate != null && sized.gpus) {
-      out.selfHost.volume = breakEvenVolume(pk.stats, s, { apiMonthly: monthly, gpuRate: opt.gpuRate, q: be.qualityRatio, unit, base: k });
+      out.selfHost.volume = breakEvenVolume(pk.stats, s, { apiMonthly: monthly, gpuRate: opt.gpuRate, q: be.qualityRatio, unit, base: k, sizeOpts });
       // many teams' bursts don't line up: sized on a typical day's shape, the crossover is an optimistic bound
-      if (pk.typical) out.selfHost.volumeTypical = breakEvenVolume(pk.typical, s, { apiMonthly: monthly, gpuRate: opt.gpuRate, q: be.qualityRatio, unit, base: k });
+      if (pk.typical) out.selfHost.volumeTypical = breakEvenVolume(pk.typical, s, { apiMonthly: monthly, gpuRate: opt.gpuRate, q: be.qualityRatio, unit, base: k, sizeOpts });
     }
   }
   return out;
@@ -168,6 +170,8 @@ export function economicsText(E) {
   if (S && S.model) {
     L.push('', `Self-hosting ${S.model} on ${S.gpu} (TTFT ${S.ttft} ms, TPOT ${S.tpot} ms${S.calibrated ? `; measured efficiencies: ${S.calibrated}` : '; spec-sheet efficiencies'}) for the busiest day's peak: ${S.gpus ?? 'no layout meets the targets'} GPUs (compute ${S.compute ?? '–'}, KV working set ${S.kvGpus}; bound by ${S.bound}; whole nodes${S.spare ? ', one spare' : ''})`);
     L.push(`  peak ${S.peak.rpsP95.toFixed(2)} calls/s (p95 minute of the busiest day, ${N(S.peak.calls)} calls), cache hit ${P(S.peak.cacheHit)}${S.typicalDay ? `; a typical day (${N(S.typicalDay.calls)} calls) needs ${S.typicalDay.gpus ?? '–'}` : ''}`);
+    if (S.offload) L.push(`  KV offload ${S.kvOffloadUsed ? 'used' : !S.offload.usable ? 'not usable here' : S.offload.gpus < S.gpus ? `would bring it to ${S.offload.gpus} GPUs (--kv-offload)` : 'not needed: compute sets the count'}: with ${S.offload.cpuGBPerGpu} GB of host memory per GPU, ${S.offload.gpus ?? '–'} GPUs (${P(S.offload.offloadedShare)} of the working set in host memory), a returning session reloads in ${S.offload.reloadMs.toFixed(0)} ms, PCIe ${P(S.offload.pcieUtil)} busy`);
+    if (S.power && S.power.tokensPerSecPerMW != null) L.push(`  ${Math.round(S.power.tokensPerSecPerMW).toLocaleString('en-US')} output tokens/s per MW at the peak minute (${S.power.kw.toFixed(0)} kW provisioned, ${S.power.basis})`);
     if (S.overContext) L.push(`  ${P(S.overContextShare)} of calls are longer than ${S.model}'s context: capped here, which flatters self-hosting (the open model would need compaction, or can't do those tasks as they are)`);
     if (S.successRates.api != null) L.push(`  success: API ${P(S.successRates.api)}, self-hosted ${P(S.successRates.self)}${S.successRates.assumed ? ' (assumed the same: pass --self-host-success-rate)' : ''}`);
     const r$ = x => (x == null ? '–' : '$' + (x >= 0.1 ? x.toFixed(2) : x.toPrecision(2)));

@@ -50,6 +50,8 @@ Economics options (with the report options above):
   --self-host-model ID --gpu ID      an open model and GPU from the Inference Sizer catalog (deepseek-v3 on H200, …): the
                                      same workload sized for the busiest day's peak (compute and KV working set)
   --ttft MS (2000) --tpot MS (50)    the targets it is sized for; --no-spare drops the sizer's spare node
+  --kv-offload [--cpu-kv-gb 375] [--pcie-gbs 64]   hold the KV working set beyond HBM in host memory, reloaded over PCIe,
+                                     when a reload fits the TTFT target and PCIe has room
   --calibration FILE                 measured engine efficiencies (fleetops calibrate, or a promoted shadow upgrade's
                                      <store>/calibration/sizer.json) instead of spec-sheet defaults
   --gpu-rate $/GPU-h                 what a GPU-hour costs you: monthly cost, which is cheaper, and the volume where it flips
@@ -158,7 +160,7 @@ export async function main(argv) {
     } else if (o['opencost-prom']) selfHostPrice = toSelfHostPrice(await opencostProm(String(o['opencost-prom']), { ...ocPick, window: o['opencost-window'] || '24h' }));
     const E = economics(r.calls, r.report, { model: o['self-host-model'] || undefined, gpu: o.gpu || undefined, ttft: n('ttft'), tpot: n('tpot'), gpuRate: n('gpu-rate'),
       selfSuccessRate: n('self-host-success-rate'), apiSuccessRate: n('api-success-rate'), tokenScale: n('token-scale'), days: n('days'), tasksPerDay: n('tasks-per-day'), unitPrice: n('unit-price'),
-      selfHostPrice, cacheTtlS: opts.cacheTtlS, spare: !o['no-spare'], calibration: o.calibration ? readJson(o.calibration) : null });
+      selfHostPrice, cacheTtlS: opts.cacheTtlS, spare: !o['no-spare'], calibration: o.calibration ? readJson(o.calibration) : null, kvOffload: !!o['kv-offload'], cpuKvGB: n('cpu-kv-gb'), pcieGBs: n('pcie-gbs') });
     process.stdout.write(o.json ? JSON.stringify(E, null, 1) + '\n' : economicsText(E));
     return 0;
   }

@@ -87,3 +87,33 @@ test('cli: fit a profile, then size and stats from it', () => {
   assert.match(fs.readFileSync(path.join(dir, 's.csv'), 'utf8'), /^timestamp,input_tokens/);
   fs.rmSync(dir, { recursive: true, force: true });
 });
+
+test('KV offload: host memory lowers the GPU count when the KV working set binds, not when compute does', () => {
+  const s = (m, g) => Object.assign({}, M.SETTINGS, C.MODELS.find(x => x.id === m), C.GPUS.find(x => x.id === g), { ttft: 2000, tpot: 50, ctx: 131072 });
+  const kvHeavy = { isl: { mean: 60000, p99: 120000 }, osl: { mean: 400, p99: 2000 }, cacheHit: 0.95, rps: { p95: 5 }, kvTokens: { p95: 3e8 }, decodeTps: { p95: 2000 }, inflight: { p95: 50 } };
+  const hbm = A.sizeFor(kvHeavy, s('deepseek-v3', 'H200'), M), off = A.sizeFor(kvHeavy, s('deepseek-v3', 'H200'), M, { kvOffload: true });
+  assert.equal(hbm.bound, 'KV working set'); assert.equal(hbm.kvOffloadUsed, false);
+  assert.ok(off.kvOffloadUsed && off.gpus < hbm.gpus / 4, `offload ${off.gpus} vs HBM-only ${hbm.gpus}`);
+  assert.equal(off.gpus, Math.max(off.compute, off.offload.kvGpus)); assert.ok(off.offload.offloadedShare > 0.5 && off.offload.reloadMs < 2000);
+  assert.deepEqual(hbm.offload, off.offload, 'the offload what-if is reported either way');
+  // less host memory needs more GPUs
+  assert.ok(A.sizeFor(kvHeavy, s('deepseek-v3', 'H200'), M, { kvOffload: true, offload: { cpuGBPerGpu: 50 } }).gpus > off.gpus);
+  // compute-bound: offload changes nothing
+  const light = Object.assign({}, kvHeavy, { kvTokens: { p95: 1e6 } }), a = A.sizeFor(light, s('deepseek-v3', 'H200'), M), b = A.sizeFor(light, s('deepseek-v3', 'H200'), M, { kvOffload: true });
+  assert.equal(a.bound, 'compute'); assert.equal(b.gpus, a.gpus);
+  // a reload slower than the TTFT target (a slow bus) rules offload out
+  const slow = A.sizeFor(kvHeavy, s('deepseek-v3', 'H200'), M, { kvOffload: true, offload: { pcieGBs: 0.01 } });
+  assert.equal(slow.offload.usable, false); assert.equal(slow.kvOffloadUsed, false); assert.equal(slow.gpus, hbm.gpus);
+});
+
+test('tokens per MW: peak output tokens/s over provisioned power, node power when published, board power otherwise', () => {
+  const st = { isl: { mean: 2000, p99: 8000 }, osl: { mean: 400, p99: 2000 }, cacheHit: 0.5, rps: { p95: 2 }, kvTokens: { p95: 1e6 }, decodeTps: { p95: 3000 }, inflight: { p95: 20 } };
+  const sH = Object.assign({}, M.SETTINGS, C.MODELS.find(x => x.id === 'llama33-70b'), C.GPUS.find(x => x.id === 'H200'), { ttft: 2000, tpot: 50, ctx: 131072 });
+  const r = A.sizeFor(st, sH, M);
+  assert.equal(r.power.basis, 'published node power');
+  assert.ok(Math.abs(r.power.kw - r.gpus * sH.nodeKW / (sH.domain || 8)) < 1e-9);
+  assert.ok(Math.abs(r.power.tokensPerSecPerMW - 3000 / (r.power.kw / 1000)) < 1e-6);
+  const board = A.sizeFor(st, Object.assign({}, sH, { nodeKW: 0 }), M);
+  assert.equal(board.power.basis, 'GPU board power only'); assert.ok(Math.abs(board.power.kw - board.gpus * sH.tdpW / 1000) < 1e-9);
+  assert.equal(A.sizeFor(st, Object.assign({}, sH, { nodeKW: 0, tdpW: 0 }), M).power, null, 'no power figures, no tokens/MW');
+});

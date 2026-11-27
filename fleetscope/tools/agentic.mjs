@@ -6,6 +6,7 @@
 //   node tools/agentic.mjs synth PROFILE --sessions-per-hour N [--hours 1] [--seed 1] [-o trace.csv|trace.jsonl]
 //   node tools/agentic.mjs stats TRACE|PROFILE [--sessions-per-hour N] [--hours 1] [--ideal]
 //   node tools/agentic.mjs size TRACE|PROFILE --sessions-per-hour N [--model qwen3-coder-480b] [--gpu B200] [--ttft 2000] [--tpot 30]
+//        [--kv-offload [--cpu-kv-gb 375] [--pcie-gbs 64]]   KV beyond HBM held in host memory and reloaded over PCIe
 //   node tools/agentic.mjs validate TRACE [--sessions-per-hour 600] [--hours 1] [--seeds 5] [--holdout 0.3] [--model …] [--gpu …] [--markdown]
 //
 // TRACE: TraceLab (syfi_coding_trace.jsonl[.gz], or the word "tracelab" to fetch the public release), AgentX / "weka" session
@@ -55,8 +56,8 @@ function settings(o) {
 function capped(rows, ctx) { let n = 0; const out = rows.map(r => (r.isl + r.osl > ctx ? (n++, Object.assign({}, r, { isl: Math.max(1, ctx - r.osl), cached: r.cached != null ? Math.min(r.cached, ctx - r.osl - 1) : r.cached })) : r)); return { rows: out, over: n }; }
 
 export function sizeReport(rows, s, o = {}) {
-  const c = capped(rows, s.ctx), st = A.workloadStats(c.rows, { cacheTtlS: o.cacheTtlS || 300 });
-  return { stats: st, overContext: c.over, agentic: A.sizeFor(st, s, M), flat: A.sizeFor(A.flatStats(st), s, M), model: s.modelId, gpu: s.gpuId };
+  const c = capped(rows, s.ctx), st = A.workloadStats(c.rows, { cacheTtlS: o.cacheTtlS || 300 }), so = o.sizeOpts || {};
+  return { stats: st, overContext: c.over, agentic: A.sizeFor(st, s, M, so), flat: A.sizeFor(A.flatStats(st), s, M), model: s.modelId, gpu: s.gpuId };
 }
 
 const pct = x => (x == null || !Number.isFinite(x) ? '–' : `${x >= 0 ? '+' : ''}${(100 * x).toFixed(1)}%`);
@@ -119,8 +120,11 @@ export async function main(argv) {
     return 0;
   }
   if (cmd === 'size') {
-    const s = settings(o), rep = sizeReport(await workload(), s, { cacheTtlS: ttl });
-    out(rep, `${rep.model} on ${rep.gpu}: agentic ${rep.agentic.gpus} GPUs (compute ${rep.agentic.compute}, KV working set ${rep.agentic.kvGpus} → bound by ${rep.agentic.bound}); flat ISL/OSL sizing would say ${rep.flat.gpus ?? 'no layout meets the targets'}${rep.overContext ? `; ${rep.overContext} calls capped at the model's context` : ''}`);
+    const sizeOpts = { kvOffload: !!o['kv-offload'], offload: Object.fromEntries([['cpuGBPerGpu', o['cpu-kv-gb']], ['pcieGBs', o['pcie-gbs']]].filter(([, v]) => v != null && v !== true).map(([k, v]) => [k, +v])) };
+    const s = settings(o), rep = sizeReport(await workload(), s, { cacheTtlS: ttl, sizeOpts }), a = rep.agentic, f = a.offload;
+    out(rep, `${rep.model} on ${rep.gpu}: agentic ${a.gpus} GPUs (compute ${a.compute}, KV working set ${a.kvGpus} → bound by ${a.bound}); flat ISL/OSL sizing would say ${rep.flat.gpus ?? 'no layout meets the targets'}${rep.overContext ? `; ${rep.overContext} calls capped at the model's context` : ''}`
+      + `\n  KV offload ${a.kvOffloadUsed ? 'used' : !f.usable ? 'not usable here' : f.gpus < a.gpus ? 'would bring it to ' + f.gpus + ' GPUs (--kv-offload)' : 'not needed: compute sets the count'}: ${f.cpuGBPerGpu} GB host memory per GPU, ${(100 * f.offloadedShare).toFixed(0)}% of the working set off the GPUs, reload ${f.reloadMs.toFixed(0)} ms, PCIe ${(100 * (f.pcieUtil || 0)).toFixed(0)}% busy`
+      + (a.power && a.power.tokensPerSecPerMW != null ? `\n  ${Math.round(a.power.tokensPerSecPerMW).toLocaleString('en-US')} output tokens/s per MW at the peak minute (${a.power.kw.toFixed(0)} kW, ${a.power.basis})` : ''));
     return 0;
   }
   if (cmd === 'validate') {

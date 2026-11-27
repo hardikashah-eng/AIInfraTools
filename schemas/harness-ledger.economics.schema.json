@@ -199,7 +199,10 @@
      "type": "null"
     },
     "cheaper": {
-     "type": "string"
+     "type": [
+      "null",
+      "string"
+     ]
     },
     "compute": {
      "type": "number"
@@ -208,13 +211,19 @@
      "type": "string"
     },
     "gpuRate": {
-     "type": "number"
+     "type": [
+      "null",
+      "number"
+     ]
     },
     "gpus": {
      "type": "number"
     },
     "kvGpus": {
      "type": "number"
+    },
+    "kvOffloadUsed": {
+     "type": "boolean"
     },
     "mode": {
      "type": "string"
@@ -224,6 +233,49 @@
     },
     "monthly": {
      "type": "number"
+    },
+    "offload": {
+     "type": "object",
+     "properties": {
+      "cpuGBPerGpu": {
+       "type": "number"
+      },
+      "fitsTtft": {
+       "type": "boolean"
+      },
+      "gpus": {
+       "type": "number"
+      },
+      "kvGpus": {
+       "type": "number"
+      },
+      "offloadedShare": {
+       "type": "number"
+      },
+      "pcieGBs": {
+       "type": "number"
+      },
+      "pcieUtil": {
+       "type": "number"
+      },
+      "reloadMs": {
+       "type": "number"
+      },
+      "usable": {
+       "type": "boolean"
+      }
+     },
+     "required": [
+      "cpuGBPerGpu",
+      "fitsTtft",
+      "gpus",
+      "kvGpus",
+      "offloadedShare",
+      "pcieGBs",
+      "pcieUtil",
+      "reloadMs",
+      "usable"
+     ]
     },
     "overContext": {
      "type": "number"
@@ -255,13 +307,38 @@
      ]
     },
     "perResolvedRatio": {
-     "type": "number"
+     "type": [
+      "null",
+      "number"
+     ]
+    },
+    "power": {
+     "type": "object",
+     "properties": {
+      "basis": {
+       "type": "string"
+      },
+      "kw": {
+       "type": "number"
+      },
+      "tokensPerSecPerMW": {
+       "type": "number"
+      }
+     },
+     "required": [
+      "basis",
+      "kw",
+      "tokensPerSecPerMW"
+     ]
     },
     "qualityRatio": {
      "type": "number"
     },
     "selfMonthly": {
-     "type": "number"
+     "type": [
+      "null",
+      "number"
+     ]
     },
     "source": {
      "type": "string"
