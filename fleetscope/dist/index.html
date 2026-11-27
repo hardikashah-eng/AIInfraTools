@@ -791,6 +791,19 @@ button, select, input { font: inherit; color: inherit; }
       notes.push('Chunked-attention layers modelled as sliding-window layers.');
     }
     if (c.sliding_window && !swaFrac) notes.push('sliding_window is set but not enabled for these layers; KV is sized for full attention.');
+    // linear-attention layers (Qwen3-Next / Qwen3.5 Gated DeltaNet: layer_types "linear_attention" or full_attention_interval)
+    let linFrac = 0, linStateMB = 0;
+    const linN = Array.isArray(c.layer_types) ? c.layer_types.filter(t => /linear/i.test(String(t))).length
+      : c.full_attention_interval > 1 ? layers - Math.floor(layers / c.full_attention_interval) : 0;
+    if (linN) {
+      linFrac = +(linN / layers).toFixed(4);
+      const vh = +first(c, ['linear_num_value_heads'], qHeads), kd = +first(c, ['linear_key_head_dim'], 128), vd = +first(c, ['linear_value_head_dim'], 128);
+      linStateMB = +(vh * kd * vd * 4 / 1e6).toFixed(3);
+      notes.push(`${linN} linear-attention layers: a ${linStateMB} MB state per layer per sequence (fp32), no KV per token.`);
+    }
+    // sparse attention: an index picks the tokens each query attends (DeepSeek Sparse Attention and its descendants)
+    const sparseTopK = c.index_topk ? +c.index_topk : 0;
+    if (sparseTopK) notes.push(`Sparse attention: each query attends ${sparseTopK} selected tokens.`);
     // context
     let maxCtx = +first(c, ['max_position_embeddings', 'n_positions', 'seq_length', 'max_sequence_length'], 4096);
     const rs = c.rope_scaling;
@@ -825,7 +838,7 @@ button, select, input { font: inherit; color: inherit; }
     const name = String(first(j, ['_name_or_path', 'name_or_path'], '') || '').split('/').pop() || (c.model_type ? c.model_type + ' ' + (total / 1e9).toFixed(0) + 'B' : 'Imported model');
     const model = {
       name, total: +(total / 1e9).toFixed(2), active: +(active / 1e9).toFixed(2), layers, hidden, qHeads, kvHeads, headDim,
-      attn: mla ? 'mla' : 'gqa', mlaLatent, mlaRope, mlaNope, mlaV, experts, topk, swaFrac, swaWindow, maxCtx,
+      attn: mla ? 'mla' : 'gqa', mlaLatent, mlaRope, mlaNope, mlaV, experts, topk, swaFrac, swaWindow, linFrac, linStateMB, sparseTopK, maxCtx,
       wprec: /fp8|float8/i.test(JSON.stringify(j.quantization_config || '')) ? 'fp8' : /mxfp4|nvfp4|fp4/i.test(JSON.stringify(j.quantization_config || '')) ? 'fp4' : 'fp8',
     };
     return { model, notes };
@@ -1232,7 +1245,7 @@ button, select, input { font: inherit; color: inherit; }
     return res;
   }
 
-  const api = { SETTINGS, plan, derive, kvBytes, decodeStep, memInfo, prefillStats, prefillTime, configs, computeLoad, decodeLabel, prefillLabel, decodeCap, packNodes, operatingPoint };
+  const api = { SETTINGS, plan, derive, kvBytes, attnPre, attnDec, decodeStep, memInfo, prefillStats, prefillTime, configs, computeLoad, decodeLabel, prefillLabel, decodeCap, packNodes, operatingPoint };
   if (typeof module !== 'undefined' && module.exports) module.exports = api; else root.SizerModel = api;
 })(this);
 
