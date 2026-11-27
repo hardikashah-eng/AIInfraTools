@@ -1,6 +1,6 @@
 {
   "name": "aiinfra-tools",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "Open tools for running GPU fleets: size inference, simulate capacity, find root causes, cap power, deploy on llm-d, and charge back GPU-hours. No dependencies.",
   "license": "Apache-2.0",
   "type": "module",
