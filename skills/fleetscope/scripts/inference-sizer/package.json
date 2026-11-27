@@ -1,6 +1,6 @@
 {
   "name": "inference-sizer",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "license": "Apache-2.0",
   "private": true,
   "description": "Size a GPU fleet for LLM serving: GPUs, layout and cost to meet TTFT/TPOT targets. Exports to FleetScope.",
