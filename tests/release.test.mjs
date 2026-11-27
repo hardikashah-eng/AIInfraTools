@@ -9,6 +9,9 @@ test('the package version has a CHANGELOG section, and its notes link out correc
   const n = notes(v);
   assert.match(n, /npx aiinfra-tools/); assert.match(n, /### New/);
   assert.doesNotMatch(n, /\]\((?!https?:)/, 'no relative links left');
-  assert.match(n, /\[#56\]\(https:\/\/github\.com\/hardikashah-eng\/AIInfraTools\/pull\/56\)/);
+  // PR numbers and relative links are made absolute (checked on a small changelog, so it holds for any version)
+  const fake = notes('1.2.3', '# Changelog\n\n## 1.2.3 (2026-12)\n\n### New\n\n- thing (#56), see [docs](docs/X.md)\n\n## 1.2.2\n\n- old\n');
+  assert.match(fake, /\[#56\]\(https:\/\/github\.com\/hardikashah-eng\/AIInfraTools\/pull\/56\)/);
+  assert.match(fake, /\]\(https:\/\/github\.com\/hardikashah-eng\/AIInfraTools\/blob\/main\/docs\/X\.md\)/); assert.doesNotMatch(fake, /old/);
   assert.throws(() => notes('9.9.9'), /no "## 9.9.9" section/);
 });

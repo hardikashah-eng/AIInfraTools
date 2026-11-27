@@ -3,7 +3,27 @@
 All notable changes. Versions follow [Semantic Versioning](https://semver.org/); before 1.0, a minor version may
 change the `--json` output, and when it does the change is listed here (see [schemas/](schemas/README.md)).
 
-## Unreleased
+## 0.3.0 (2026-11-26)
+
+The loop now covers what a change costs, not only whether it works. There is a new tool for agent harnesses
+(harness-ledger), shadow tests run inside the rollout tools (Argo Rollouts, llm-d canaries), and `aiinfra report`
+puts plan → verify → account on one page. Coverage reaches AMD, AWS and Cloud TPU through one accelerator registry.
+Some `--json` output changed; see "Changed (`--json`)" below.
+
+- **New tool: harness-ledger.** It finds where agent harnesses (Claude Code, Codex, OpenTelemetry, Langfuse) waste
+  model resources, and works out the cost per successful task and when self-hosting pays.
+- **Shadow tests in the rollout path:** `fleetops shadow` measures a change against the baseline at matched load.
+  `shadow prom` judges a canary from its own vLLM metrics, `shadow serve` acts as an Argo Rollouts analysis, and
+  `shadow canary` steps llm-d route weights, with every step up waiting for a person's approval.
+- **Agentic sizing from real traces:** FleetScope profiles agentic workloads from TraceLab, AgentX and Mooncake
+  traces. It sizes them by the KV working set, and now by KV offload to host memory and tokens per MW too.
+- **Integrations:** OpenCost prices, NVSentinel health events (gpu-health defers to it), and measured calibration
+  that feeds back into the sizer and the economics.
+- **One accelerator registry** covering NVIDIA, AMD and Cloud TPU, read by every tool, with EKS and EFA on AWS and GKE
+  on GCP.
+- **For agents and scripts:** 20 MCP tools and 21 JSON Schemas for `--json` output.
+- **Quality:** ESLint on every PR, a weekly check that the supported formats are current, and branch-coverage
+  floors of 80% (77% for fleetops).
 
 ### Plan → verify → account, and what agents can call
 
