@@ -3,6 +3,22 @@
 All notable changes. Versions follow [Semantic Versioning](https://semver.org/); before 1.0, a minor version may
 change the `--json` output, and when it does the change is listed here (see [schemas/](schemas/README.md)).
 
+## Unreleased
+
+### Models and hardware, current as of November 2026
+
+- **Models:** Kimi K3 / K3.1 Pro, Kimi K2.6, DeepSeek-V4-Pro and V4-Flash, GLM-5.1 and GLM-5.3, Mistral Large 4,
+  Qwen3.5-397B and Qwen3.8 27B, MiniMax M3 and M2.7, Muse Spark Open and Gemma 4 31B join the Inference Sizer's catalog.
+  FleetScope's model menus now list the whole catalog, not five models.
+- **Attention the sizer models:** linear-attention layers with a fixed state per sequence (`linFrac`, `linStateMB`),
+  compressed KV (`kvKeep`) and sparse attention (`sparseTopK`). Hugging Face configs with Gated DeltaNet layers or an
+  index top-k import with them. A model without these fields sizes exactly as before.
+- **Hardware:** NVIDIA Vera Rubin NVL72, AMD Instinct MI455X (Helios) and NVIDIA RTX PRO 6000 Blackwell Server join the
+  accelerator registry, so they reach the sizer, FleetScope, fleetops' power model and telemetry matching.
+- **Kept current weekly:** `inference-sizer/docs/CATALOG.md` says where figures come from and how to add a model or a
+  chip, and lists what isn't in yet and why (Trainium3, TPU 8, DeepSeek V4.1 Flash). A weekly scheduled task follows it
+  and opens a pull request.
+
 ## 0.3.0 (2026-11-26)
 
 The loop now covers what a change costs, not only whether it works. There is a new tool for agent harnesses

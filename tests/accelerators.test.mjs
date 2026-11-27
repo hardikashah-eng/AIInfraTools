@@ -37,6 +37,8 @@ test('registry: telemetry SKU names resolve to the most specific chip (power fal
     'NVIDIA L40S': 'L40S', 'NVIDIA L4': 'L4', 'NVIDIA A10': 'A10', 'Tesla T4': 'T4', 'Tesla V100-SXM2-32GB': 'V100',
     'AMD Instinct MI300X': 'MI300X', 'AMD Instinct MI325X OAM': 'MI325X', 'AMD Instinct MI355X': 'MI355X', 'AMD Instinct MI350X': 'MI350X', 'AMD Instinct MI250X': 'MI250',
     'MI355X': 'MI355X', 'GB300': 'GB300-NVL72', 'unknown-chip': null, '': null,
+    'NVIDIA Vera Rubin': 'VR200-NVL72', 'NVIDIA R200': 'VR200-NVL72', 'VR200': 'VR200-NVL72', 'NVIDIA Rubin CPX': null, 'AMD Instinct MI455X': 'MI455X-Helios',
+    'NVIDIA RTX PRO 6000 Blackwell Server Edition': 'RTX-PRO-6000', 'NVIDIA RTX 6000 Ada Generation': null,
   };
   for (const [sku, id] of Object.entries(cases)) assert.equal((R.match(sku) || {}).id || null, id, sku);
   // the values the old hard-coded power table had, unchanged

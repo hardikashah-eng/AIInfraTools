@@ -104,3 +104,18 @@ test('compile reports wiring mistakes', () => {
   g2.nodes.find(n => n.id === 'dec').cfg.site = 'Neocloud A';
   assert.ok(E.compileGraph(g2, lookup).errors.some(e => /different sites/.test(e.msg)));
 });
+
+test('models: FleetScope lists the Inference Sizer catalog, with the KV hybrid and compressed attention really hold', async () => {
+  const { createRequire } = await import('node:module');
+  const req = createRequire(import.meta.url), C = req('../../inference-sizer/src/catalog.js'), SZ = req('../../inference-sizer/src/model.js');
+  assert.deepEqual(Object.keys(E.MODELS).slice(0, 5), ['llama-8b', 'coder-32b', 'llama-70b', 'llama-405b', 'moe-671b'], 'the keys templates and saved graphs use come first, unchanged');
+  for (const id of ['kimi-k3', 'deepseek-v4-pro', 'qwen35-397b', 'glm-5.3', 'gemma4-31b']) assert.ok(E.MODELS[id], id);
+  assert.ok(!E.MODELS['llama33-70b'] && !E.MODELS['deepseek-v3'], 'models FleetScope already had are not listed twice');
+  for (const [k, m] of Object.entries(E.MODELS)) assert.ok(m.kvScale > 0 && m.kvScale <= 1, k);
+  // FleetScope's KV per token is the sizer's, averaged over 32K tokens
+  const P = E.profile('B300', Object.assign({ wPrec: 'fp8', kvPrec: 'fp8' }, E.MODELS['qwen35-397b']));
+  const md = SZ.derive(Object.assign({}, SZ.SETTINGS, C.MODEL_DEFAULTS, C.MODELS.find(m => m.id === 'qwen35-397b'), { kvprec: 'fp8' }));
+  const want = SZ.kvBytes(md, 32768) / 32768; assert.ok(Math.abs(P.kvBytesPerToken - want) < want * 1e-3, `${P.kvBytesPerToken} vs ${want}`);
+  assert.equal(E.profile('B300', Object.assign({ wPrec: 'fp4', kvPrec: 'fp8' }, E.MODELS['kimi-k3'])).wBytes, 2800e9 * 0.5625, '4-bit weights');
+  assert.equal(E.profile('H100', Object.assign({ wPrec: 'fp8', kvPrec: 'fp8' }, E.MODELS['llama-70b'])).kvBytesPerToken, 2 * 80 * 8 * 128, 'the old models unchanged');
+});

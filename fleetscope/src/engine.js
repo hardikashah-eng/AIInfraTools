@@ -42,14 +42,31 @@
     'llama-405b': { label: 'Llama 3.1 405B', params: 405, active: 405, layers: 126, kvHeads: 8, headDim: 128, mla: 0 },
     'moe-671b': { label: 'MoE 671B, 37B active (MLA)', params: 671, active: 37, layers: 61, kvHeads: 0, headDim: 0, mla: 576 }
   };
+  // Every other model in the Inference Sizer's catalog (one list for both tools, kept current there). kvScale: the KV a
+  // token holds, averaged over a 32K context, against the plain kvDim × layers figure, so sliding-window, linear-attention
+  // and compressed layers count; it scales with the layers and heads if they are edited.
+  const node = typeof module !== 'undefined' && module.exports;
+  const CAT = node ? require('../../inference-sizer/src/catalog.js') : root.SizerCatalog, SZ = node ? require('../../inference-sizer/src/model.js') : root.SizerModel;
+  const kvDimTotal = m => (m.mla ? m.layers * m.mla : 2 * m.layers * m.kvHeads * m.headDim);
+  for (const k of Object.keys(MODELS)) MODELS[k].kvScale = 1;
+  const IN_LIST = { 'llama31-8b': 'llama-8b', 'llama33-70b': 'llama-70b', 'llama31-405b': 'llama-405b', 'deepseek-v3': 'moe-671b' };
+  if (CAT && SZ) {
+    for (const c of CAT.MODELS) {
+      if (IN_LIST[c.id] || MODELS[c.id]) continue;
+      const m = { label: c.name, params: c.total, active: c.active, layers: c.layers, kvHeads: c.attn === 'mla' ? 0 : c.kvHeads, headDim: c.attn === 'mla' ? 0 : c.headDim, mla: c.attn === 'mla' ? (c.mlaLatent || 512) + (c.mlaRope == null ? 64 : c.mlaRope) : 0 };
+      const md = SZ.derive(Object.assign({}, SZ.SETTINGS, CAT.MODEL_DEFAULTS, c, { kvprec: 'fp8', tfBf16: 1, hbmTBs: 1, scaleUpGBs: 1, nicGbps: 1, hbmGB: 1 }));
+      m.kvScale = +(SZ.kvBytes(md, 32768) / 32768 / kvDimTotal(m)).toFixed(4);
+      MODELS[c.id] = m;
+    }
+  }
 
   // ---------- performance profile ----------
   // tpFixed: GPUs per instance set on the pool (0 or absent = smallest power of two whose share of the weights fits).
   function profile(gpuKey, m, tpFixed) {
     const G = GPUS[gpuKey];
-    const wBytes = m.params * 1e9 * (m.wPrec === 'bf16' ? 2 : 1);
+    const wBytes = m.params * 1e9 * (m.wPrec === 'bf16' ? 2 : m.wPrec === 'fp4' ? 0.5625 : 1);
     const kvElem = m.kvPrec === 'bf16' ? 2 : 1;
-    const kvBytesPerToken = m.mla ? m.layers * m.mla * kvElem : 2 * m.layers * m.kvHeads * m.headDim * kvElem;
+    const kvBytesPerToken = kvDimTotal(m) * kvElem * (m.kvScale > 0 ? m.kvScale : 1);
     let tp = 1;
     if (tpFixed > 0) tp = Math.round(tpFixed);
     else while (tp < 16 && wBytes / tp > 0.65 * G.hbm * 1e9) tp *= 2;

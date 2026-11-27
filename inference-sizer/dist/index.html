@@ -272,6 +272,11 @@ nav.views .chip { font-size: 12.5px; padding: 4px 12px; }
 
   const A = (o) => Object.assign({ kind: 'gpu', tfFp4: 0 }, o);
   const ACCELERATORS = [
+    // Vera Rubin NVL72 (VR200; first called NVL144 for its 144 dies): per Rubin package, 288 GB HBM4 at 22 TB/s; dense
+    // NVFP4 35 PF (the 50 PF inference figure uses adaptive compression), FP8 17.5 PF, BF16 4 PF; NVLink 6 3.6 TB/s
+    // bidirectional; ConnectX-9 1.6 Tb/s. NVIDIA publishes no board power: 2.3 kW is the reported Max-P TGP.
+    A({ id: 'VR200-NVL72', short: 'VR200', label: 'NVIDIA Vera Rubin NVL72 (72-GPU rack)', vendor: 'NVIDIA', vendorKey: 'nvidia', hbmGB: 288, hbmTBs: 22, tfBf16: 4000, tfFp8: 17500, tfFp4: 35000, scaleUpGBs: 1800, domain: 72, nicGbps: 1600, tdpW: 2300, price: 11.0, onprem: 6.5, match: 'Rubin(?!.*CPX)|VR200|\\bR200\\b',
+      source: 'https://developer.nvidia.com/blog/inside-the-NVIDIA-rubin-platform-six-new-chips-one-ai-supercomputer' }),
     A({ id: 'GB300-NVL72', short: 'GB300', label: 'NVIDIA GB300 NVL72 (72-GPU rack)', vendor: 'NVIDIA', vendorKey: 'nvidia', hbmGB: 278, hbmTBs: 8, tfBf16: 2500, tfFp8: 5000, tfFp4: 15000, scaleUpGBs: 900, domain: 72, nicGbps: 800, tdpW: 1400, price: 7.5, onprem: 4.4, match: 'GB300',
       // rack figures ÷ 72: 20 TB HBM, 576 TB/s, 360/720/1080 PFLOPS BF16 (sparse)/FP8 (sparse)/FP4 (dense); board power from InferenceX's chip page
       source: 'https://www.nvidia.com/en-us/data-center/gb300-nvl72/' }),
@@ -287,8 +292,17 @@ nav.views .chip { font-size: 12.5px; padding: 4px 12px; }
       source: 'https://www.nvidia.com/en-us/data-center/h100/' }),
     A({ id: 'A100', label: 'NVIDIA A100 80GB SXM (8-GPU)', vendor: 'NVIDIA', vendorKey: 'nvidia', hbmGB: 80, hbmTBs: 2.0, tfBf16: 312, tfFp8: 0, scaleUpGBs: 300, domain: 8, nicGbps: 200, nodeKW: 6.5, tdpW: 400, price: 1.6, onprem: 0.9, match: 'A100(?!.*PCIe)|A800',
       source: 'https://www.nvidia.com/en-us/data-center/a100/' }),
+    // RTX PRO 6000 Blackwell Server Edition: 96 GB GDDR7 at 1.6 TB/s; 4 / 2 / 1 PF FP4 / FP8 / BF16 with sparsity
+    // (halved here); PCIe 5.0 x16 between cards; up to 600 W
+    A({ id: 'RTX-PRO-6000', short: 'RTXPRO6000', label: 'NVIDIA RTX PRO 6000 Blackwell Server (PCIe, 8 per server)', vendor: 'NVIDIA', vendorKey: 'nvidia', hbmGB: 96, hbmTBs: 1.6, tfBf16: 500, tfFp8: 1000, tfFp4: 2000, scaleUpGBs: 64, domain: 8, nicGbps: 400, tdpW: 600, price: 1.8, onprem: 1.0, match: 'RTX ?PRO ?6000|RTX-PRO-6000',
+      source: 'https://www.nvidia.com/en-us/data-center/rtx-pro-6000-blackwell-server-edition/' }),
     A({ id: 'L40S', label: 'NVIDIA L40S (PCIe, 8 per server)', vendor: 'NVIDIA', vendorKey: 'nvidia', hbmGB: 48, hbmTBs: 0.864, tfBf16: 362, tfFp8: 733, scaleUpGBs: 32, domain: 8, nicGbps: 200, nodeKW: 5, tdpW: 350, price: 1.1, onprem: 0.7, match: 'L40S',
       source: 'https://www.nvidia.com/en-us/data-center/l40s/' }),
+    // Helios rack: 72 MI455X, 432 GB HBM4 at 23.3 TB/s, 40 / 20 / 5 PF MXFP4 / MXFP8 / BF16, 3.6 TB/s scale-up
+    // (UALink over Ethernet, bidirectional), 43 TB/s scale-out per rack (2.4 Tb/s per GPU per direction), 246 kW per
+    // rack (AMD's validated reference design). AMD publishes no board power: ~1.7 kW is the reported projection.
+    A({ id: 'MI455X-Helios', short: 'MI455X', label: 'AMD Instinct MI455X Helios (72-GPU rack)', vendor: 'AMD', vendorKey: 'amd', hbmGB: 432, hbmTBs: 23.3, tfBf16: 5000, tfFp8: 20000, tfFp4: 40000, scaleUpGBs: 1800, domain: 72, nicGbps: 2400, nodeKW: 246, tdpW: 1700, price: 8.0, onprem: 4.8, match: 'MI455',
+      source: 'https://www.amd.com/en/products/accelerators/instinct/mi400.html' }),
     A({ id: 'MI355X', label: 'AMD Instinct MI355X (8-GPU)', vendor: 'AMD', vendorKey: 'amd', hbmGB: 288, hbmTBs: 8, tfBf16: 2516.6, tfFp8: 5033.2, tfFp4: 10066.3, scaleUpGBs: 504, domain: 8, nicGbps: 400, tdpW: 1400, price: 4.5, onprem: 2.6, match: 'MI355',
       // Infinity Fabric: 7 links × 144 GB/s (bidirectional) = 504 GB/s per direction
       source: 'https://www.amd.com/en/products/accelerators/instinct/mi350/mi355x.html' }),
@@ -442,6 +456,10 @@ nav.views .chip { font-size: 12.5px; padding: 4px 12px; }
     { k: 'topk', label: 'Experts per token', min: 0, max: 1e4, int: true },
     { k: 'swaFrac', label: 'Share of sliding-window layers', min: 0, max: 1 },
     { k: 'swaWindow', label: 'Sliding window', unit: 'tokens', min: 0, max: 1e8, int: true },
+    { k: 'linFrac', label: 'Share of linear-attention layers', min: 0, max: 1, hint: 'Kimi Delta Attention, Gated DeltaNet: a fixed state per sequence instead of KV per token.' },
+    { k: 'linStateMB', label: 'Linear-attention state per layer', unit: 'MB', min: 0, max: 1e4, hint: 'Per sequence: value heads × key dim × value dim × 4 bytes (fp32).' },
+    { k: 'kvKeep', label: 'Share of tokens whose KV is kept', min: 0.0001, max: 1, hint: 'Compressed attention (DeepSeek V4): average over layers. 1 for ordinary attention.' },
+    { k: 'sparseTopK', label: 'Tokens attended per query (sparse attention)', unit: 'tokens', min: 0, max: 1e8, int: true, hint: 'DSA / CSA / MSA index top-k. 0 = attends every kept token.' },
     { k: 'maxCtx', label: 'Max context', unit: 'tokens', min: 256, max: 1e8, int: true, required: true },
     { k: 'wprec', type: 'enum', opts: ['bf16', 'fp8', 'fp4'], label: 'Default weight precision' },
     { k: 'source', type: 'text', label: 'Model card URL' },
@@ -451,7 +469,7 @@ nav.views .chip { font-size: 12.5px; padding: 4px 12px; }
   // From the shared accelerator registry (accelerators.js): per-GPU dense figures, HGX/DGX system totals divided by 8
   // (or 72 for NVL72), "with sparsity" figures halved. Prices are placeholder on-demand rents, not quotes.
   const REG = (typeof module !== 'undefined' && module.exports) ? require('./accelerators.js') : root.AIInfraAccelerators;
-  const ORDER = ['B200', 'B300', 'GB200-NVL72', 'GB300-NVL72', 'H200', 'H100', 'A100', 'L40S', 'MI300X', 'MI325X', 'MI355X', 'TPU7x', 'TPU-v6e', 'TPU-v5p'];
+  const ORDER = ['B200', 'B300', 'GB200-NVL72', 'GB300-NVL72', 'VR200-NVL72', 'H200', 'H100', 'A100', 'L40S', 'RTX-PRO-6000', 'MI300X', 'MI325X', 'MI355X', 'MI455X-Helios', 'TPU7x', 'TPU-v6e', 'TPU-v5p'];
   const KEEP = ['id', 'kind', 'vendorKey', 'gkeAccelerator', 'tdpW'].concat(GPU_FIELDS.map(f => f.k)); // tdpW: board power, for tokens per MW
   const GPUS = REG.ACCELERATORS.slice().sort((a, b) => (ORDER.indexOf(a.id) + 1 || 99) - (ORDER.indexOf(b.id) + 1 || 99))
     .map(g => Object.fromEntries(KEEP.filter(k => g[k] !== undefined).map(k => [k, g[k]])));
@@ -472,8 +490,36 @@ nav.views .chip { font-size: 12.5px; padding: 4px 12px; }
     Object.assign({}, G, { id: 'qwen3-coder-480b', name: 'Qwen3-Coder 480B-A35B (MoE)', total: 480, active: 35, layers: 62, hidden: 6144, qHeads: 96, kvHeads: 8, headDim: 128, experts: 160, topk: 8, maxCtx: 262144, wprec: 'fp8', source: 'https://huggingface.co/Qwen/Qwen3-Coder-480B-A35B-Instruct' }),
     Object.assign({}, G, MLA, { id: 'deepseek-v3', name: 'DeepSeek-V3 / R1 671B (MoE, MLA)', total: 671, active: 37, layers: 61, hidden: 7168, qHeads: 128, experts: 256, topk: 8, maxCtx: 131072, wprec: 'fp8', source: 'https://huggingface.co/deepseek-ai/DeepSeek-V3' }),
     Object.assign({}, G, MLA, { id: 'kimi-k2', name: 'Kimi K2 1T (MoE, MLA)', total: 1040, active: 32, layers: 61, hidden: 7168, qHeads: 64, experts: 384, topk: 8, maxCtx: 131072, wprec: 'fp8', source: 'https://huggingface.co/moonshotai/Kimi-K2-Instruct' }),
+    // ---- 2026 open-weight models (config.json values; see docs/CATALOG.md for where each figure comes from) ----
+    // Kimi K3 (K3.1 Pro shares the architecture): 69 Kimi Delta Attention layers (96 heads × 128 × 128 fp32 state) and
+    // 24 gated MLA layers; MXFP4 weights from quantization-aware training.
+    Object.assign({}, G, MLA, { id: 'kimi-k3', name: 'Kimi K3 / K3.1 Pro 2.8T-A104B (MoE, KDA + MLA)', total: 2800, active: 104, layers: 93, hidden: 7168, qHeads: 96, experts: 896, topk: 16, linFrac: 69 / 93, linStateMB: 6.29, maxCtx: 1048576, wprec: 'fp4', source: 'https://huggingface.co/moonshotai/Kimi-K3' }),
+    // Kimi K2.5 / K2.6: K2's shape with 256K context and native INT4 weights (sized as 4-bit)
+    Object.assign({}, G, MLA, { id: 'kimi-k26', name: 'Kimi K2.6 1T-A32B (MoE, MLA, INT4)', total: 1000, active: 32, layers: 61, hidden: 7168, qHeads: 64, experts: 384, topk: 8, maxCtx: 262144, wprec: 'fp4', source: 'https://huggingface.co/moonshotai/Kimi-K2.6' }),
+    // DeepSeek V4: one 512-wide latent per token, kept at 1/4 (CSA) or 1/128 (HCA) on alternating layers (≈ 0.129 on
+    // average); CSA attends its index top-1024, HCA all compressed blocks: modelled as 2048 attended tokens per query.
+    // Experts in FP4, the rest FP8.
+    Object.assign({}, G, MLA, { id: 'deepseek-v4-pro', name: 'DeepSeek-V4-Pro 1.6T-A49B (MoE, compressed sparse attention)', total: 1600, active: 49, layers: 61, hidden: 7168, qHeads: 128, mlaLatent: 448, mlaRope: 64, mlaNope: 448, mlaV: 512, kvKeep: 0.129, sparseTopK: 2048, experts: 384, topk: 6, maxCtx: 1048576, wprec: 'fp4', source: 'https://huggingface.co/deepseek-ai/DeepSeek-V4-Pro' }),
+    Object.assign({}, G, MLA, { id: 'deepseek-v4-flash', name: 'DeepSeek-V4-Flash 284B-A13B (MoE, compressed sparse attention)', total: 284, active: 13, layers: 43, hidden: 4096, qHeads: 64, mlaLatent: 448, mlaRope: 64, mlaNope: 448, mlaV: 512, kvKeep: 0.129, sparseTopK: 2048, experts: 256, topk: 6, maxCtx: 1048576, wprec: 'fp8', source: 'https://huggingface.co/deepseek-ai/DeepSeek-V4-Flash' }),
+    // GLM-5.1 and GLM-5.3: MLA with DeepSeek-style sparse attention (index top-2048); GLM-5.3 extends the context to 1M.
+    // GLM-5.3's active parameters are not published: the GLM-5 lineage's 40B is assumed.
+    Object.assign({}, G, MLA, { id: 'glm-5.1', name: 'GLM-5.1 744B-A40B (MoE, MLA, sparse)', total: 744, active: 40, layers: 78, hidden: 6144, qHeads: 64, mlaNope: 192, mlaV: 256, sparseTopK: 2048, experts: 256, topk: 8, maxCtx: 202752, wprec: 'fp8', source: 'https://huggingface.co/zai-org/GLM-5.1' }),
+    Object.assign({}, G, MLA, { id: 'glm-5.3', name: 'GLM-5.3 753B (MoE, MLA, sparse, 1M)', total: 753, active: 40, layers: 78, hidden: 6144, qHeads: 64, mlaNope: 192, mlaV: 256, sparseTopK: 2048, experts: 256, topk: 8, maxCtx: 1048576, wprec: 'fp8', source: 'https://huggingface.co/zai-org/GLM-5.3' }),
+    // Mistral Large 4: MLA with sparse token selection (top-2048); nope/v head dims not published (DeepSeek's 128 assumed)
+    Object.assign({}, G, MLA, { id: 'mistral-large-4', name: 'Mistral Large 4 1.05T-A52B (MoE, MLA, sparse)', total: 1050, active: 52, layers: 72, hidden: 6144, qHeads: 64, sparseTopK: 2048, experts: 128, topk: 4, maxCtx: 1048576, wprec: 'fp8', source: 'https://huggingface.co/mistralai/Mistral-Large-4-1T-A52B' }),
+    // Qwen3.5-397B and Qwen3.8 27B: three Gated DeltaNet layers per gated-attention layer (64 / 48 value heads × 128 × 128 fp32 state)
+    Object.assign({}, G, { id: 'qwen35-397b', name: 'Qwen3.5 397B-A17B (MoE, Gated DeltaNet hybrid)', total: 397, active: 17, layers: 60, hidden: 4096, qHeads: 32, kvHeads: 2, headDim: 256, linFrac: 0.75, linStateMB: 4.19, experts: 512, topk: 10, maxCtx: 262144, wprec: 'fp8', source: 'https://huggingface.co/Qwen/Qwen3.5-397B-A17B' }),
+    Object.assign({}, G, { id: 'qwen38-27b', name: 'Qwen3.8 27B (Gated DeltaNet hybrid)', total: 27, active: 27, layers: 64, hidden: 5120, qHeads: 24, kvHeads: 4, headDim: 256, linFrac: 0.75, linStateMB: 3.15, maxCtx: 262144, wprec: 'fp8', source: 'https://huggingface.co/Qwen/Qwen3.8-27B' }),
+    // MiniMax M3: sparse attention (16 blocks of 128 tokens) in 57 of 60 layers, modelled on all of them
+    Object.assign({}, G, { id: 'minimax-m3', name: 'MiniMax M3 428B-A23B (MoE, sparse)', total: 428, active: 23, layers: 60, hidden: 6144, qHeads: 64, kvHeads: 4, headDim: 128, sparseTopK: 2048, experts: 128, topk: 4, maxCtx: 1048576, wprec: 'fp8', source: 'https://huggingface.co/MiniMaxAI/MiniMax-M3' }),
+    Object.assign({}, G, { id: 'minimax-m27', name: 'MiniMax M2.7 229B-A10B (MoE)', total: 229, active: 10, layers: 62, hidden: 3072, qHeads: 48, kvHeads: 8, headDim: 128, experts: 256, topk: 8, maxCtx: 204800, wprec: 'fp8', source: 'https://huggingface.co/MiniMaxAI/MiniMax-M2.7' }),
+    // Muse Spark Open: 46 sliding-window layers (2048 tokens) and 16 full-attention layers
+    Object.assign({}, G, { id: 'muse-spark-open', name: 'Muse Spark Open 816B-A42B (MoE)', total: 816, active: 42, layers: 62, hidden: 8192, qHeads: 128, kvHeads: 16, headDim: 64, swaFrac: 46 / 62, swaWindow: 2048, experts: 256, topk: 8, maxCtx: 1048576, wprec: 'fp4', source: 'https://huggingface.co/meta-models/Muse-Spark-Open-816B-A42B' }),
+    // Gemma 4 31B: 50 sliding-window layers (1024 tokens) and 10 global layers with 4 KV heads of 512 and keys reused as
+    // values (the KV of 4 × 256 K+V pairs). The sliding layers' 16 heads are sized as 4: their KV is capped at 1024 tokens.
+    Object.assign({}, G, { id: 'gemma4-31b', name: 'Gemma 4 31B', total: 30.7, active: 30.7, layers: 60, hidden: 5376, qHeads: 32, kvHeads: 4, headDim: 256, swaFrac: 50 / 60, swaWindow: 1024, maxCtx: 262144, wprec: 'fp8', source: 'https://huggingface.co/google/gemma-4-31B' }),
   ];
-  const MODEL_DEFAULTS = { attn: 'gqa', experts: 0, topk: 0, swaFrac: 0, swaWindow: 0, mlaLatent: 512, mlaRope: 64, mlaNope: 128, mlaV: 128, wprec: 'fp8' };
+  const MODEL_DEFAULTS = { attn: 'gqa', experts: 0, topk: 0, swaFrac: 0, swaWindow: 0, linFrac: 0, linStateMB: 0, kvKeep: 1, sparseTopK: 0, mlaLatent: 512, mlaRope: 64, mlaNope: 128, mlaV: 128, wprec: 'fp8' };
   const GPU_DEFAULTS = { tfFp8: 0, tfFp4: 0, nodeKW: 0, price: 0, vendor: '' };
 
   // ---------- validation ----------
@@ -503,6 +549,7 @@ nav.views .chip { font-size: 12.5px; padding: 4px 12px; }
       out[f.k] = v;
     }
     if (kind === 'Model' && out.active > out.total) errors.push(`Model "${out.name}": active params (${out.active}B) exceed total (${out.total}B).`);
+    if (kind === 'Model' && (out.swaFrac || 0) + (out.linFrac || 0) > 1) errors.push(`Model "${out.name}": sliding-window and linear-attention shares add up to more than all layers.`);
     if (kind === 'Model' && out.experts > 0 && !(out.topk > 0 && out.topk < out.experts)) errors.push(`Model "${out.name}": experts per token must be between 1 and ${out.experts - 1}.`);
     if (kind === 'Model' && out.experts > 0 && out.active >= out.total) errors.push(`Model "${out.name}": an MoE model needs active params below total params.`);
     return { ok: errors.length === 0, errors, value: out };
@@ -585,6 +632,19 @@ nav.views .chip { font-size: 12.5px; padding: 4px 12px; }
       notes.push('Chunked-attention layers modelled as sliding-window layers.');
     }
     if (c.sliding_window && !swaFrac) notes.push('sliding_window is set but not enabled for these layers; KV is sized for full attention.');
+    // linear-attention layers (Qwen3-Next / Qwen3.5 Gated DeltaNet: layer_types "linear_attention" or full_attention_interval)
+    let linFrac = 0, linStateMB = 0;
+    const linN = Array.isArray(c.layer_types) ? c.layer_types.filter(t => /linear/i.test(String(t))).length
+      : c.full_attention_interval > 1 ? layers - Math.floor(layers / c.full_attention_interval) : 0;
+    if (linN) {
+      linFrac = +(linN / layers).toFixed(4);
+      const vh = +first(c, ['linear_num_value_heads'], qHeads), kd = +first(c, ['linear_key_head_dim'], 128), vd = +first(c, ['linear_value_head_dim'], 128);
+      linStateMB = +(vh * kd * vd * 4 / 1e6).toFixed(3);
+      notes.push(`${linN} linear-attention layers: a ${linStateMB} MB state per layer per sequence (fp32), no KV per token.`);
+    }
+    // sparse attention: an index picks the tokens each query attends (DeepSeek Sparse Attention and its descendants)
+    const sparseTopK = c.index_topk ? +c.index_topk : 0;
+    if (sparseTopK) notes.push(`Sparse attention: each query attends ${sparseTopK} selected tokens.`);
     // context
     let maxCtx = +first(c, ['max_position_embeddings', 'n_positions', 'seq_length', 'max_sequence_length'], 4096);
     const rs = c.rope_scaling;
@@ -619,7 +679,7 @@ nav.views .chip { font-size: 12.5px; padding: 4px 12px; }
     const name = String(first(j, ['_name_or_path', 'name_or_path'], '') || '').split('/').pop() || (c.model_type ? c.model_type + ' ' + (total / 1e9).toFixed(0) + 'B' : 'Imported model');
     const model = {
       name, total: +(total / 1e9).toFixed(2), active: +(active / 1e9).toFixed(2), layers, hidden, qHeads, kvHeads, headDim,
-      attn: mla ? 'mla' : 'gqa', mlaLatent, mlaRope, mlaNope, mlaV, experts, topk, swaFrac, swaWindow, maxCtx,
+      attn: mla ? 'mla' : 'gqa', mlaLatent, mlaRope, mlaNope, mlaV, experts, topk, swaFrac, swaWindow, linFrac, linStateMB, sparseTopK, maxCtx,
       wprec: /fp8|float8/i.test(JSON.stringify(j.quantization_config || '')) ? 'fp8' : /mxfp4|nvfp4|fp4/i.test(JSON.stringify(j.quantization_config || '')) ? 'fp4' : 'fp8',
     };
     return { model, notes };
@@ -658,6 +718,12 @@ nav.views .chip { font-size: 12.5px; padding: 4px 12px; }
     const mla = s.attn === 'mla';
     const lat = s.mlaLatent || 512, rope = s.mlaRope == null ? 64 : s.mlaRope, nope = s.mlaNope == null ? 128 : s.mlaNope, vh = s.mlaV || 128;
     const swaLayers = s.swaWindow > 0 ? Math.round(s.layers * (s.swaFrac || 0)) : 0;
+    // linear-attention layers (Kimi Delta Attention, Gated DeltaNet): a fixed recurrent state per sequence, no KV per token
+    const linLayers = s.linFrac > 0 ? Math.min(s.layers - swaLayers, Math.round(s.layers * s.linFrac)) : 0;
+    const linState = linLayers * (s.linStateMB || 0) * 1e6;
+    // compressed attention keeps the KV of a share of the tokens (DeepSeek V4: 1/4 or 1/128 per layer); sparse attention
+    // (DSA, CSA, MSA) attends a fixed number of selected tokens per query instead of all of them
+    const keep = s.kvKeep > 0 && s.kvKeep < 1 ? s.kvKeep : 1, topK = s.sparseTopK > 0 ? s.sparseTopK : 0;
     // tensor-core rate for the weight precision; fall back when the GPU lacks that precision
     const tf = { bf16: s.tfBf16, fp8: s.tfFp8 || s.tfBf16, fp4: s.tfFp4 || s.tfFp8 || s.tfBf16 }[s.wprec] || s.tfBf16;
     const computeFallback = (s.wprec === 'fp4' && !s.tfFp4) ? (s.tfFp8 ? 'fp8' : 'bf16') : (s.wprec === 'fp8' && !s.tfFp8) ? 'bf16' : null;
@@ -666,7 +732,9 @@ nav.views .chip { font-size: 12.5px; padding: 4px 12px; }
       Wd: dense * 1e9 * bpp, We: Eall * 1e9 * bpp,
       denseP: dense * 1e9, activeP: (isMoE ? s.active : s.total) * 1e9,
       kvTokLayer: mla ? (lat + rope) * kvb : 2 * s.kvHeads * s.headDim * kvb,
-      swaLayers, fullLayers: s.layers - swaLayers, win: s.swaWindow || 0,
+      swaLayers, linLayers, fullLayers: s.layers - swaLayers - linLayers, win: s.swaWindow || 0, keep, topK, linState,
+      // FLOPs per token per linear-attention layer: read and update the state (fp32, 4 bytes an element), ~4 FLOPs an element
+      Alin: (s.linStateMB || 0) * 1e6,
       // attention FLOPs per (query token, context token) per layer
       Apre: mla ? s.qHeads * (2 * (nope + rope) + 2 * vh) : 4 * s.qHeads * s.headDim,
       Adec: mla ? s.qHeads * (2 * (lat + rope) + 2 * lat) : 4 * s.qHeads * s.headDim,
@@ -677,17 +745,26 @@ nav.views .chip { font-size: 12.5px; padding: 4px 12px; }
     };
   }
 
+  // KV bytes one sequence of L tokens holds: full-attention layers keep (a share of) every token, sliding-window layers
+  // the last W, linear-attention layers a fixed state
   function kvBytes(md, L) {
-    const w = md.win || L;
-    return md.kvTokLayer * (md.fullLayers * L + md.swaLayers * Math.min(L, w));
+    const w = md.win || L, keep = md.keep || 1;
+    return md.kvTokLayer * (md.fullLayers * L * keep + md.swaLayers * Math.min(L, w)) + (md.linState || 0);
+  }
+  // context tokens one query attends in a full-attention layer, and its integral over query positions 0..x
+  const attended = (md, L) => { const n = L * (md.keep || 1); return md.topK ? Math.min(n, md.topK) : n; };
+  function attendedSum(md, x) {
+    const k = md.keep || 1;
+    if (!md.topK) return k * x * x / 2;
+    const t = md.topK / k;
+    return x <= t ? k * x * x / 2 : k * t * t / 2 + md.topK * (x - t);
   }
   function attnPre(md, Lc, L) {
     const W = md.win;
-    const f = x => x * x / 2;
     const g = x => x <= W ? x * x / 2 : W * W / 2 + W * (x - W);
-    return md.Apre * (md.fullLayers * (f(L) - f(Lc)) + md.swaLayers * (g(L) - g(Lc)));
+    return md.Apre * (md.fullLayers * (attendedSum(md, L) - attendedSum(md, Lc)) + md.swaLayers * (g(L) - g(Lc))) + (md.linLayers || 0) * (md.Alin || 0) * (L - Lc);
   }
-  function attnDec(md, L) { return md.Adec * (md.fullLayers * L + md.swaLayers * Math.min(L, md.win || L)); }
+  function attnDec(md, L) { return md.Adec * (md.fullLayers * attended(md, L) + md.swaLayers * Math.min(L, md.win || L)) + (md.linLayers || 0) * (md.Alin || 0); }
 
   // ---------- parallel layouts ----------
   // Instances of g GPUs. Inside one scale-up domain (D GPUs): TP, or TP+EP for MoE, or DP-attention+EP for MLA.
@@ -1009,7 +1086,7 @@ nav.views .chip { font-size: 12.5px; padding: 4px 12px; }
     return res;
   }
 
-  const api = { SETTINGS, plan, derive, kvBytes, decodeStep, memInfo, prefillStats, prefillTime, configs, computeLoad, decodeLabel, prefillLabel, decodeCap, packNodes, operatingPoint };
+  const api = { SETTINGS, plan, derive, kvBytes, attnPre, attnDec, decodeStep, memInfo, prefillStats, prefillTime, configs, computeLoad, decodeLabel, prefillLabel, decodeCap, packNodes, operatingPoint };
   if (typeof module !== 'undefined' && module.exports) module.exports = api; else root.SizerModel = api;
 })(this);
 
@@ -1565,7 +1642,7 @@ function memoryHTML(r) {
     <div class="membar">${parts.map(p => `<div style="width:${Math.max(0, 100 * p[1] / hbm).toFixed(2)}%;background:${p[2]}" title="${p[0]}"></div>`).join('')}</div>
     <div class="memlegend">${parts.map(p => `<i style="background:${p[2]}"></i><span>${p[0]}</span><span class="mono">${fGB(p[1])}</span>`).join('')}</div>
     <dl class="kv" style="margin-top:14px">
-      <dt>KV per token (all layers)</dt><dd>${fGB(md.kvTokLayer * s.layers)}</dd>
+      <dt>KV per token (all layers, averaged over a full context)</dt><dd>${fGB(M.kvBytes(md, s.ctx) / s.ctx)}</dd>
       <dt>KV for one ${fCtx(s.ctx)} full-context request</dt><dd>${fGB(mi.ctxBytes)}</dd>
       <dt>KV for an average request (${fInt(s.avgIn + s.avgOut)} tokens)</dt><dd>${fGB(M.kvBytes(md, Math.min(s.ctx, s.avgIn + s.avgOut)))}</dd>
       <dt>KV capacity per instance</dt><dd>${fGB(mi.cap)}</dd>

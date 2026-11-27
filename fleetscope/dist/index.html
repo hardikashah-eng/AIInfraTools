@@ -431,6 +431,11 @@ button, select, input { font: inherit; color: inherit; }
 
   const A = (o) => Object.assign({ kind: 'gpu', tfFp4: 0 }, o);
   const ACCELERATORS = [
+    // Vera Rubin NVL72 (VR200; first called NVL144 for its 144 dies): per Rubin package, 288 GB HBM4 at 22 TB/s; dense
+    // NVFP4 35 PF (the 50 PF inference figure uses adaptive compression), FP8 17.5 PF, BF16 4 PF; NVLink 6 3.6 TB/s
+    // bidirectional; ConnectX-9 1.6 Tb/s. NVIDIA publishes no board power: 2.3 kW is the reported Max-P TGP.
+    A({ id: 'VR200-NVL72', short: 'VR200', label: 'NVIDIA Vera Rubin NVL72 (72-GPU rack)', vendor: 'NVIDIA', vendorKey: 'nvidia', hbmGB: 288, hbmTBs: 22, tfBf16: 4000, tfFp8: 17500, tfFp4: 35000, scaleUpGBs: 1800, domain: 72, nicGbps: 1600, tdpW: 2300, price: 11.0, onprem: 6.5, match: 'Rubin(?!.*CPX)|VR200|\\bR200\\b',
+      source: 'https://developer.nvidia.com/blog/inside-the-NVIDIA-rubin-platform-six-new-chips-one-ai-supercomputer' }),
     A({ id: 'GB300-NVL72', short: 'GB300', label: 'NVIDIA GB300 NVL72 (72-GPU rack)', vendor: 'NVIDIA', vendorKey: 'nvidia', hbmGB: 278, hbmTBs: 8, tfBf16: 2500, tfFp8: 5000, tfFp4: 15000, scaleUpGBs: 900, domain: 72, nicGbps: 800, tdpW: 1400, price: 7.5, onprem: 4.4, match: 'GB300',
       // rack figures ÷ 72: 20 TB HBM, 576 TB/s, 360/720/1080 PFLOPS BF16 (sparse)/FP8 (sparse)/FP4 (dense); board power from InferenceX's chip page
       source: 'https://www.nvidia.com/en-us/data-center/gb300-nvl72/' }),
@@ -446,8 +451,17 @@ button, select, input { font: inherit; color: inherit; }
       source: 'https://www.nvidia.com/en-us/data-center/h100/' }),
     A({ id: 'A100', label: 'NVIDIA A100 80GB SXM (8-GPU)', vendor: 'NVIDIA', vendorKey: 'nvidia', hbmGB: 80, hbmTBs: 2.0, tfBf16: 312, tfFp8: 0, scaleUpGBs: 300, domain: 8, nicGbps: 200, nodeKW: 6.5, tdpW: 400, price: 1.6, onprem: 0.9, match: 'A100(?!.*PCIe)|A800',
       source: 'https://www.nvidia.com/en-us/data-center/a100/' }),
+    // RTX PRO 6000 Blackwell Server Edition: 96 GB GDDR7 at 1.6 TB/s; 4 / 2 / 1 PF FP4 / FP8 / BF16 with sparsity
+    // (halved here); PCIe 5.0 x16 between cards; up to 600 W
+    A({ id: 'RTX-PRO-6000', short: 'RTXPRO6000', label: 'NVIDIA RTX PRO 6000 Blackwell Server (PCIe, 8 per server)', vendor: 'NVIDIA', vendorKey: 'nvidia', hbmGB: 96, hbmTBs: 1.6, tfBf16: 500, tfFp8: 1000, tfFp4: 2000, scaleUpGBs: 64, domain: 8, nicGbps: 400, tdpW: 600, price: 1.8, onprem: 1.0, match: 'RTX ?PRO ?6000|RTX-PRO-6000',
+      source: 'https://www.nvidia.com/en-us/data-center/rtx-pro-6000-blackwell-server-edition/' }),
     A({ id: 'L40S', label: 'NVIDIA L40S (PCIe, 8 per server)', vendor: 'NVIDIA', vendorKey: 'nvidia', hbmGB: 48, hbmTBs: 0.864, tfBf16: 362, tfFp8: 733, scaleUpGBs: 32, domain: 8, nicGbps: 200, nodeKW: 5, tdpW: 350, price: 1.1, onprem: 0.7, match: 'L40S',
       source: 'https://www.nvidia.com/en-us/data-center/l40s/' }),
+    // Helios rack: 72 MI455X, 432 GB HBM4 at 23.3 TB/s, 40 / 20 / 5 PF MXFP4 / MXFP8 / BF16, 3.6 TB/s scale-up
+    // (UALink over Ethernet, bidirectional), 43 TB/s scale-out per rack (2.4 Tb/s per GPU per direction), 246 kW per
+    // rack (AMD's validated reference design). AMD publishes no board power: ~1.7 kW is the reported projection.
+    A({ id: 'MI455X-Helios', short: 'MI455X', label: 'AMD Instinct MI455X Helios (72-GPU rack)', vendor: 'AMD', vendorKey: 'amd', hbmGB: 432, hbmTBs: 23.3, tfBf16: 5000, tfFp8: 20000, tfFp4: 40000, scaleUpGBs: 1800, domain: 72, nicGbps: 2400, nodeKW: 246, tdpW: 1700, price: 8.0, onprem: 4.8, match: 'MI455',
+      source: 'https://www.amd.com/en/products/accelerators/instinct/mi400.html' }),
     A({ id: 'MI355X', label: 'AMD Instinct MI355X (8-GPU)', vendor: 'AMD', vendorKey: 'amd', hbmGB: 288, hbmTBs: 8, tfBf16: 2516.6, tfFp8: 5033.2, tfFp4: 10066.3, scaleUpGBs: 504, domain: 8, nicGbps: 400, tdpW: 1400, price: 4.5, onprem: 2.6, match: 'MI355',
       // Infinity Fabric: 7 links × 144 GB/s (bidirectional) = 504 GB/s per direction
       source: 'https://www.amd.com/en/products/accelerators/instinct/mi350/mi355x.html' }),
@@ -560,6 +574,670 @@ button, select, input { font: inherit; color: inherit; }
 
 </script>
 <script>
+/* Inference Sizer catalog: GPUs and models, spec-sheet import/export, and Hugging Face config.json parsing.
+   Plain data plus validation, so the browser page, the CLI and FleetScope can share it. */
+(function (root) {
+  'use strict';
+
+  // ---------- schemas ----------
+  // Every field a GPU or model entry may carry, with its unit, range and a one-line meaning.
+  // The UI builds its edit forms from these, and imports are checked against them.
+  const GPU_FIELDS = [
+    { k: 'label', type: 'text', label: 'Name', required: true },
+    { k: 'vendor', type: 'text', label: 'Vendor' },
+    { k: 'hbmGB', label: 'HBM per GPU', unit: 'GB', min: 1, max: 4096, required: true, hint: 'Memory the GPU exposes (e.g. 180 for HGX B200).' },
+    { k: 'hbmTBs', label: 'HBM bandwidth', unit: 'TB/s', min: 0.1, max: 100, required: true },
+    { k: 'tfBf16', label: 'BF16 dense', unit: 'TFLOPS', min: 1, max: 1e6, required: true, hint: 'Dense, not the "with sparsity" figure.' },
+    { k: 'tfFp8', label: 'FP8 dense', unit: 'TFLOPS', min: 0, max: 1e6, hint: '0 if the GPU has no FP8 tensor cores.' },
+    { k: 'tfFp4', label: 'FP4 dense', unit: 'TFLOPS', min: 0, max: 1e6, hint: '0 if the GPU has no FP4 tensor cores.' },
+    { k: 'scaleUpGBs', label: 'GPU-to-GPU link, per direction', unit: 'GB/s', min: 1, max: 1e5, required: true, hint: 'NVLink / Infinity Fabric. Half the bidirectional figure.' },
+    { k: 'domain', label: 'GPUs per scale-up domain', unit: 'GPUs', min: 1, max: 576, required: true, hint: '8 for an HGX server, 72 for an NVL72 rack.' },
+    { k: 'nicGbps', label: 'Scale-out NIC per GPU', unit: 'Gb/s', min: 1, max: 1e4, required: true },
+    { k: 'nodeKW', label: 'Power per domain (max)', unit: 'kW', min: 0, max: 2000 },
+    { k: 'price', label: 'Price', unit: '$/GPU-hr', min: 0, max: 1000, hint: 'Placeholder unless you set your own.' },
+    { k: 'source', type: 'text', label: 'Spec sheet URL' },
+  ];
+  const MODEL_FIELDS = [
+    { k: 'name', type: 'text', label: 'Name', required: true },
+    { k: 'total', label: 'Total params', unit: 'B', min: 0.01, max: 1e5, required: true },
+    { k: 'active', label: 'Active params per token', unit: 'B', min: 0.01, max: 1e5, required: true },
+    { k: 'layers', label: 'Layers', min: 1, max: 1000, int: true, required: true },
+    { k: 'hidden', label: 'Hidden size', min: 64, max: 1e6, int: true, required: true },
+    { k: 'qHeads', label: 'Query heads', min: 1, max: 4096, int: true, required: true },
+    { k: 'kvHeads', label: 'KV heads', min: 1, max: 4096, int: true, required: true },
+    { k: 'headDim', label: 'Head dim', min: 8, max: 4096, int: true, required: true },
+    { k: 'attn', type: 'enum', opts: ['gqa', 'mla'], label: 'Attention', required: true },
+    { k: 'mlaLatent', label: 'MLA KV latent (kv_lora_rank)', min: 1, max: 1e5, int: true },
+    { k: 'mlaRope', label: 'MLA RoPE dim', min: 0, max: 1e4, int: true },
+    { k: 'mlaNope', label: 'MLA QK no-PE dim', min: 0, max: 1e4, int: true },
+    { k: 'mlaV', label: 'MLA V head dim', min: 1, max: 1e4, int: true },
+    { k: 'experts', label: 'Routed experts (0 = dense)', min: 0, max: 1e5, int: true },
+    { k: 'topk', label: 'Experts per token', min: 0, max: 1e4, int: true },
+    { k: 'swaFrac', label: 'Share of sliding-window layers', min: 0, max: 1 },
+    { k: 'swaWindow', label: 'Sliding window', unit: 'tokens', min: 0, max: 1e8, int: true },
+    { k: 'linFrac', label: 'Share of linear-attention layers', min: 0, max: 1, hint: 'Kimi Delta Attention, Gated DeltaNet: a fixed state per sequence instead of KV per token.' },
+    { k: 'linStateMB', label: 'Linear-attention state per layer', unit: 'MB', min: 0, max: 1e4, hint: 'Per sequence: value heads × key dim × value dim × 4 bytes (fp32).' },
+    { k: 'kvKeep', label: 'Share of tokens whose KV is kept', min: 0.0001, max: 1, hint: 'Compressed attention (DeepSeek V4): average over layers. 1 for ordinary attention.' },
+    { k: 'sparseTopK', label: 'Tokens attended per query (sparse attention)', unit: 'tokens', min: 0, max: 1e8, int: true, hint: 'DSA / CSA / MSA index top-k. 0 = attends every kept token.' },
+    { k: 'maxCtx', label: 'Max context', unit: 'tokens', min: 256, max: 1e8, int: true, required: true },
+    { k: 'wprec', type: 'enum', opts: ['bf16', 'fp8', 'fp4'], label: 'Default weight precision' },
+    { k: 'source', type: 'text', label: 'Model card URL' },
+  ];
+
+  // ---------- built-in GPUs ----------
+  // From the shared accelerator registry (accelerators.js): per-GPU dense figures, HGX/DGX system totals divided by 8
+  // (or 72 for NVL72), "with sparsity" figures halved. Prices are placeholder on-demand rents, not quotes.
+  const REG = (typeof module !== 'undefined' && module.exports) ? require('./accelerators.js') : root.AIInfraAccelerators;
+  const ORDER = ['B200', 'B300', 'GB200-NVL72', 'GB300-NVL72', 'VR200-NVL72', 'H200', 'H100', 'A100', 'L40S', 'RTX-PRO-6000', 'MI300X', 'MI325X', 'MI355X', 'MI455X-Helios', 'TPU7x', 'TPU-v6e', 'TPU-v5p'];
+  const KEEP = ['id', 'kind', 'vendorKey', 'gkeAccelerator', 'tdpW'].concat(GPU_FIELDS.map(f => f.k)); // tdpW: board power, for tokens per MW
+  const GPUS = REG.ACCELERATORS.slice().sort((a, b) => (ORDER.indexOf(a.id) + 1 || 99) - (ORDER.indexOf(b.id) + 1 || 99))
+    .map(g => Object.fromEntries(KEEP.filter(k => g[k] !== undefined).map(k => [k, g[k]])));
+
+  // ---------- built-in models ----------
+  const MLA = { attn: 'mla', kvHeads: 1, headDim: 128, mlaLatent: 512, mlaRope: 64, mlaNope: 128, mlaV: 128 };
+  const G = { attn: 'gqa', experts: 0, topk: 0, swaFrac: 0, swaWindow: 0 };
+  const MODELS = [
+    Object.assign({ id: 'llama31-8b', name: 'Llama 3.1 8B', total: 8.03, active: 8.03, layers: 32, hidden: 4096, qHeads: 32, kvHeads: 8, headDim: 128, maxCtx: 131072, wprec: 'fp8', source: 'https://huggingface.co/meta-llama/Llama-3.1-8B-Instruct' }, G),
+    Object.assign({ id: 'qwen3-32b', name: 'Qwen3 32B', total: 32.8, active: 32.8, layers: 64, hidden: 5120, qHeads: 64, kvHeads: 8, headDim: 128, maxCtx: 131072, wprec: 'fp8', source: 'https://huggingface.co/Qwen/Qwen3-32B' }, G),
+    Object.assign({ id: 'llama33-70b', name: 'Llama 3.3 70B', total: 70.6, active: 70.6, layers: 80, hidden: 8192, qHeads: 64, kvHeads: 8, headDim: 128, maxCtx: 131072, wprec: 'fp8', source: 'https://huggingface.co/meta-llama/Llama-3.3-70B-Instruct' }, G),
+    Object.assign({ id: 'qwen25-72b', name: 'Qwen2.5 72B', total: 72.7, active: 72.7, layers: 80, hidden: 8192, qHeads: 64, kvHeads: 8, headDim: 128, maxCtx: 131072, wprec: 'fp8', source: 'https://huggingface.co/Qwen/Qwen2.5-72B-Instruct' }, G),
+    Object.assign({ id: 'llama31-405b', name: 'Llama 3.1 405B', total: 405.9, active: 405.9, layers: 126, hidden: 16384, qHeads: 128, kvHeads: 8, headDim: 128, maxCtx: 131072, wprec: 'fp8', source: 'https://huggingface.co/meta-llama/Llama-3.1-405B-Instruct' }, G),
+    Object.assign({}, G, { id: 'gpt-oss-120b', name: 'gpt-oss-120b (MoE)', total: 116.8, active: 5.1, layers: 36, hidden: 2880, qHeads: 64, kvHeads: 8, headDim: 64, experts: 128, topk: 4, swaFrac: 0.5, swaWindow: 128, maxCtx: 131072, wprec: 'fp4', source: 'https://huggingface.co/openai/gpt-oss-120b' }),
+    Object.assign({}, G, { id: 'mixtral-8x22b', name: 'Mixtral 8x22B (MoE)', total: 141, active: 39, layers: 56, hidden: 6144, qHeads: 48, kvHeads: 8, headDim: 128, experts: 8, topk: 2, maxCtx: 65536, wprec: 'fp8', source: 'https://huggingface.co/mistralai/Mixtral-8x22B-Instruct-v0.1' }),
+    Object.assign({}, G, { id: 'qwen3-235b', name: 'Qwen3 235B-A22B (MoE)', total: 235, active: 22, layers: 94, hidden: 4096, qHeads: 64, kvHeads: 4, headDim: 128, experts: 128, topk: 8, maxCtx: 131072, wprec: 'fp8', source: 'https://huggingface.co/Qwen/Qwen3-235B-A22B' }),
+    Object.assign({}, G, { id: 'llama4-maverick', name: 'Llama 4 Maverick 400B (MoE)', total: 400, active: 17, layers: 48, hidden: 5120, qHeads: 40, kvHeads: 8, headDim: 128, experts: 128, topk: 1, swaFrac: 0.75, swaWindow: 8192, maxCtx: 1048576, wprec: 'fp8', source: 'https://huggingface.co/meta-llama/Llama-4-Maverick-17B-128E-Instruct' }),
+    Object.assign({}, G, { id: 'qwen3-coder-480b', name: 'Qwen3-Coder 480B-A35B (MoE)', total: 480, active: 35, layers: 62, hidden: 6144, qHeads: 96, kvHeads: 8, headDim: 128, experts: 160, topk: 8, maxCtx: 262144, wprec: 'fp8', source: 'https://huggingface.co/Qwen/Qwen3-Coder-480B-A35B-Instruct' }),
+    Object.assign({}, G, MLA, { id: 'deepseek-v3', name: 'DeepSeek-V3 / R1 671B (MoE, MLA)', total: 671, active: 37, layers: 61, hidden: 7168, qHeads: 128, experts: 256, topk: 8, maxCtx: 131072, wprec: 'fp8', source: 'https://huggingface.co/deepseek-ai/DeepSeek-V3' }),
+    Object.assign({}, G, MLA, { id: 'kimi-k2', name: 'Kimi K2 1T (MoE, MLA)', total: 1040, active: 32, layers: 61, hidden: 7168, qHeads: 64, experts: 384, topk: 8, maxCtx: 131072, wprec: 'fp8', source: 'https://huggingface.co/moonshotai/Kimi-K2-Instruct' }),
+    // ---- 2026 open-weight models (config.json values; see docs/CATALOG.md for where each figure comes from) ----
+    // Kimi K3 (K3.1 Pro shares the architecture): 69 Kimi Delta Attention layers (96 heads × 128 × 128 fp32 state) and
+    // 24 gated MLA layers; MXFP4 weights from quantization-aware training.
+    Object.assign({}, G, MLA, { id: 'kimi-k3', name: 'Kimi K3 / K3.1 Pro 2.8T-A104B (MoE, KDA + MLA)', total: 2800, active: 104, layers: 93, hidden: 7168, qHeads: 96, experts: 896, topk: 16, linFrac: 69 / 93, linStateMB: 6.29, maxCtx: 1048576, wprec: 'fp4', source: 'https://huggingface.co/moonshotai/Kimi-K3' }),
+    // Kimi K2.5 / K2.6: K2's shape with 256K context and native INT4 weights (sized as 4-bit)
+    Object.assign({}, G, MLA, { id: 'kimi-k26', name: 'Kimi K2.6 1T-A32B (MoE, MLA, INT4)', total: 1000, active: 32, layers: 61, hidden: 7168, qHeads: 64, experts: 384, topk: 8, maxCtx: 262144, wprec: 'fp4', source: 'https://huggingface.co/moonshotai/Kimi-K2.6' }),
+    // DeepSeek V4: one 512-wide latent per token, kept at 1/4 (CSA) or 1/128 (HCA) on alternating layers (≈ 0.129 on
+    // average); CSA attends its index top-1024, HCA all compressed blocks: modelled as 2048 attended tokens per query.
+    // Experts in FP4, the rest FP8.
+    Object.assign({}, G, MLA, { id: 'deepseek-v4-pro', name: 'DeepSeek-V4-Pro 1.6T-A49B (MoE, compressed sparse attention)', total: 1600, active: 49, layers: 61, hidden: 7168, qHeads: 128, mlaLatent: 448, mlaRope: 64, mlaNope: 448, mlaV: 512, kvKeep: 0.129, sparseTopK: 2048, experts: 384, topk: 6, maxCtx: 1048576, wprec: 'fp4', source: 'https://huggingface.co/deepseek-ai/DeepSeek-V4-Pro' }),
+    Object.assign({}, G, MLA, { id: 'deepseek-v4-flash', name: 'DeepSeek-V4-Flash 284B-A13B (MoE, compressed sparse attention)', total: 284, active: 13, layers: 43, hidden: 4096, qHeads: 64, mlaLatent: 448, mlaRope: 64, mlaNope: 448, mlaV: 512, kvKeep: 0.129, sparseTopK: 2048, experts: 256, topk: 6, maxCtx: 1048576, wprec: 'fp8', source: 'https://huggingface.co/deepseek-ai/DeepSeek-V4-Flash' }),
+    // GLM-5.1 and GLM-5.3: MLA with DeepSeek-style sparse attention (index top-2048); GLM-5.3 extends the context to 1M.
+    // GLM-5.3's active parameters are not published: the GLM-5 lineage's 40B is assumed.
+    Object.assign({}, G, MLA, { id: 'glm-5.1', name: 'GLM-5.1 744B-A40B (MoE, MLA, sparse)', total: 744, active: 40, layers: 78, hidden: 6144, qHeads: 64, mlaNope: 192, mlaV: 256, sparseTopK: 2048, experts: 256, topk: 8, maxCtx: 202752, wprec: 'fp8', source: 'https://huggingface.co/zai-org/GLM-5.1' }),
+    Object.assign({}, G, MLA, { id: 'glm-5.3', name: 'GLM-5.3 753B (MoE, MLA, sparse, 1M)', total: 753, active: 40, layers: 78, hidden: 6144, qHeads: 64, mlaNope: 192, mlaV: 256, sparseTopK: 2048, experts: 256, topk: 8, maxCtx: 1048576, wprec: 'fp8', source: 'https://huggingface.co/zai-org/GLM-5.3' }),
+    // Mistral Large 4: MLA with sparse token selection (top-2048); nope/v head dims not published (DeepSeek's 128 assumed)
+    Object.assign({}, G, MLA, { id: 'mistral-large-4', name: 'Mistral Large 4 1.05T-A52B (MoE, MLA, sparse)', total: 1050, active: 52, layers: 72, hidden: 6144, qHeads: 64, sparseTopK: 2048, experts: 128, topk: 4, maxCtx: 1048576, wprec: 'fp8', source: 'https://huggingface.co/mistralai/Mistral-Large-4-1T-A52B' }),
+    // Qwen3.5-397B and Qwen3.8 27B: three Gated DeltaNet layers per gated-attention layer (64 / 48 value heads × 128 × 128 fp32 state)
+    Object.assign({}, G, { id: 'qwen35-397b', name: 'Qwen3.5 397B-A17B (MoE, Gated DeltaNet hybrid)', total: 397, active: 17, layers: 60, hidden: 4096, qHeads: 32, kvHeads: 2, headDim: 256, linFrac: 0.75, linStateMB: 4.19, experts: 512, topk: 10, maxCtx: 262144, wprec: 'fp8', source: 'https://huggingface.co/Qwen/Qwen3.5-397B-A17B' }),
+    Object.assign({}, G, { id: 'qwen38-27b', name: 'Qwen3.8 27B (Gated DeltaNet hybrid)', total: 27, active: 27, layers: 64, hidden: 5120, qHeads: 24, kvHeads: 4, headDim: 256, linFrac: 0.75, linStateMB: 3.15, maxCtx: 262144, wprec: 'fp8', source: 'https://huggingface.co/Qwen/Qwen3.8-27B' }),
+    // MiniMax M3: sparse attention (16 blocks of 128 tokens) in 57 of 60 layers, modelled on all of them
+    Object.assign({}, G, { id: 'minimax-m3', name: 'MiniMax M3 428B-A23B (MoE, sparse)', total: 428, active: 23, layers: 60, hidden: 6144, qHeads: 64, kvHeads: 4, headDim: 128, sparseTopK: 2048, experts: 128, topk: 4, maxCtx: 1048576, wprec: 'fp8', source: 'https://huggingface.co/MiniMaxAI/MiniMax-M3' }),
+    Object.assign({}, G, { id: 'minimax-m27', name: 'MiniMax M2.7 229B-A10B (MoE)', total: 229, active: 10, layers: 62, hidden: 3072, qHeads: 48, kvHeads: 8, headDim: 128, experts: 256, topk: 8, maxCtx: 204800, wprec: 'fp8', source: 'https://huggingface.co/MiniMaxAI/MiniMax-M2.7' }),
+    // Muse Spark Open: 46 sliding-window layers (2048 tokens) and 16 full-attention layers
+    Object.assign({}, G, { id: 'muse-spark-open', name: 'Muse Spark Open 816B-A42B (MoE)', total: 816, active: 42, layers: 62, hidden: 8192, qHeads: 128, kvHeads: 16, headDim: 64, swaFrac: 46 / 62, swaWindow: 2048, experts: 256, topk: 8, maxCtx: 1048576, wprec: 'fp4', source: 'https://huggingface.co/meta-models/Muse-Spark-Open-816B-A42B' }),
+    // Gemma 4 31B: 50 sliding-window layers (1024 tokens) and 10 global layers with 4 KV heads of 512 and keys reused as
+    // values (the KV of 4 × 256 K+V pairs). The sliding layers' 16 heads are sized as 4: their KV is capped at 1024 tokens.
+    Object.assign({}, G, { id: 'gemma4-31b', name: 'Gemma 4 31B', total: 30.7, active: 30.7, layers: 60, hidden: 5376, qHeads: 32, kvHeads: 4, headDim: 256, swaFrac: 50 / 60, swaWindow: 1024, maxCtx: 262144, wprec: 'fp8', source: 'https://huggingface.co/google/gemma-4-31B' }),
+  ];
+  const MODEL_DEFAULTS = { attn: 'gqa', experts: 0, topk: 0, swaFrac: 0, swaWindow: 0, linFrac: 0, linStateMB: 0, kvKeep: 1, sparseTopK: 0, mlaLatent: 512, mlaRope: 64, mlaNope: 128, mlaV: 128, wprec: 'fp8' };
+  const GPU_DEFAULTS = { tfFp8: 0, tfFp4: 0, nodeKW: 0, price: 0, vendor: '' };
+
+  // ---------- validation ----------
+  const slug = s => String(s || '').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '').slice(0, 60) || 'item';
+  function check(entry, fields, defaults, kind) {
+    const errors = [];
+    if (!entry || typeof entry !== 'object' || Array.isArray(entry)) return { ok: false, errors: [kind + ' entry must be an object.'] };
+    const out = Object.assign({}, defaults);
+    const nameKey = kind === 'GPU' ? 'label' : 'name';
+    out.id = entry.id ? String(entry.id).replace(/[^A-Za-z0-9._-]+/g, '-').slice(0, 60) : slug(entry[nameKey]);
+    for (const f of fields) {
+      let v = entry[f.k];
+      if (v === undefined || v === null || v === '') {
+        if (f.required) errors.push(`${kind} "${entry[nameKey] || entry.id || '?'}": missing ${f.label} (${f.k}).`);
+        continue;
+      }
+      if (f.type === 'text') { out[f.k] = String(v).slice(0, 300); continue; }
+      if (f.type === 'enum') {
+        v = String(v).toLowerCase();
+        if (!f.opts.includes(v)) { errors.push(`${kind} "${entry[nameKey] || out.id}": ${f.k} must be one of ${f.opts.join(', ')}.`); continue; }
+        out[f.k] = v; continue;
+      }
+      v = Number(v);
+      if (!isFinite(v)) { errors.push(`${kind} "${entry[nameKey] || out.id}": ${f.k} must be a number.`); continue; }
+      if (f.int) v = Math.round(v);
+      if (v < f.min || v > f.max) { errors.push(`${kind} "${entry[nameKey] || out.id}": ${f.k} = ${v} is outside ${f.min}–${f.max}${f.unit ? ' ' + f.unit : ''}.`); continue; }
+      out[f.k] = v;
+    }
+    if (kind === 'Model' && out.active > out.total) errors.push(`Model "${out.name}": active params (${out.active}B) exceed total (${out.total}B).`);
+    if (kind === 'Model' && (out.swaFrac || 0) + (out.linFrac || 0) > 1) errors.push(`Model "${out.name}": sliding-window and linear-attention shares add up to more than all layers.`);
+    if (kind === 'Model' && out.experts > 0 && !(out.topk > 0 && out.topk < out.experts)) errors.push(`Model "${out.name}": experts per token must be between 1 and ${out.experts - 1}.`);
+    if (kind === 'Model' && out.experts > 0 && out.active >= out.total) errors.push(`Model "${out.name}": an MoE model needs active params below total params.`);
+    return { ok: errors.length === 0, errors, value: out };
+  }
+  const validateGPU = g => check(g, GPU_FIELDS, GPU_DEFAULTS, 'GPU');
+  const validateModel = m => check(m, MODEL_FIELDS, MODEL_DEFAULTS, 'Model');
+
+  // ---------- spec sheets ----------
+  // A spec sheet is JSON: { "kind": "inference-sizer/catalog", "version": 1, "gpus": [...], "models": [...] }.
+  // An entry whose id matches a built-in one replaces it ("update via spec sheet"); new ids are added.
+  // A single GPU or model object, or a Hugging Face config.json, is also accepted.
+  const SHEET_KIND = 'inference-sizer/catalog';
+  function parseSheet(text) {
+    let j;
+    try { j = typeof text === 'string' ? JSON.parse(text) : text; } catch (e) { return { ok: false, errors: ['Not valid JSON: ' + e.message], gpus: [], models: [] }; }
+    const res = { ok: true, errors: [], gpus: [], models: [], notes: [] };
+    if (!j || typeof j !== 'object') return { ok: false, errors: ['Expected a JSON object.'], gpus: [], models: [] };
+    let gpus = [], models = [];
+    if (Array.isArray(j.gpus) || Array.isArray(j.models)) { gpus = j.gpus || []; models = j.models || []; }
+    else if (isHFConfig(j)) { const m = fromHFConfig(j); models = [m.model]; res.notes.push(...m.notes); }
+    else if ('hbmGB' in j || 'tfBf16' in j) gpus = [j];
+    else if ('layers' in j || 'qHeads' in j) models = [j];
+    else return { ok: false, errors: ['Could not recognise this file. Use a spec sheet with "gpus" and/or "models" arrays, a single GPU or model entry, or a Hugging Face config.json.'], gpus: [], models: [] };
+    for (const g of gpus) { const r = validateGPU(g); if (r.ok) res.gpus.push(r.value); else res.errors.push(...r.errors); }
+    for (const m of models) { const r = validateModel(m); if (r.ok) res.models.push(r.value); else res.errors.push(...r.errors); }
+    res.ok = res.errors.length === 0 && (res.gpus.length + res.models.length) > 0;
+    if (!res.gpus.length && !res.models.length && !res.errors.length) { res.ok = false; res.errors.push('The file holds no GPUs or models.'); }
+    return res;
+  }
+  function makeSheet(gpus, models) {
+    const strip = o => { const c = Object.assign({}, o); delete c.builtin; delete c.custom; return c; };
+    return { kind: SHEET_KIND, version: 1, gpus: (gpus || []).map(strip), models: (models || []).map(strip) };
+  }
+  // Built-ins overlaid with user entries (same id replaces).
+  function merge(builtin, custom) {
+    const out = builtin.map(x => Object.assign({ builtin: true }, x));
+    for (const c of custom || []) {
+      const i = out.findIndex(x => x.id === c.id);
+      const e = Object.assign({ custom: true }, c);
+      if (i >= 0) out[i] = Object.assign(e, { overrides: true }); else out.push(e);
+    }
+    return out;
+  }
+
+  // ---------- Hugging Face config.json ----------
+  function isHFConfig(j) {
+    const c = j.text_config || j;
+    return ('num_hidden_layers' in c || 'n_layer' in c) && ('hidden_size' in c || 'n_embd' in c || 'd_model' in c);
+  }
+  const first = (o, keys, d) => { for (const k of keys) if (o[k] !== undefined && o[k] !== null) return o[k]; return d; };
+  // Reads architecture fields and estimates parameter counts from the layer shapes (embeddings, attention, MLP/experts).
+  function fromHFConfig(j) {
+    const notes = [];
+    const c = j.text_config ? Object.assign({}, j.text_config) : j;
+    if (j.text_config) notes.push('Read the text model from text_config.');
+    const layers = +first(c, ['num_hidden_layers', 'n_layer', 'num_layers']);
+    const hidden = +first(c, ['hidden_size', 'n_embd', 'd_model']);
+    const qHeads = +first(c, ['num_attention_heads', 'n_head', 'num_heads']);
+    let kvHeads = +first(c, ['num_key_value_heads', 'num_kv_heads', 'n_head_kv'], c.multi_query ? 1 : qHeads);
+    const headDim = +first(c, ['head_dim'], Math.round(hidden / qHeads));
+    const V = +first(c, ['vocab_size', 'padded_vocab_size'], 32000);
+    const inter = +first(c, ['intermediate_size', 'ffn_hidden_size', 'n_inner'], 4 * hidden);
+    const experts = +first(c, ['num_local_experts', 'n_routed_experts', 'num_experts', 'moe_num_experts'], 0) || 0;
+    const topk = experts ? +first(c, ['num_experts_per_tok', 'experts_per_token', 'moe_top_k', 'num_experts_per_token', 'top_k'], 2) : 0;
+    const moeInter = +first(c, ['moe_intermediate_size', 'expert_intermediate_size'], inter);
+    const denseInter = +first(c, ['intermediate_size_mlp'], inter);
+    const mla = c.kv_lora_rank != null;
+    const mlaLatent = mla ? +c.kv_lora_rank : 512, mlaRope = mla ? +first(c, ['qk_rope_head_dim'], 64) : 64;
+    const mlaNope = mla ? +first(c, ['qk_nope_head_dim'], 128) : 128, mlaV = mla ? +first(c, ['v_head_dim'], 128) : 128;
+    if (mla) kvHeads = 1;
+    // sliding window
+    let swaFrac = 0, swaWindow = 0;
+    if (Array.isArray(c.layer_types) && c.sliding_window) {
+      const n = c.layer_types.filter(t => /slid/i.test(String(t))).length;
+      swaFrac = +(n / c.layer_types.length).toFixed(3); swaWindow = +c.sliding_window;
+    } else if (c.sliding_window && c.use_sliding_window === true) { swaFrac = 1; swaWindow = +c.sliding_window; }
+    else if (c.attention_chunk_size && c.no_rope_layers) {
+      const n = c.no_rope_layers.filter(x => x).length;
+      swaFrac = +(n / c.no_rope_layers.length).toFixed(3); swaWindow = +c.attention_chunk_size;
+      notes.push('Chunked-attention layers modelled as sliding-window layers.');
+    }
+    if (c.sliding_window && !swaFrac) notes.push('sliding_window is set but not enabled for these layers; KV is sized for full attention.');
+    // context
+    let maxCtx = +first(c, ['max_position_embeddings', 'n_positions', 'seq_length', 'max_sequence_length'], 4096);
+    const rs = c.rope_scaling;
+    if (rs && rs.factor && rs.original_max_position_embeddings) maxCtx = Math.max(maxCtx, Math.round(rs.factor * rs.original_max_position_embeddings));
+    // which layers are MoE
+    let moeLayers = experts ? layers : 0;
+    if (experts && c.first_k_dense_replace != null) moeLayers = layers - c.first_k_dense_replace;
+    if (experts && c.interleave_moe_layer_step > 1) moeLayers = Math.floor(layers / c.interleave_moe_layer_step);
+    if (experts && c.decoder_sparse_step > 1) moeLayers = Math.floor(layers / c.decoder_sparse_step);
+    if (experts && Array.isArray(c.mlp_only_layers)) moeLayers -= c.mlp_only_layers.length;
+    if (experts && Array.isArray(c.moe_layers)) moeLayers = c.moe_layers.length;
+    const denseLayers = layers - moeLayers;
+    // attention params per layer
+    let attnP;
+    if (mla) {
+      const qk = mlaNope + mlaRope;
+      const qP = c.q_lora_rank ? hidden * c.q_lora_rank + c.q_lora_rank * qHeads * qk : hidden * qHeads * qk;
+      attnP = qP + hidden * (mlaLatent + mlaRope) + mlaLatent * qHeads * (mlaNope + mlaV) + qHeads * mlaV * hidden;
+    } else attnP = hidden * qHeads * headDim * 2 + hidden * kvHeads * headDim * 2;
+    const gated = !(c.hidden_act === 'gelu' && /gpt2|bloom|opt/.test(c.model_type || ''));
+    const mlp = n => (gated ? 3 : 2) * hidden * n;
+    const sharedN = +first(c, ['n_shared_experts', 'num_shared_experts'], 0) || 0;
+    const sharedInter = c.shared_expert_intermediate_size ? +c.shared_expert_intermediate_size : sharedN * moeInter;
+    const llama4Shared = /llama4/.test(c.model_type || '') && experts ? mlp(moeInter) : 0;
+    const expertP = mlp(moeInter);
+    const tied = j.tie_word_embeddings === true || c.tie_word_embeddings === true;
+    const emb = V * hidden * (tied ? 1 : 2);
+    const perMoE = experts * expertP + (sharedInter ? mlp(sharedInter) : 0) + llama4Shared + hidden * experts;
+    const total = emb + layers * attnP + denseLayers * mlp(denseInter) + moeLayers * perMoE;
+    const active = total - moeLayers * (experts - topk) * expertP;
+    notes.push('Parameter counts are estimated from layer shapes; check them against the model card.');
+    const name = String(first(j, ['_name_or_path', 'name_or_path'], '') || '').split('/').pop() || (c.model_type ? c.model_type + ' ' + (total / 1e9).toFixed(0) + 'B' : 'Imported model');
+    const model = {
+      name, total: +(total / 1e9).toFixed(2), active: +(active / 1e9).toFixed(2), layers, hidden, qHeads, kvHeads, headDim,
+      attn: mla ? 'mla' : 'gqa', mlaLatent, mlaRope, mlaNope, mlaV, experts, topk, swaFrac, swaWindow, maxCtx,
+      wprec: /fp8|float8/i.test(JSON.stringify(j.quantization_config || '')) ? 'fp8' : /mxfp4|nvfp4|fp4/i.test(JSON.stringify(j.quantization_config || '')) ? 'fp4' : 'fp8',
+    };
+    return { model, notes };
+  }
+
+  const api = { GPU_FIELDS, MODEL_FIELDS, GPUS, MODELS, MODEL_DEFAULTS, GPU_DEFAULTS, SHEET_KIND, validateGPU, validateModel, parseSheet, makeSheet, merge, fromHFConfig, isHFConfig, slug };
+  if (typeof module !== 'undefined' && module.exports) module.exports = api; else root.SizerCatalog = api;
+})(this);
+
+</script>
+<script>
+/* Inference Sizer model: how many GPUs, in what layout, serve a model at TTFT/TPOT targets.
+   First-order roofline per layout, M/D/1 queueing for prefill, disaggregated vs aggregated serving.
+   Pure functions over one flat input object `s` (model + GPU + traffic + targets + assumptions). See docs/METHOD.md. */
+(function (root) {
+  'use strict';
+
+  // Engine and traffic defaults. Model and GPU fields come from the catalog entry the user picks.
+  const SETTINGS = {
+    kvprec: 'fp8', ctx: 32768,
+    conc: 500, dau: 50000, rpu: 20, peakFactor: 3, concSource: 'max',
+    avgIn: 2000, peakIn: 16000, avgOut: 400, peakOut: 2000,
+    ttft: 1000, tpot: 30,
+    mode: 'auto', kvPolicy: 'paged', prefixHit: 0,
+    memUtil: 0.9, reserveGB: 8,
+    effPrefill: 0.40, effDecodeBW: 0.65, effDecodeComp: 0.30, stepMs: 1.5,
+    maxSeqPerGPU: 256, headroom: 15, nPlus1: true, kvMaxUtil: 0.9, sloMargin: 10,
+  };
+
+  function derive(s) {
+    const bpp = { bf16: 2, fp8: 1.0, fp4: 0.5625 }[s.wprec] || 1;
+    const kvb = { bf16: 2, fp8: 1 }[s.kvprec] || 1;
+    const isMoE = s.experts > 0 && s.topk > 0 && s.topk < s.experts && s.active < s.total;
+    let Eall = 0, dense = s.total;
+    if (isMoE) { Eall = Math.min((s.total - s.active) / (1 - s.topk / s.experts), s.total * 0.98); dense = s.total - Eall; }
+    const mla = s.attn === 'mla';
+    const lat = s.mlaLatent || 512, rope = s.mlaRope == null ? 64 : s.mlaRope, nope = s.mlaNope == null ? 128 : s.mlaNope, vh = s.mlaV || 128;
+    const swaLayers = s.swaWindow > 0 ? Math.round(s.layers * (s.swaFrac || 0)) : 0;
+    // linear-attention layers (Kimi Delta Attention, Gated DeltaNet): a fixed recurrent state per sequence, no KV per token
+    const linLayers = s.linFrac > 0 ? Math.min(s.layers - swaLayers, Math.round(s.layers * s.linFrac)) : 0;
+    const linState = linLayers * (s.linStateMB || 0) * 1e6;
+    // compressed attention keeps the KV of a share of the tokens (DeepSeek V4: 1/4 or 1/128 per layer); sparse attention
+    // (DSA, CSA, MSA) attends a fixed number of selected tokens per query instead of all of them
+    const keep = s.kvKeep > 0 && s.kvKeep < 1 ? s.kvKeep : 1, topK = s.sparseTopK > 0 ? s.sparseTopK : 0;
+    // tensor-core rate for the weight precision; fall back when the GPU lacks that precision
+    const tf = { bf16: s.tfBf16, fp8: s.tfFp8 || s.tfBf16, fp4: s.tfFp4 || s.tfFp8 || s.tfBf16 }[s.wprec] || s.tfBf16;
+    const computeFallback = (s.wprec === 'fp4' && !s.tfFp4) ? (s.tfFp8 ? 'fp8' : 'bf16') : (s.wprec === 'fp8' && !s.tfFp8) ? 'bf16' : null;
+    return {
+      bpp, kvb, isMoE, mla, computeFallback,
+      Wd: dense * 1e9 * bpp, We: Eall * 1e9 * bpp,
+      denseP: dense * 1e9, activeP: (isMoE ? s.active : s.total) * 1e9,
+      kvTokLayer: mla ? (lat + rope) * kvb : 2 * s.kvHeads * s.headDim * kvb,
+      swaLayers, linLayers, fullLayers: s.layers - swaLayers - linLayers, win: s.swaWindow || 0, keep, topK, linState,
+      // FLOPs per token per linear-attention layer: read and update the state (fp32, 4 bytes an element), ~4 FLOPs an element
+      Alin: (s.linStateMB || 0) * 1e6,
+      // attention FLOPs per (query token, context token) per layer
+      Apre: mla ? s.qHeads * (2 * (nope + rope) + 2 * vh) : 4 * s.qHeads * s.headDim,
+      Adec: mla ? s.qHeads * (2 * (lat + rope) + 2 * lat) : 4 * s.qHeads * s.headDim,
+      Fw: tf * 1e12, Fa: s.tfBf16 * 1e12,
+      BW: s.hbmTBs * 1e12, nvl: s.scaleUpGBs * 1e9 * 0.8, nic: s.nicGbps / 8 * 1e9 * 0.8,
+      hbm: s.hbmGB * 1e9 * s.memUtil, reserve: s.reserveGB * 1e9,
+      D: Math.max(1, Math.round(s.domain || 8)),
+    };
+  }
+
+  // KV bytes one sequence of L tokens holds: full-attention layers keep (a share of) every token, sliding-window layers
+  // the last W, linear-attention layers a fixed state
+  function kvBytes(md, L) {
+    const w = md.win || L, keep = md.keep || 1;
+    return md.kvTokLayer * (md.fullLayers * L * keep + md.swaLayers * Math.min(L, w)) + (md.linState || 0);
+  }
+  // context tokens one query attends in a full-attention layer, and its integral over query positions 0..x
+  const attended = (md, L) => { const n = L * (md.keep || 1); return md.topK ? Math.min(n, md.topK) : n; };
+  function attendedSum(md, x) {
+    const k = md.keep || 1;
+    if (!md.topK) return k * x * x / 2;
+    const t = md.topK / k;
+    return x <= t ? k * x * x / 2 : k * t * t / 2 + md.topK * (x - t);
+  }
+  function attnPre(md, Lc, L) {
+    const W = md.win;
+    const g = x => x <= W ? x * x / 2 : W * W / 2 + W * (x - W);
+    return md.Apre * (md.fullLayers * (attendedSum(md, L) - attendedSum(md, Lc)) + md.swaLayers * (g(L) - g(Lc))) + (md.linLayers || 0) * (md.Alin || 0) * (L - Lc);
+  }
+  function attnDec(md, L) { return md.Adec * (md.fullLayers * attended(md, L) + md.swaLayers * Math.min(L, md.win || L)) + (md.linLayers || 0) * (md.Alin || 0); }
+
+  // ---------- parallel layouts ----------
+  // Instances of g GPUs. Inside one scale-up domain (D GPUs): TP, or TP+EP for MoE, or DP-attention+EP for MLA.
+  // Larger than a domain: dense models pipeline across domains (TP=D × PP), MoE models use wide EP.
+  function configs(s, md) {
+    const out = [], D = md.D;
+    for (const g of [1, 2, 4, 8, 16, 32, 64]) {
+      const inDomain = g <= D;
+      if (!inDomain && g % D !== 0) continue;
+      let kind;
+      if (!md.isMoE) { if (g > 32 && !inDomain) continue; kind = inDomain ? 'TP' : 'TPPP'; }
+      else if (md.mla) kind = 'DPEP';
+      else kind = inDomain ? 'TPEP' : 'DPEP';
+      out.push({ g, kind, pp: kind === 'TPPP' ? g / D : 1, tpl: kind === 'TPPP' ? D : g });
+    }
+    return out;
+  }
+  function decodeLabel(c) {
+    if (c.g === 1) return '1 GPU';
+    if (c.kind === 'TP') return 'TP' + c.g;
+    if (c.kind === 'TPPP') return 'TP' + c.tpl + ' × PP' + c.pp;
+    if (c.kind === 'TPEP') return 'TP' + c.g + ' · EP' + c.g;
+    return 'DP' + c.g + ' attn · EP' + c.g;
+  }
+
+  // ---------- memory (decode-side layout) ----------
+  function memInfo(s, md, c) {
+    let wGPU, rep, cap, single;
+    if (c.kind === 'DPEP') { wGPU = md.Wd + md.We / c.g; rep = 1; }
+    else { wGPU = (md.Wd + md.We) / c.g; rep = md.mla ? c.tpl : Math.max(1, c.tpl / s.kvHeads); }
+    const avail = md.hbm - md.reserve - wGPU;
+    if (c.kind === 'DPEP') { cap = avail * c.g; single = avail; }
+    else { cap = avail * c.g / rep; single = cap; }
+    const ctxBytes = kvBytes(md, s.ctx);
+    const perSeq = s.kvPolicy === 'reserve' ? ctxBytes : kvBytes(md, Math.min(s.ctx, s.avgIn + s.avgOut)) * 1.1;
+    const fitsW = avail > 2e9;
+    const fitsCtx = fitsW && single >= ctxBytes;
+    const Bmem = fitsW ? Math.floor(cap * (s.kvMaxUtil || 1) / perSeq) : 0;
+    return { wGPU, rep, avail, cap, single, ctxBytes, perSeq, fitsW, fitsCtx, Bmem };
+  }
+
+  function allreduce(s, md, tp, tokens) {
+    if (tp <= 1) return 0;
+    const bw = tp <= md.D ? md.nvl : md.nic;
+    return 2 * s.layers * (8e-6 + 2 * (tp - 1) / tp * tokens * s.hidden * 2 / bw);
+  }
+
+  // One decode step with B sequences (per micro-batch when pipelined).
+  function decodeStep(s, md, c, B) {
+    const L = Math.min(s.ctx, s.avgIn + s.avgOut / 2);
+    const kvL = kvBytes(md, L);
+    const frac = md.isMoE ? 1 - Math.pow(1 - s.topk / s.experts, B) : 1;
+    const linF = 2 * md.activeP * B, atF = B * attnDec(md, L);
+    let bytes, gl = c.g, comm = 0;
+    if (c.kind === 'DPEP') {
+      const imb = c.g > 1 ? 1.15 : 1;
+      bytes = md.Wd + md.We * frac / c.g * imb + (B / c.g) * kvL;
+      const tok = (B / c.g) * s.topk * s.hidden * 1.5;
+      if (c.g > 1) comm = c.g <= md.D ? 2 * s.layers * (10e-6 + tok / md.nvl) : 2 * s.layers * (25e-6 + tok / md.nic) * 0.6;
+    } else {
+      const rep = md.mla ? c.tpl : Math.max(1, c.tpl / s.kvHeads);
+      gl = c.tpl;
+      bytes = (md.Wd + md.We * frac) / gl + B * kvL * rep / gl;
+      comm = allreduce(s, md, gl, B) * (c.kind === 'TPEP' ? 1.3 : 1);
+      if (c.kind === 'TPPP') comm += (c.pp - 1) * (15e-6 + B * s.hidden * 2 / md.nic);
+    }
+    const tm = bytes / (md.BW * s.effDecodeBW);
+    const tc = linF / gl / (md.Fw * s.effDecodeComp) + atF / gl / (md.Fa * s.effDecodeComp);
+    const ovh = s.stepMs / 1000;
+    return { t: Math.max(tm, tc) + comm + ovh, tm, tc, comm, ovh, bytes, bound: tm >= tc ? 'memory' : 'compute' };
+  }
+
+  function decodeCap(s, md, c, mi) {
+    return Math.max(0, Math.min(Math.floor(mi.Bmem / c.pp), s.maxSeqPerGPU * c.tpl));
+  }
+  // Largest per-micro-batch B whose step time stays within the TPOT target.
+  function bmax(s, md, c, mi, tpotS) {
+    const cap = decodeCap(s, md, c, mi);
+    if (cap < 1) return { B: 0, limit: 'memory' };
+    if (decodeStep(s, md, c, 1).t > tpotS) return { B: 0, limit: 'latency' };
+    if (decodeStep(s, md, c, cap).t <= tpotS) return { B: cap, limit: cap === Math.floor(mi.Bmem / c.pp) ? 'kv-memory' : 'seq-cap' };
+    let lo = 1, hi = cap;
+    while (hi - lo > 1) { const mid = (lo + hi) >> 1; if (decodeStep(s, md, c, mid).t <= tpotS) lo = mid; else hi = mid; }
+    return { B: lo, limit: 'tpot' };
+  }
+
+  // ---------- prefill: TP inside a domain, context parallel (CP) across domains, EP for MoE ----------
+  function preCfg(md, c) { const tp = Math.min(c.g, md.D); return { g: c.g, tp, cp: Math.max(1, Math.round(c.g / tp)) }; }
+  function prefillLabel(c, md) {
+    const p = preCfg(md, c);
+    let l = p.g === 1 ? '1 GPU' : 'TP' + p.tp + (p.cp > 1 ? ' × CP' + p.cp : '');
+    if (md.isMoE && p.g > 1) l += ' · EP' + p.g;
+    return l;
+  }
+  function prefillTime(s, md, c, Lnew, Lc, n) {
+    const p = preCfg(md, c);
+    const lin = 2 * md.activeP * Lnew * n;
+    const at = n * attnPre(md, Lc, Lc + Lnew);
+    const par = p.cp > 1 ? 0.85 : 1;
+    const tc = lin / p.g / (md.Fw * s.effPrefill * par) + at / p.g / (md.Fa * s.effPrefill * par);
+    const tm = (md.Wd / p.tp + md.We / p.g) / (md.BW * s.effDecodeBW);
+    const tokens = Lnew * n;
+    let comm = allreduce(s, md, p.tp, tokens / p.cp) * 0.5;
+    if (md.isMoE && p.g > 1) comm += 2 * s.layers * (10e-6 + tokens / p.g * s.topk * s.hidden * 1.5 / (p.g > md.D ? md.nic : md.nvl)) * 0.5;
+    if (p.cp > 1) comm += (kvBytes(md, Lc + Lnew) * n * (p.cp - 1) / p.cp / (p.tp * md.nic) + s.layers * 20e-6) * 0.5;
+    return Math.max(tc, tm) + comm + 0.004;
+  }
+  function prefillStats(s, md, c) {
+    const hit = s.prefixHit / 100;
+    const aIn = Math.min(s.avgIn, s.ctx), pIn = Math.min(s.peakIn, s.ctx);
+    const Lavg = Math.max(1, aIn * (1 - hit)), LcA = aIn * hit;
+    const Lpk = Math.max(1, pIn * (1 - hit)), LcP = pIn * hit;
+    const budget = Math.max(Lavg, 8192);
+    const n = budget / Lavg;
+    const tBatch = prefillTime(s, md, c, Lavg, LcA, n);
+    const cap = n * Lavg / tBatch; // new prompt tokens / s
+    const Speak = prefillTime(s, md, c, Lpk, LcP, 1);
+    const p = preCfg(md, c);
+    const wGPU = md.Wd / p.tp + md.We / p.g;
+    const rep = md.mla ? p.tp : Math.max(1, p.tp / s.kvHeads);
+    const avail = md.hbm - md.reserve - wGPU;
+    const fits = avail > 2e9 && kvBytes(md, pIn) * rep / p.g * 2 <= avail;
+    return { cap, Sbatch: tBatch, Speak, Lavg, Lpk, fits, wGPU, avail };
+  }
+  function kvXfer(s, md, gP, L) { return kvBytes(md, L) / (Math.min(md.D, gP) * md.nic) + 0.002; }
+  const mdWait = (rho, S) => rho * S / (2 * (1 - rho));
+
+  // ---------- load ----------
+  // Cs   concurrent decode streams to hold at the TPOT target (from "concurrent sessions")
+  // Dtok output tokens/s to deliver (from DAU traffic)
+  // lam  request arrivals/s driving prefill
+  function computeLoad(s) {
+    const dur = s.avgOut * s.tpot / 1000 + s.ttft / 1000;
+    const lamDau = s.dau * s.rpu / 86400 * s.peakFactor;
+    const lamConc = s.conc / dur;
+    const useC = s.concSource !== 'dau', useD = s.concSource !== 'conc';
+    const h = 1 + s.headroom / 100;
+    const lam0 = Math.max(useC ? lamConc : 0, useD ? lamDau : 0);
+    const binding = !useD ? 'concurrency' : !useC ? 'DAU' : (lamDau * dur > s.conc ? 'DAU' : 'concurrency');
+    return { dur, lamDau, lamConc, h, binding, Cs: useC ? s.conc * h : 0, Dtok: useD ? lamDau * s.avgOut * h : 0, lam: lam0 * h, lam0 };
+  }
+  // Smallest per-micro-batch B whose throughput pp*B/t(B) reaches `rate`.
+  function minBforRate(c, tfun, rate, capBm) {
+    if (rate <= 0) return 1;
+    const thr = B => c.pp * B / tfun(B);
+    if (thr(capBm) < rate) return Infinity;
+    let lo = 0, hi = capBm;
+    while (hi - lo > 1) { const mid = (lo + hi) >> 1; if (thr(mid) >= rate) hi = mid; else lo = mid; }
+    return hi;
+  }
+
+  // ---------- sizing ----------
+  const fmtMs = t => { const ms = t * 1000; return ms >= 100 ? Math.round(ms) + ' ms' : ms.toFixed(1) + ' ms'; };
+
+  function sizeDisagg(s, md, load, cfgs) {
+    const m = 1 - (s.sloMargin || 0) / 100, T = s.ttft / 1000 * m, P = s.tpot / 1000 * m; // size to targets less the safety margin
+    const pre = cfgs.map(c => {
+      const ps = prefillStats(s, md, c);
+      const xa = kvXfer(s, md, c.g, Math.min(s.avgIn, s.ctx)), xp = kvXfer(s, md, c.g, Math.min(s.peakIn, s.ctx));
+      const r = { c, label: prefillLabel(c, md), ps, xferAvg: xa, xferPeak: xp, feasible: false, why: '' };
+      if (!ps.fits) { r.why = 'weights + prompt KV do not fit'; return r; }
+      if (ps.Speak + xp > T) { r.why = 'peak prompt TTFT ' + fmtMs(ps.Speak + xp) + ' > target'; return r; }
+      const budget = T - xa, S = ps.Sbatch;
+      if (S >= budget) { r.why = 'avg prompt service time exceeds TTFT budget'; return r; }
+      const x = (budget - S) / S, rhoMax = Math.min(0.85, 2 * x / (1 + 2 * x));
+      const need = load.lam * ps.Lavg;
+      const N = Math.max(1, Math.ceil(need / (ps.cap * rhoMax)));
+      const rho = need / (N * ps.cap);
+      Object.assign(r, { feasible: true, N, gpus: N * c.g, rho, rhoMax, ttftAvg: S + mdWait(rho, S) + xa, ttftPeak: ps.Speak + xp });
+      return r;
+    });
+    const dec = cfgs.map(c => {
+      const mi = memInfo(s, md, c);
+      const r = { c, label: decodeLabel(c), mi, feasible: false, why: '' };
+      if (!mi.fitsW) { r.why = 'weights do not fit'; return r; }
+      if (!mi.fitsCtx) { r.why = 'one full-context sequence does not fit'; return r; }
+      const bm = bmax(s, md, c, mi, P);
+      r.bm = bm;
+      if (bm.B < 1) { r.why = bm.limit === 'latency' ? 'TPOT floor ' + fmtMs(decodeStep(s, md, c, 1).t) + ' > target' : 'no KV room'; return r; }
+      const Binst = bm.B * c.pp;
+      const tfun = B => decodeStep(s, md, c, B).t;
+      const thrInst = Binst / tfun(bm.B);
+      const N = Math.max(1, Math.ceil(load.Cs / Binst), Math.ceil(load.Dtok / thrInst));
+      const Bm = Math.max(1, Math.ceil(load.Cs / N / c.pp), minBforRate(c, tfun, load.Dtok / N, bm.B));
+      const st = decodeStep(s, md, c, Bm), Bop = Bm * c.pp;
+      Object.assign(r, { feasible: true, N, gpus: N * c.g, Binst, Bop, st, tpotOp: st.t, thrInst, kvUse: Bop * mi.perSeq / 1.1 / mi.cap });
+      return r;
+    });
+    const best = arr => arr.filter(r => r.feasible).sort((a, b) => a.gpus - b.gpus || a.c.g - b.c.g)[0] || null;
+    return { pre, dec, P: best(pre), D: best(dec) };
+  }
+
+  // Aggregated: each step carries the decode batch plus a prefill chunk sized to keep the step within TPOT.
+  function sizeAgg(s, md, load, cfgs) {
+    const m = 1 - (s.sloMargin || 0) / 100, T = s.ttft / 1000 * m, P = s.tpot / 1000 * m; // size to targets less the safety margin
+    const rows = cfgs.map(c => {
+      const mi = memInfo(s, md, c);
+      const r = { c, label: decodeLabel(c), mi, feasible: false, why: '' };
+      if (!mi.fitsW) { r.why = 'weights do not fit'; return r; }
+      if (!mi.fitsCtx) { r.why = 'one full-context sequence does not fit'; return r; }
+      const capBm = decodeCap(s, md, c, mi), capB = capBm * c.pp;
+      if (capB < 1) { r.why = 'no KV room'; return r; }
+      const ps = prefillStats(s, md, c);
+      if (!ps.fits) { r.why = 'weights + prompt KV do not fit'; return r; }
+      if (ps.Speak + s.stepMs / 1000 > T) { r.why = 'peak prompt TTFT ' + fmtMs(ps.Speak) + ' > target'; return r; }
+      if (decodeStep(s, md, c, 1).t > P) { r.why = 'TPOT floor ' + fmtMs(decodeStep(s, md, c, 1).t) + ' > target'; return r; }
+      const Nmin = Math.max(1, Math.ceil(load.Cs / capB));
+      const Nmax = Math.max(Nmin * 64, 4096);
+      for (let N = Nmin; N <= Nmax; N++) {
+        const fp0 = load.lam * ps.Lavg / N / ps.cap;
+        if (fp0 >= 0.85) continue;
+        const tAvgF = B => { const q = decodeStep(s, md, c, B); return Math.max(q.tm, q.tc / (1 - fp0)) * 1.1 + q.comm + q.ovh; };
+        const Bm = Math.max(1, Math.ceil(load.Cs / N / c.pp), minBforRate(c, tAvgF, load.Dtok / N, capBm));
+        if (!isFinite(Bm) || Bm > capBm) continue;
+        const st = decodeStep(s, md, c, Bm);
+        const Pcore = (P - st.comm - st.ovh) / 1.1;
+        if (Math.max(st.tm, st.tc) >= Pcore) continue;
+        const chunk = (Pcore - st.tc) * ps.cap;
+        const mu = chunk / P;
+        const rArr = load.lam * ps.Lavg / N;
+        const rho = rArr / mu;
+        if (rho >= 0.85) continue;
+        const S = ps.Lavg / mu;
+        const ttftAvg = S + mdWait(rho, S) + P, ttftPeak = ps.Lpk / mu + P;
+        if (ttftAvg > T || ttftPeak > T) continue;
+        const tAvg = Math.min(P, tAvgF(Bm)), Bop = Bm * c.pp;
+        Object.assign(r, { feasible: true, N, gpus: N * c.g, Bop, st, tpotOp: tAvg, ttftAvg, ttftPeak, fp: fp0, rho, chunk, ps, kvUse: Bop * mi.perSeq / 1.1 / mi.cap, thrInst: Bop / tAvg });
+        return r;
+      }
+      r.why = 'no instance count meets both targets';
+      return r;
+    });
+    const best = rows.filter(r => r.feasible).sort((a, b) => a.gpus - b.gpus || a.c.g - b.c.g)[0] || null;
+    return { rows, best };
+  }
+
+  // The operating point of one fixed layout at a fixed concurrency: what an engine running config c with B sequences
+  // in flight delivers, by the same physics sizeAgg uses (each step carries the decode batch plus prefill chunks; the
+  // prefill share fp slows the compute part). For checking the model against measured runs (e.g. InferenceX):
+  // returns TPOT, TTFT, and output tokens/s per GPU.
+  function operatingPoint(s, md, c, B) {
+    const st = decodeStep(s, md, c, B), ps = prefillStats(s, md, c), osl = s.avgOut, isl = Math.min(s.avgIn, s.ctx);
+    let tpot = st.t, ttft = ps.Sbatch, fp = 0;
+    for (let i = 0; i < 50; i++) {
+      const lam = B / (osl * tpot + ttft);              // requests/s through this instance
+      fp = Math.min(0.95, lam * isl / ps.cap);          // share of compute spent on prefill
+      const t = Math.max(st.tm, st.tc / (1 - fp)) * 1.1 + st.comm + st.ovh;
+      // a new prompt is prefilled in chunks between decode steps: its share of each step is what decode leaves
+      const free = Math.max(0.05, 1 - Math.max(st.tm, st.tc) / t);
+      const tt = prefillTime(s, md, c, isl, 0, 1) / free + mdWait(Math.min(0.85, fp), isl / ps.cap) + t;
+      if (Math.abs(t - tpot) < 1e-7 && Math.abs(tt - ttft) < 1e-6) { tpot = t; ttft = tt; break; }
+      tpot = t; ttft = tt;
+    }
+    const outPerGpu = B * osl / (osl * tpot + ttft) / c.g;
+    return { tpot, ttft, outPerGpu, prefillShare: fp, bound: st.bound, step: st };
+  }
+
+  // Nodes (scale-up domains) needed: instances that span domains take whole domains; smaller ones pack first-fit-decreasing.
+  function packNodes(pools, D) {
+    const items = [];
+    let whole = 0;
+    for (const p of pools) for (let i = 0; i < p.N; i++) { if (p.g >= D) whole += Math.ceil(p.g / D); else items.push(p.g); }
+    items.sort((a, b) => b - a);
+    const bins = [];
+    for (const g of items) { const b = bins.findIndex(x => x + g <= D); if (b >= 0) bins[b] += g; else bins.push(g); }
+    return whole + bins.length;
+  }
+
+  function plan(s, opts) {
+    opts = opts || {};
+    const md = derive(s);
+    const load = computeLoad(s);
+    const cfgs = configs(s, md);
+    const dis = sizeDisagg(s, md, load, cfgs);
+    const agg = sizeAgg(s, md, load, cfgs);
+    const D = md.D;
+    // N+1: room for one more instance of the largest layout, using free GPUs in existing nodes first
+    const spareFor = pools => s.nPlus1 ? packNodes(pools.concat([{ N: 1, g: Math.max(...pools.map(p => p.g)) }]), D) - packNodes(pools, D) : 0;
+    let disOpt = null, aggOpt = null;
+    if (dis.P && dis.D) {
+      const pools = [{ N: dis.P.N, g: dis.P.c.g }, { N: dis.D.N, g: dis.D.c.g }];
+      const nodes = packNodes(pools, D), sp = spareFor(pools);
+      disOpt = { mode: 'disagg', gpus: dis.P.gpus + dis.D.gpus, nodes, spareNodes: sp, totalNodes: nodes + sp };
+    }
+    if (agg.best) {
+      const pools = [{ N: agg.best.N, g: agg.best.c.g }];
+      const nodes = packNodes(pools, D), sp = spareFor(pools);
+      aggOpt = { mode: 'agg', gpus: agg.best.gpus, nodes, spareNodes: sp, totalNodes: nodes + sp };
+    }
+    const plural = n => n === 1 ? '' : 's', U = D > 8 ? 'rack' : 'node';
+    let chosen = null, reason = '';
+    if (s.mode === 'disagg') { chosen = disOpt; reason = 'Disaggregated serving selected.'; }
+    else if (s.mode === 'agg') { chosen = aggOpt; reason = 'Aggregated serving selected.'; }
+    else if (disOpt && (!aggOpt || disOpt.totalNodes < aggOpt.totalNodes * 0.9)) {
+      chosen = disOpt;
+      reason = aggOpt ? `Disaggregated prefill/decode needs ${aggOpt.totalNodes - disOpt.totalNodes} fewer ${U}${plural(aggOpt.totalNodes - disOpt.totalNodes)} than aggregated (${disOpt.totalNodes} vs ${aggOpt.totalNodes}).` : 'Aggregated serving cannot meet both targets on any layout; splitting prefill and decode can.';
+    } else if (aggOpt) {
+      chosen = aggOpt;
+      reason = disOpt ? (aggOpt.totalNodes <= disOpt.totalNodes ? `Aggregated serving with chunked prefill fits in ${aggOpt.totalNodes} ${U}${plural(aggOpt.totalNodes)} (disaggregated: ${disOpt.totalNodes}), with fewer moving parts.` : `Disaggregation would save under 10% (${disOpt.totalNodes} vs ${aggOpt.totalNodes} ${U}s); aggregated is simpler to run.`) : 'Only aggregated serving meets both targets.';
+    } else if (disOpt) { chosen = disOpt; reason = 'Only disaggregated serving meets both targets.'; }
+    const res = { s, md, load, cfgs, dis, agg, disOpt, aggOpt, chosen, reason };
+    if (chosen) { chosen.nodeGPUs = D; chosen.provGPUs = chosen.totalNodes * D; chosen.kw = chosen.totalNodes * (s.nodeKW || 0); }
+    res.tpotFloor = Math.min(...cfgs.map(c => memInfo(s, md, c).fitsW ? decodeStep(s, md, c, 1).t : Infinity));
+    res.ttftFloor = Math.min(...cfgs.map(c => { const p = prefillStats(s, md, c); return p.fits ? p.Speak : Infinity; }));
+    const reqDay = s.dau * s.rpu;
+    res.econ = { reqDay, inDay: reqDay * s.avgIn, outDay: reqDay * s.avgOut };
+    if (chosen) {
+      const costDay = chosen.provGPUs * 24 * (s.price || 0);
+      res.econ.costDay = costDay;
+      res.econ.perMOut = res.econ.outDay > 0 ? costDay / (res.econ.outDay / 1e6) : NaN;
+      res.econ.avgVsPeak = load.lam > 0 ? (reqDay / 86400) / load.lam : NaN;
+    }
+    if (!opts.noSens) {
+      res.sens = [10, 15, 20, 25, 30, 40, 50, 60, 80, 100].map(tp => {
+        const r = plan(Object.assign({}, s, { tpot: tp }), { noSens: true });
+        return { tpot: tp, gpus: r.chosen ? r.chosen.provGPUs : null };
+      });
+    }
+    return res;
+  }
+
+  const api = { SETTINGS, plan, derive, kvBytes, decodeStep, memInfo, prefillStats, prefillTime, configs, computeLoad, decodeLabel, prefillLabel, decodeCap, packNodes, operatingPoint };
+  if (typeof module !== 'undefined' && module.exports) module.exports = api; else root.SizerModel = api;
+})(this);
+
+</script>
+<script>
 /* FleetScope engine: time-stepped fleet simulation for LLM serving and training.
    Pure functions, no DOM. Deterministic for (workload, scenario, seed).
    Performance is derived from model and GPU spec-sheet figures with fixed efficiency factors:
@@ -604,14 +1282,31 @@ button, select, input { font: inherit; color: inherit; }
     'llama-405b': { label: 'Llama 3.1 405B', params: 405, active: 405, layers: 126, kvHeads: 8, headDim: 128, mla: 0 },
     'moe-671b': { label: 'MoE 671B, 37B active (MLA)', params: 671, active: 37, layers: 61, kvHeads: 0, headDim: 0, mla: 576 }
   };
+  // Every other model in the Inference Sizer's catalog (one list for both tools, kept current there). kvScale: the KV a
+  // token holds, averaged over a 32K context, against the plain kvDim × layers figure, so sliding-window, linear-attention
+  // and compressed layers count; it scales with the layers and heads if they are edited.
+  const node = typeof module !== 'undefined' && module.exports;
+  const CAT = node ? require('../../inference-sizer/src/catalog.js') : root.SizerCatalog, SZ = node ? require('../../inference-sizer/src/model.js') : root.SizerModel;
+  const kvDimTotal = m => (m.mla ? m.layers * m.mla : 2 * m.layers * m.kvHeads * m.headDim);
+  for (const k of Object.keys(MODELS)) MODELS[k].kvScale = 1;
+  const IN_LIST = { 'llama31-8b': 'llama-8b', 'llama33-70b': 'llama-70b', 'llama31-405b': 'llama-405b', 'deepseek-v3': 'moe-671b' };
+  if (CAT && SZ) {
+    for (const c of CAT.MODELS) {
+      if (IN_LIST[c.id] || MODELS[c.id]) continue;
+      const m = { label: c.name, params: c.total, active: c.active, layers: c.layers, kvHeads: c.attn === 'mla' ? 0 : c.kvHeads, headDim: c.attn === 'mla' ? 0 : c.headDim, mla: c.attn === 'mla' ? (c.mlaLatent || 512) + (c.mlaRope == null ? 64 : c.mlaRope) : 0 };
+      const md = SZ.derive(Object.assign({}, SZ.SETTINGS, CAT.MODEL_DEFAULTS, c, { kvprec: 'fp8', tfBf16: 1, hbmTBs: 1, scaleUpGBs: 1, nicGbps: 1, hbmGB: 1 }));
+      m.kvScale = +(SZ.kvBytes(md, 32768) / 32768 / kvDimTotal(m)).toFixed(4);
+      MODELS[c.id] = m;
+    }
+  }
 
   // ---------- performance profile ----------
   // tpFixed: GPUs per instance set on the pool (0 or absent = smallest power of two whose share of the weights fits).
   function profile(gpuKey, m, tpFixed) {
     const G = GPUS[gpuKey];
-    const wBytes = m.params * 1e9 * (m.wPrec === 'bf16' ? 2 : 1);
+    const wBytes = m.params * 1e9 * (m.wPrec === 'bf16' ? 2 : m.wPrec === 'fp4' ? 0.5625 : 1);
     const kvElem = m.kvPrec === 'bf16' ? 2 : 1;
-    const kvBytesPerToken = m.mla ? m.layers * m.mla * kvElem : 2 * m.layers * m.kvHeads * m.headDim * kvElem;
+    const kvBytesPerToken = kvDimTotal(m) * kvElem * (m.kvScale > 0 ? m.kvScale : 1);
     let tp = 1;
     if (tpFixed > 0) tp = Math.round(tpFixed);
     else while (tp < 16 && wBytes / tp > 0.65 * G.hbm * 1e9) tp *= 2;
