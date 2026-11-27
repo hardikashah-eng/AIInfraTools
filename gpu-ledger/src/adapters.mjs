@@ -4,7 +4,8 @@ import fs from 'node:fs';
 import readline from 'node:readline';
 import { gpuKey } from './core.mjs';
 
-const t = s => (s == null || s === '' || s === 'Unknown' || s === 'None' ? null : typeof s === 'number' ? s : Math.floor(Date.parse(/[zZ]|[+-]\d\d:?\d\d$/.test(s) ? s : s.replace(' ', 'T') + 'Z') / 1000));
+// a time that doesn't parse is no time (null), not NaN: the record is dropped or the time left open
+const t = s => { if (s == null || s === '' || s === 'Unknown' || s === 'None') return null; if (typeof s === 'number') return s; const v = Math.floor(Date.parse(/[zZ]|[+-]\d\d:?\d\d$/.test(s) ? s : s.replace(' ', 'T') + 'Z') / 1000); return Number.isFinite(v) ? v : null; };
 const splitCsv = line => { const out = []; let cur = '', q = false; for (let i = 0; i < line.length; i++) { const c = line[i]; if (q) { if (c === '"' && line[i + 1] === '"') { cur += '"'; i++; } else if (c === '"') q = false; else cur += c; } else if (c === '"') q = true; else if (c === ',') { out.push(cur); cur = ''; } else cur += c; } out.push(cur); return out; };
 export const parseCsv = text => { const lines = text.split(/\r?\n/).filter(l => l.trim()); const head = splitCsv(lines[0]).map(h => h.trim()); return lines.slice(1).map(l => { const v = splitCsv(l); return Object.fromEntries(head.map((h, i) => [h, v[i]])); }); };
 
