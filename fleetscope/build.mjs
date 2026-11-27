@@ -10,6 +10,9 @@ const read = p => readFileSync(join(here, p), 'utf8');
 const page = read('src/index.src.html');
 const inlined = {
   '/*ACCELERATORS*/': readFileSync(join(here, '../inference-sizer/src/accelerators.js'), 'utf8'),
+  // the sizer's catalog and model: FleetScope's model list comes from the catalog, its KV per token from the model
+  '/*SIZERCATALOG*/': readFileSync(join(here, '../inference-sizer/src/catalog.js'), 'utf8'),
+  '/*SIZERMODEL*/': readFileSync(join(here, '../inference-sizer/src/model.js'), 'utf8'),
   '/*ENGINE*/': read('src/engine.js'),
   '/*TEMPLATES*/': read('src/templates.js'),
   '/*INGEST*/': read('src/ingest.js'),
