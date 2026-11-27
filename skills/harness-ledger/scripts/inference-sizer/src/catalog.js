@@ -39,6 +39,10 @@
     { k: 'topk', label: 'Experts per token', min: 0, max: 1e4, int: true },
     { k: 'swaFrac', label: 'Share of sliding-window layers', min: 0, max: 1 },
     { k: 'swaWindow', label: 'Sliding window', unit: 'tokens', min: 0, max: 1e8, int: true },
+    { k: 'linFrac', label: 'Share of linear-attention layers', min: 0, max: 1, hint: 'Kimi Delta Attention, Gated DeltaNet: a fixed state per sequence instead of KV per token.' },
+    { k: 'linStateMB', label: 'Linear-attention state per layer', unit: 'MB', min: 0, max: 1e4, hint: 'Per sequence: value heads × key dim × value dim × 4 bytes (fp32).' },
+    { k: 'kvKeep', label: 'Share of tokens whose KV is kept', min: 0.0001, max: 1, hint: 'Compressed attention (DeepSeek V4): average over layers. 1 for ordinary attention.' },
+    { k: 'sparseTopK', label: 'Tokens attended per query (sparse attention)', unit: 'tokens', min: 0, max: 1e8, int: true, hint: 'DSA / CSA / MSA index top-k. 0 = attends every kept token.' },
     { k: 'maxCtx', label: 'Max context', unit: 'tokens', min: 256, max: 1e8, int: true, required: true },
     { k: 'wprec', type: 'enum', opts: ['bf16', 'fp8', 'fp4'], label: 'Default weight precision' },
     { k: 'source', type: 'text', label: 'Model card URL' },
@@ -48,7 +52,7 @@
   // From the shared accelerator registry (accelerators.js): per-GPU dense figures, HGX/DGX system totals divided by 8
   // (or 72 for NVL72), "with sparsity" figures halved. Prices are placeholder on-demand rents, not quotes.
   const REG = (typeof module !== 'undefined' && module.exports) ? require('./accelerators.js') : root.AIInfraAccelerators;
-  const ORDER = ['B200', 'B300', 'GB200-NVL72', 'GB300-NVL72', 'H200', 'H100', 'A100', 'L40S', 'MI300X', 'MI325X', 'MI355X', 'TPU7x', 'TPU-v6e', 'TPU-v5p'];
+  const ORDER = ['B200', 'B300', 'GB200-NVL72', 'GB300-NVL72', 'VR200-NVL72', 'H200', 'H100', 'A100', 'L40S', 'RTX-PRO-6000', 'MI300X', 'MI325X', 'MI355X', 'MI455X-Helios', 'TPU7x', 'TPU-v6e', 'TPU-v5p'];
   const KEEP = ['id', 'kind', 'vendorKey', 'gkeAccelerator', 'tdpW'].concat(GPU_FIELDS.map(f => f.k)); // tdpW: board power, for tokens per MW
   const GPUS = REG.ACCELERATORS.slice().sort((a, b) => (ORDER.indexOf(a.id) + 1 || 99) - (ORDER.indexOf(b.id) + 1 || 99))
     .map(g => Object.fromEntries(KEEP.filter(k => g[k] !== undefined).map(k => [k, g[k]])));
@@ -69,8 +73,36 @@
     Object.assign({}, G, { id: 'qwen3-coder-480b', name: 'Qwen3-Coder 480B-A35B (MoE)', total: 480, active: 35, layers: 62, hidden: 6144, qHeads: 96, kvHeads: 8, headDim: 128, experts: 160, topk: 8, maxCtx: 262144, wprec: 'fp8', source: 'https://huggingface.co/Qwen/Qwen3-Coder-480B-A35B-Instruct' }),
     Object.assign({}, G, MLA, { id: 'deepseek-v3', name: 'DeepSeek-V3 / R1 671B (MoE, MLA)', total: 671, active: 37, layers: 61, hidden: 7168, qHeads: 128, experts: 256, topk: 8, maxCtx: 131072, wprec: 'fp8', source: 'https://huggingface.co/deepseek-ai/DeepSeek-V3' }),
     Object.assign({}, G, MLA, { id: 'kimi-k2', name: 'Kimi K2 1T (MoE, MLA)', total: 1040, active: 32, layers: 61, hidden: 7168, qHeads: 64, experts: 384, topk: 8, maxCtx: 131072, wprec: 'fp8', source: 'https://huggingface.co/moonshotai/Kimi-K2-Instruct' }),
+    // ---- 2026 open-weight models (config.json values; see docs/CATALOG.md for where each figure comes from) ----
+    // Kimi K3 (K3.1 Pro shares the architecture): 69 Kimi Delta Attention layers (96 heads × 128 × 128 fp32 state) and
+    // 24 gated MLA layers; MXFP4 weights from quantization-aware training.
+    Object.assign({}, G, MLA, { id: 'kimi-k3', name: 'Kimi K3 / K3.1 Pro 2.8T-A104B (MoE, KDA + MLA)', total: 2800, active: 104, layers: 93, hidden: 7168, qHeads: 96, experts: 896, topk: 16, linFrac: 69 / 93, linStateMB: 6.29, maxCtx: 1048576, wprec: 'fp4', source: 'https://huggingface.co/moonshotai/Kimi-K3' }),
+    // Kimi K2.5 / K2.6: K2's shape with 256K context and native INT4 weights (sized as 4-bit)
+    Object.assign({}, G, MLA, { id: 'kimi-k26', name: 'Kimi K2.6 1T-A32B (MoE, MLA, INT4)', total: 1000, active: 32, layers: 61, hidden: 7168, qHeads: 64, experts: 384, topk: 8, maxCtx: 262144, wprec: 'fp4', source: 'https://huggingface.co/moonshotai/Kimi-K2.6' }),
+    // DeepSeek V4: one 512-wide latent per token, kept at 1/4 (CSA) or 1/128 (HCA) on alternating layers (≈ 0.129 on
+    // average); CSA attends its index top-1024, HCA all compressed blocks: modelled as 2048 attended tokens per query.
+    // Experts in FP4, the rest FP8.
+    Object.assign({}, G, MLA, { id: 'deepseek-v4-pro', name: 'DeepSeek-V4-Pro 1.6T-A49B (MoE, compressed sparse attention)', total: 1600, active: 49, layers: 61, hidden: 7168, qHeads: 128, mlaLatent: 448, mlaRope: 64, mlaNope: 448, mlaV: 512, kvKeep: 0.129, sparseTopK: 2048, experts: 384, topk: 6, maxCtx: 1048576, wprec: 'fp4', source: 'https://huggingface.co/deepseek-ai/DeepSeek-V4-Pro' }),
+    Object.assign({}, G, MLA, { id: 'deepseek-v4-flash', name: 'DeepSeek-V4-Flash 284B-A13B (MoE, compressed sparse attention)', total: 284, active: 13, layers: 43, hidden: 4096, qHeads: 64, mlaLatent: 448, mlaRope: 64, mlaNope: 448, mlaV: 512, kvKeep: 0.129, sparseTopK: 2048, experts: 256, topk: 6, maxCtx: 1048576, wprec: 'fp8', source: 'https://huggingface.co/deepseek-ai/DeepSeek-V4-Flash' }),
+    // GLM-5.1 and GLM-5.3: MLA with DeepSeek-style sparse attention (index top-2048); GLM-5.3 extends the context to 1M.
+    // GLM-5.3's active parameters are not published: the GLM-5 lineage's 40B is assumed.
+    Object.assign({}, G, MLA, { id: 'glm-5.1', name: 'GLM-5.1 744B-A40B (MoE, MLA, sparse)', total: 744, active: 40, layers: 78, hidden: 6144, qHeads: 64, mlaNope: 192, mlaV: 256, sparseTopK: 2048, experts: 256, topk: 8, maxCtx: 202752, wprec: 'fp8', source: 'https://huggingface.co/zai-org/GLM-5.1' }),
+    Object.assign({}, G, MLA, { id: 'glm-5.3', name: 'GLM-5.3 753B (MoE, MLA, sparse, 1M)', total: 753, active: 40, layers: 78, hidden: 6144, qHeads: 64, mlaNope: 192, mlaV: 256, sparseTopK: 2048, experts: 256, topk: 8, maxCtx: 1048576, wprec: 'fp8', source: 'https://huggingface.co/zai-org/GLM-5.3' }),
+    // Mistral Large 4: MLA with sparse token selection (top-2048); nope/v head dims not published (DeepSeek's 128 assumed)
+    Object.assign({}, G, MLA, { id: 'mistral-large-4', name: 'Mistral Large 4 1.05T-A52B (MoE, MLA, sparse)', total: 1050, active: 52, layers: 72, hidden: 6144, qHeads: 64, sparseTopK: 2048, experts: 128, topk: 4, maxCtx: 1048576, wprec: 'fp8', source: 'https://huggingface.co/mistralai/Mistral-Large-4-1T-A52B' }),
+    // Qwen3.5-397B and Qwen3.8 27B: three Gated DeltaNet layers per gated-attention layer (64 / 48 value heads × 128 × 128 fp32 state)
+    Object.assign({}, G, { id: 'qwen35-397b', name: 'Qwen3.5 397B-A17B (MoE, Gated DeltaNet hybrid)', total: 397, active: 17, layers: 60, hidden: 4096, qHeads: 32, kvHeads: 2, headDim: 256, linFrac: 0.75, linStateMB: 4.19, experts: 512, topk: 10, maxCtx: 262144, wprec: 'fp8', source: 'https://huggingface.co/Qwen/Qwen3.5-397B-A17B' }),
+    Object.assign({}, G, { id: 'qwen38-27b', name: 'Qwen3.8 27B (Gated DeltaNet hybrid)', total: 27, active: 27, layers: 64, hidden: 5120, qHeads: 24, kvHeads: 4, headDim: 256, linFrac: 0.75, linStateMB: 3.15, maxCtx: 262144, wprec: 'fp8', source: 'https://huggingface.co/Qwen/Qwen3.8-27B' }),
+    // MiniMax M3: sparse attention (16 blocks of 128 tokens) in 57 of 60 layers, modelled on all of them
+    Object.assign({}, G, { id: 'minimax-m3', name: 'MiniMax M3 428B-A23B (MoE, sparse)', total: 428, active: 23, layers: 60, hidden: 6144, qHeads: 64, kvHeads: 4, headDim: 128, sparseTopK: 2048, experts: 128, topk: 4, maxCtx: 1048576, wprec: 'fp8', source: 'https://huggingface.co/MiniMaxAI/MiniMax-M3' }),
+    Object.assign({}, G, { id: 'minimax-m27', name: 'MiniMax M2.7 229B-A10B (MoE)', total: 229, active: 10, layers: 62, hidden: 3072, qHeads: 48, kvHeads: 8, headDim: 128, experts: 256, topk: 8, maxCtx: 204800, wprec: 'fp8', source: 'https://huggingface.co/MiniMaxAI/MiniMax-M2.7' }),
+    // Muse Spark Open: 46 sliding-window layers (2048 tokens) and 16 full-attention layers
+    Object.assign({}, G, { id: 'muse-spark-open', name: 'Muse Spark Open 816B-A42B (MoE)', total: 816, active: 42, layers: 62, hidden: 8192, qHeads: 128, kvHeads: 16, headDim: 64, swaFrac: 46 / 62, swaWindow: 2048, experts: 256, topk: 8, maxCtx: 1048576, wprec: 'fp4', source: 'https://huggingface.co/meta-models/Muse-Spark-Open-816B-A42B' }),
+    // Gemma 4 31B: 50 sliding-window layers (1024 tokens) and 10 global layers with 4 KV heads of 512 and keys reused as
+    // values (the KV of 4 × 256 K+V pairs). The sliding layers' 16 heads are sized as 4: their KV is capped at 1024 tokens.
+    Object.assign({}, G, { id: 'gemma4-31b', name: 'Gemma 4 31B', total: 30.7, active: 30.7, layers: 60, hidden: 5376, qHeads: 32, kvHeads: 4, headDim: 256, swaFrac: 50 / 60, swaWindow: 1024, maxCtx: 262144, wprec: 'fp8', source: 'https://huggingface.co/google/gemma-4-31B' }),
   ];
-  const MODEL_DEFAULTS = { attn: 'gqa', experts: 0, topk: 0, swaFrac: 0, swaWindow: 0, mlaLatent: 512, mlaRope: 64, mlaNope: 128, mlaV: 128, wprec: 'fp8' };
+  const MODEL_DEFAULTS = { attn: 'gqa', experts: 0, topk: 0, swaFrac: 0, swaWindow: 0, linFrac: 0, linStateMB: 0, kvKeep: 1, sparseTopK: 0, mlaLatent: 512, mlaRope: 64, mlaNope: 128, mlaV: 128, wprec: 'fp8' };
   const GPU_DEFAULTS = { tfFp8: 0, tfFp4: 0, nodeKW: 0, price: 0, vendor: '' };
 
   // ---------- validation ----------
@@ -100,6 +132,7 @@
       out[f.k] = v;
     }
     if (kind === 'Model' && out.active > out.total) errors.push(`Model "${out.name}": active params (${out.active}B) exceed total (${out.total}B).`);
+    if (kind === 'Model' && (out.swaFrac || 0) + (out.linFrac || 0) > 1) errors.push(`Model "${out.name}": sliding-window and linear-attention shares add up to more than all layers.`);
     if (kind === 'Model' && out.experts > 0 && !(out.topk > 0 && out.topk < out.experts)) errors.push(`Model "${out.name}": experts per token must be between 1 and ${out.experts - 1}.`);
     if (kind === 'Model' && out.experts > 0 && out.active >= out.total) errors.push(`Model "${out.name}": an MoE model needs active params below total params.`);
     return { ok: errors.length === 0, errors, value: out };
@@ -182,6 +215,19 @@
       notes.push('Chunked-attention layers modelled as sliding-window layers.');
     }
     if (c.sliding_window && !swaFrac) notes.push('sliding_window is set but not enabled for these layers; KV is sized for full attention.');
+    // linear-attention layers (Qwen3-Next / Qwen3.5 Gated DeltaNet: layer_types "linear_attention" or full_attention_interval)
+    let linFrac = 0, linStateMB = 0;
+    const linN = Array.isArray(c.layer_types) ? c.layer_types.filter(t => /linear/i.test(String(t))).length
+      : c.full_attention_interval > 1 ? layers - Math.floor(layers / c.full_attention_interval) : 0;
+    if (linN) {
+      linFrac = +(linN / layers).toFixed(4);
+      const vh = +first(c, ['linear_num_value_heads'], qHeads), kd = +first(c, ['linear_key_head_dim'], 128), vd = +first(c, ['linear_value_head_dim'], 128);
+      linStateMB = +(vh * kd * vd * 4 / 1e6).toFixed(3);
+      notes.push(`${linN} linear-attention layers: a ${linStateMB} MB state per layer per sequence (fp32), no KV per token.`);
+    }
+    // sparse attention: an index picks the tokens each query attends (DeepSeek Sparse Attention and its descendants)
+    const sparseTopK = c.index_topk ? +c.index_topk : 0;
+    if (sparseTopK) notes.push(`Sparse attention: each query attends ${sparseTopK} selected tokens.`);
     // context
     let maxCtx = +first(c, ['max_position_embeddings', 'n_positions', 'seq_length', 'max_sequence_length'], 4096);
     const rs = c.rope_scaling;
@@ -216,7 +262,7 @@
     const name = String(first(j, ['_name_or_path', 'name_or_path'], '') || '').split('/').pop() || (c.model_type ? c.model_type + ' ' + (total / 1e9).toFixed(0) + 'B' : 'Imported model');
     const model = {
       name, total: +(total / 1e9).toFixed(2), active: +(active / 1e9).toFixed(2), layers, hidden, qHeads, kvHeads, headDim,
-      attn: mla ? 'mla' : 'gqa', mlaLatent, mlaRope, mlaNope, mlaV, experts, topk, swaFrac, swaWindow, maxCtx,
+      attn: mla ? 'mla' : 'gqa', mlaLatent, mlaRope, mlaNope, mlaV, experts, topk, swaFrac, swaWindow, linFrac, linStateMB, sparseTopK, maxCtx,
       wprec: /fp8|float8/i.test(JSON.stringify(j.quantization_config || '')) ? 'fp8' : /mxfp4|nvfp4|fp4/i.test(JSON.stringify(j.quantization_config || '')) ? 'fp4' : 'fp8',
     };
     return { model, notes };

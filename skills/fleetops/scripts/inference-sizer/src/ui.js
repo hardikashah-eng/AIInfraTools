@@ -467,7 +467,7 @@ function memoryHTML(r) {
     <div class="membar">${parts.map(p => `<div style="width:${Math.max(0, 100 * p[1] / hbm).toFixed(2)}%;background:${p[2]}" title="${p[0]}"></div>`).join('')}</div>
     <div class="memlegend">${parts.map(p => `<i style="background:${p[2]}"></i><span>${p[0]}</span><span class="mono">${fGB(p[1])}</span>`).join('')}</div>
     <dl class="kv" style="margin-top:14px">
-      <dt>KV per token (all layers)</dt><dd>${fGB(md.kvTokLayer * s.layers)}</dd>
+      <dt>KV per token (all layers, averaged over a full context)</dt><dd>${fGB(M.kvBytes(md, s.ctx) / s.ctx)}</dd>
       <dt>KV for one ${fCtx(s.ctx)} full-context request</dt><dd>${fGB(mi.ctxBytes)}</dd>
       <dt>KV for an average request (${fInt(s.avgIn + s.avgOut)} tokens)</dt><dd>${fGB(M.kvBytes(md, Math.min(s.ctx, s.avgIn + s.avgOut)))}</dd>
       <dt>KV capacity per instance</dt><dd>${fGB(mi.cap)}</dd>

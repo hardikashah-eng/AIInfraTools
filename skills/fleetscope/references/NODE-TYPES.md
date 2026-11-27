@@ -163,6 +163,7 @@ Group: Settings. Inputs: none. Outputs: none.
 | `kvHeads` | `8` |
 | `headDim` | `128` |
 | `mla` | `0` |
+| `kvScale` | `1` |
 
 ## `slo`: SLO targets
 

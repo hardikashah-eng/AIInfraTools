@@ -25,6 +25,12 @@
     const mla = s.attn === 'mla';
     const lat = s.mlaLatent || 512, rope = s.mlaRope == null ? 64 : s.mlaRope, nope = s.mlaNope == null ? 128 : s.mlaNope, vh = s.mlaV || 128;
     const swaLayers = s.swaWindow > 0 ? Math.round(s.layers * (s.swaFrac || 0)) : 0;
+    // linear-attention layers (Kimi Delta Attention, Gated DeltaNet): a fixed recurrent state per sequence, no KV per token
+    const linLayers = s.linFrac > 0 ? Math.min(s.layers - swaLayers, Math.round(s.layers * s.linFrac)) : 0;
+    const linState = linLayers * (s.linStateMB || 0) * 1e6;
+    // compressed attention keeps the KV of a share of the tokens (DeepSeek V4: 1/4 or 1/128 per layer); sparse attention
+    // (DSA, CSA, MSA) attends a fixed number of selected tokens per query instead of all of them
+    const keep = s.kvKeep > 0 && s.kvKeep < 1 ? s.kvKeep : 1, topK = s.sparseTopK > 0 ? s.sparseTopK : 0;
     // tensor-core rate for the weight precision; fall back when the GPU lacks that precision
     const tf = { bf16: s.tfBf16, fp8: s.tfFp8 || s.tfBf16, fp4: s.tfFp4 || s.tfFp8 || s.tfBf16 }[s.wprec] || s.tfBf16;
     const computeFallback = (s.wprec === 'fp4' && !s.tfFp4) ? (s.tfFp8 ? 'fp8' : 'bf16') : (s.wprec === 'fp8' && !s.tfFp8) ? 'bf16' : null;
@@ -33,7 +39,9 @@
       Wd: dense * 1e9 * bpp, We: Eall * 1e9 * bpp,
       denseP: dense * 1e9, activeP: (isMoE ? s.active : s.total) * 1e9,
       kvTokLayer: mla ? (lat + rope) * kvb : 2 * s.kvHeads * s.headDim * kvb,
-      swaLayers, fullLayers: s.layers - swaLayers, win: s.swaWindow || 0,
+      swaLayers, linLayers, fullLayers: s.layers - swaLayers - linLayers, win: s.swaWindow || 0, keep, topK, linState,
+      // FLOPs per token per linear-attention layer: read and update the state (fp32, 4 bytes an element), ~4 FLOPs an element
+      Alin: (s.linStateMB || 0) * 1e6,
       // attention FLOPs per (query token, context token) per layer
       Apre: mla ? s.qHeads * (2 * (nope + rope) + 2 * vh) : 4 * s.qHeads * s.headDim,
       Adec: mla ? s.qHeads * (2 * (lat + rope) + 2 * lat) : 4 * s.qHeads * s.headDim,
@@ -44,17 +52,26 @@
     };
   }
 
+  // KV bytes one sequence of L tokens holds: full-attention layers keep (a share of) every token, sliding-window layers
+  // the last W, linear-attention layers a fixed state
   function kvBytes(md, L) {
-    const w = md.win || L;
-    return md.kvTokLayer * (md.fullLayers * L + md.swaLayers * Math.min(L, w));
+    const w = md.win || L, keep = md.keep || 1;
+    return md.kvTokLayer * (md.fullLayers * L * keep + md.swaLayers * Math.min(L, w)) + (md.linState || 0);
+  }
+  // context tokens one query attends in a full-attention layer, and its integral over query positions 0..x
+  const attended = (md, L) => { const n = L * (md.keep || 1); return md.topK ? Math.min(n, md.topK) : n; };
+  function attendedSum(md, x) {
+    const k = md.keep || 1;
+    if (!md.topK) return k * x * x / 2;
+    const t = md.topK / k;
+    return x <= t ? k * x * x / 2 : k * t * t / 2 + md.topK * (x - t);
   }
   function attnPre(md, Lc, L) {
     const W = md.win;
-    const f = x => x * x / 2;
     const g = x => x <= W ? x * x / 2 : W * W / 2 + W * (x - W);
-    return md.Apre * (md.fullLayers * (f(L) - f(Lc)) + md.swaLayers * (g(L) - g(Lc)));
+    return md.Apre * (md.fullLayers * (attendedSum(md, L) - attendedSum(md, Lc)) + md.swaLayers * (g(L) - g(Lc))) + (md.linLayers || 0) * (md.Alin || 0) * (L - Lc);
   }
-  function attnDec(md, L) { return md.Adec * (md.fullLayers * L + md.swaLayers * Math.min(L, md.win || L)); }
+  function attnDec(md, L) { return md.Adec * (md.fullLayers * attended(md, L) + md.swaLayers * Math.min(L, md.win || L)) + (md.linLayers || 0) * (md.Alin || 0); }
 
   // ---------- parallel layouts ----------
   // Instances of g GPUs. Inside one scale-up domain (D GPUs): TP, or TP+EP for MoE, or DP-attention+EP for MLA.
@@ -376,6 +393,6 @@
     return res;
   }
 
-  const api = { SETTINGS, plan, derive, kvBytes, decodeStep, memInfo, prefillStats, prefillTime, configs, computeLoad, decodeLabel, prefillLabel, decodeCap, packNodes, operatingPoint };
+  const api = { SETTINGS, plan, derive, kvBytes, attnPre, attnDec, decodeStep, memInfo, prefillStats, prefillTime, configs, computeLoad, decodeLabel, prefillLabel, decodeCap, packNodes, operatingPoint };
   if (typeof module !== 'undefined' && module.exports) module.exports = api; else root.SizerModel = api;
 })(this);

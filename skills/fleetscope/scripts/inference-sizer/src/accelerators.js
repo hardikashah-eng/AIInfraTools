@@ -44,6 +44,11 @@
 
   const A = (o) => Object.assign({ kind: 'gpu', tfFp4: 0 }, o);
   const ACCELERATORS = [
+    // Vera Rubin NVL72 (VR200; first called NVL144 for its 144 dies): per Rubin package, 288 GB HBM4 at 22 TB/s; dense
+    // NVFP4 35 PF (the 50 PF inference figure uses adaptive compression), FP8 17.5 PF, BF16 4 PF; NVLink 6 3.6 TB/s
+    // bidirectional; ConnectX-9 1.6 Tb/s. NVIDIA publishes no board power: 2.3 kW is the reported Max-P TGP.
+    A({ id: 'VR200-NVL72', short: 'VR200', label: 'NVIDIA Vera Rubin NVL72 (72-GPU rack)', vendor: 'NVIDIA', vendorKey: 'nvidia', hbmGB: 288, hbmTBs: 22, tfBf16: 4000, tfFp8: 17500, tfFp4: 35000, scaleUpGBs: 1800, domain: 72, nicGbps: 1600, tdpW: 2300, price: 11.0, onprem: 6.5, match: 'Rubin(?!.*CPX)|VR200|\\bR200\\b',
+      source: 'https://developer.nvidia.com/blog/inside-the-NVIDIA-rubin-platform-six-new-chips-one-ai-supercomputer' }),
     A({ id: 'GB300-NVL72', short: 'GB300', label: 'NVIDIA GB300 NVL72 (72-GPU rack)', vendor: 'NVIDIA', vendorKey: 'nvidia', hbmGB: 278, hbmTBs: 8, tfBf16: 2500, tfFp8: 5000, tfFp4: 15000, scaleUpGBs: 900, domain: 72, nicGbps: 800, tdpW: 1400, price: 7.5, onprem: 4.4, match: 'GB300',
       // rack figures ÷ 72: 20 TB HBM, 576 TB/s, 360/720/1080 PFLOPS BF16 (sparse)/FP8 (sparse)/FP4 (dense); board power from InferenceX's chip page
       source: 'https://www.nvidia.com/en-us/data-center/gb300-nvl72/' }),
@@ -59,8 +64,17 @@
       source: 'https://www.nvidia.com/en-us/data-center/h100/' }),
     A({ id: 'A100', label: 'NVIDIA A100 80GB SXM (8-GPU)', vendor: 'NVIDIA', vendorKey: 'nvidia', hbmGB: 80, hbmTBs: 2.0, tfBf16: 312, tfFp8: 0, scaleUpGBs: 300, domain: 8, nicGbps: 200, nodeKW: 6.5, tdpW: 400, price: 1.6, onprem: 0.9, match: 'A100(?!.*PCIe)|A800',
       source: 'https://www.nvidia.com/en-us/data-center/a100/' }),
+    // RTX PRO 6000 Blackwell Server Edition: 96 GB GDDR7 at 1.6 TB/s; 4 / 2 / 1 PF FP4 / FP8 / BF16 with sparsity
+    // (halved here); PCIe 5.0 x16 between cards; up to 600 W
+    A({ id: 'RTX-PRO-6000', short: 'RTXPRO6000', label: 'NVIDIA RTX PRO 6000 Blackwell Server (PCIe, 8 per server)', vendor: 'NVIDIA', vendorKey: 'nvidia', hbmGB: 96, hbmTBs: 1.6, tfBf16: 500, tfFp8: 1000, tfFp4: 2000, scaleUpGBs: 64, domain: 8, nicGbps: 400, tdpW: 600, price: 1.8, onprem: 1.0, match: 'RTX ?PRO ?6000|RTX-PRO-6000',
+      source: 'https://www.nvidia.com/en-us/data-center/rtx-pro-6000-blackwell-server-edition/' }),
     A({ id: 'L40S', label: 'NVIDIA L40S (PCIe, 8 per server)', vendor: 'NVIDIA', vendorKey: 'nvidia', hbmGB: 48, hbmTBs: 0.864, tfBf16: 362, tfFp8: 733, scaleUpGBs: 32, domain: 8, nicGbps: 200, nodeKW: 5, tdpW: 350, price: 1.1, onprem: 0.7, match: 'L40S',
       source: 'https://www.nvidia.com/en-us/data-center/l40s/' }),
+    // Helios rack: 72 MI455X, 432 GB HBM4 at 23.3 TB/s, 40 / 20 / 5 PF MXFP4 / MXFP8 / BF16, 3.6 TB/s scale-up
+    // (UALink over Ethernet, bidirectional), 43 TB/s scale-out per rack (2.4 Tb/s per GPU per direction), 246 kW per
+    // rack (AMD's validated reference design). AMD publishes no board power: ~1.7 kW is the reported projection.
+    A({ id: 'MI455X-Helios', short: 'MI455X', label: 'AMD Instinct MI455X Helios (72-GPU rack)', vendor: 'AMD', vendorKey: 'amd', hbmGB: 432, hbmTBs: 23.3, tfBf16: 5000, tfFp8: 20000, tfFp4: 40000, scaleUpGBs: 1800, domain: 72, nicGbps: 2400, nodeKW: 246, tdpW: 1700, price: 8.0, onprem: 4.8, match: 'MI455',
+      source: 'https://www.amd.com/en/products/accelerators/instinct/mi400.html' }),
     A({ id: 'MI355X', label: 'AMD Instinct MI355X (8-GPU)', vendor: 'AMD', vendorKey: 'amd', hbmGB: 288, hbmTBs: 8, tfBf16: 2516.6, tfFp8: 5033.2, tfFp4: 10066.3, scaleUpGBs: 504, domain: 8, nicGbps: 400, tdpW: 1400, price: 4.5, onprem: 2.6, match: 'MI355',
       // Infinity Fabric: 7 links × 144 GB/s (bidirectional) = 504 GB/s per direction
       source: 'https://www.amd.com/en/products/accelerators/instinct/mi350/mi355x.html' }),
