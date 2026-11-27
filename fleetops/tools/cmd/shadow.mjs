@@ -104,7 +104,7 @@ export async function shadowCmd(store, cmd, rest, o) {
     const r = Shadow.compare(base, cand, { gates: json('gates'), predicted: plan && plan.predicted, answers: json('answers'),
       baseline: { gpus: num('baseline-gpus'), rate: num('baseline-rate') }, candidate: { gpus: num('candidate-gpus'), rate: num('candidate-rate') },
       infra: opt('baseline-nodes') ? Shadow.infraSignals(store, { baselineNodes: re('baseline-nodes'), candidateNodes: re('candidate-nodes'), from, to }) : null });
-    fs.appendFileSync(path.join(dir, 'verdicts.jsonl'), JSON.stringify({ t: Math.floor(Date.now() / 1000), baseline: opt('baseline') || opt('results'), candidate: opt('candidate') || opt('results'), decision: r.decision, why: r.why, metrics: r.metrics }) + '\n');
+    fs.appendFileSync(path.join(dir, 'verdicts.jsonl'), JSON.stringify({ t: Math.floor(Date.now() / 1000), baseline: opt('baseline') || opt('results'), candidate: opt('candidate') || opt('results'), decision: r.decision, why: r.why, metrics: r.metrics, ...(r.prediction ? { prediction: r.prediction } : {}) }) + '\n');
     const learned = learn(r, plan, `${opt('baseline') || opt('results')} → ${opt('candidate') || ''}`);
     if (J) { OUT.shadow = r; return; }
     return say(shadowText(r) + (learned.length ? '\n\n' + learned.join('\n') : ''));
@@ -140,7 +140,7 @@ export async function shadowCmd(store, cmd, rest, o) {
     if (!d.baseline.length || !d.candidate.length) throw new Error(`no windows with requests: ${d.baseline.length} baseline, ${d.candidate.length} candidate (check the selectors and the time range)`);
     const planObj = json('plan');
     const r = SProm.compareWindows(d.baseline, d.candidate, { step: d.step, gates: json('gates'), predicted: planObj && planObj.predicted, baseline: { gpus: num('baseline-gpus'), rate: num('baseline-rate') }, candidate: { gpus: num('candidate-gpus'), rate: num('candidate-rate') } });
-    fs.appendFileSync(path.join(dir, 'verdicts.jsonl'), JSON.stringify({ t: Math.floor(Date.now() / 1000), source: 'prometheus', baseline: (saved && saved.selectors && saved.selectors.baseline) || (o.demo ? 'demo' : opt('file')), candidate: (saved && saved.selectors && saved.selectors.candidate) || (o.demo ? 'demo' : opt('file')), decision: r.decision, why: r.why, metrics: r.metrics }) + '\n');
+    fs.appendFileSync(path.join(dir, 'verdicts.jsonl'), JSON.stringify({ t: Math.floor(Date.now() / 1000), source: 'prometheus', baseline: (saved && saved.selectors && saved.selectors.baseline) || (o.demo ? 'demo' : opt('file')), candidate: (saved && saved.selectors && saved.selectors.candidate) || (o.demo ? 'demo' : opt('file')), decision: r.decision, why: r.why, metrics: r.metrics, ...(r.prediction ? { prediction: r.prediction } : {}) }) + '\n');
     const learned = learn(r, planObj, `prometheus ${(saved && saved.selectors && saved.selectors.candidate) || (o.demo ? 'demo' : opt('file'))}`);
     if (J) { OUT.shadow = r; return; }
     const L = r.load, ld = x => `${x.windows} windows, ${x.requests} requests, ${x.concPerEngine.toFixed(1)} in flight per engine, prompt ${Math.round(x.isl || 0)}, cache hit ${x.hit != null && Number.isFinite(x.hit) ? (100 * x.hit).toFixed(0) + '%' : '–'}${Number.isFinite(x.ttftP95) ? `, TTFT p95 ${x.ttftP95.toFixed(2)} s (median window; shown, not judged)` : ''}`;

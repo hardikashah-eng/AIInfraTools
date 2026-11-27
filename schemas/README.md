@@ -13,6 +13,7 @@ and scripts rely on, so you can build on them and know when they change.
 | `fleetops.serving.fit` · `fleetops.serving.capacity` | `aiinfra fleetops serving fit …` · `serving capacity --model M …` |
 | `fleetops.power.report` · `fleetops.power.plan` | `aiinfra fleetops power report …` · `power plan …` |
 | `fleetops.shadow.compare` · `fleetops.shadow.prom` · `fleetops.shadow.canary` | `aiinfra fleetops shadow compare …` · `shadow prom …` · `shadow canary status --name N` |
+| `aiinfra.report` | `aiinfra report --store DIR --model M --gpu G [--harness PATH]` (or `--demo`) |
 | `harness-ledger.economics` | `aiinfra harness-ledger economics PATH… [--self-host-model M --gpu G \| --opencost F]` |
 | `fix-skew.demo` | `aiinfra fix-skew --demo` (the same shape as for your traces) |
 

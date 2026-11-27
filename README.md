@@ -46,6 +46,15 @@ you to approve it. Then `aiinfra demo --continue DIR` rolls it out (dry run) and
 half of the week, which they fail at 3.3× the expected rate. It prints every command, so you can repeat each step on
 your own data.
 
+## One page: plan → verify → account
+
+`aiinfra report --store DIR --model M --gpu G --harness PATH` puts the loop on one page, from what the tools already
+keep: the Inference Sizer's GPU count before and after the store's measured calibration, the last shadow verdict with
+prediction against measurement, each canary's share and any step waiting for a person's approval, and what an agent
+workload costs per resolved task at the API and self-hosted (with tokens per megawatt). `--format md` writes Markdown,
+`--json` the [schema'd](schemas/aiinfra.report.schema.json) record; `aiinfra report --demo` runs it on demo data. It
+only reads.
+
 ## Use with LLMs (skills)
 
 Each tool is also packaged as an [Agent Skill](https://agentskills.io/specification) in [skills/](skills/). A skill tells a model when to use the tool, what to ask the user, which command to run and how to read the JSON it returns. A model can then answer questions like "how many H200s for Llama 70B at 25 ms TPOT?", "what if the cloud link drops to 25 Gbps?", "why do our cross-site traces look out of order?" "which GPUs should we pull before they fail?" or "why did half the training jobs fail last night?" by running the tools itself.

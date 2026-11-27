@@ -35,6 +35,7 @@ From a clone instead of npm: `"command": "node", "args": ["/path/to/AIInfraTools
 | `gpu_health_analyze` | health problems, idle and underused GPUs, savings; proposals into the approval queue | `gpu-health.analyze` |
 | `ledger_report` · `ledger_insights` | GPU-hours and cost by owner (useful, idle, lost); ranked savings | `ledger.*` |
 | `harness_waste` | where agent harnesses (Claude Code, Codex, OTel, Langfuse) waste tokens and money, by cause, tool and session | – |
+| `infra_report` | plan → verify → account on one page: the sizer's GPU count before and after the store's calibration, the last shadow verdict, canaries awaiting approval, agent economics | `aiinfra.report` |
 | `agent_economics` | cost per resolved agent task, fixes ranked by what they save per resolved task, self-hosting vs the API (break-even GPU-hour price; or OpenCost's measured cost) | `harness-ledger.economics` |
 | `shadow_verdict` | an infra change judged against the baseline at matched load: from store records, or a canary's vLLM metrics in Prometheus; records the verdict, and with a plan refits the sizer's calibration | `fleetops.shadow.compare` / `fleetops.shadow.prom` |
 | `canary_status` | where an llm-d canary stands: share, status, a step waiting for approval (advancing and approving stay with a person) | `fleetops.shadow.canary` |

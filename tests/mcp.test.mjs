@@ -47,9 +47,9 @@ test('handshake: negotiates the protocol, names the server, answers ping; notifi
   assert.equal(c.unsolicited.length, 0);
 });
 
-test('tools/list: 19 tools, valid input and output schemas, nothing that acts on infrastructure', async () => {
+test('tools/list: 20 tools, valid input and output schemas, nothing that acts on infrastructure', async () => {
   tools = (await c.send('tools/list')).result.tools;
-  assert.equal(tools.length, 19); assert.equal(new Set(tools.map(t => t.name)).size, 19);
+  assert.equal(tools.length, 20); assert.equal(new Set(tools.map(t => t.name)).size, 20);
   for (const t of tools) {
     assert.match(t.name, /^[a-z_]+$/); assert.ok(t.description.length > 30, t.name);
     assert.equal(t.inputSchema.type, 'object');
