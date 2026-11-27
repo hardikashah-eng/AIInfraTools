@@ -173,7 +173,7 @@ export function compareWindows(bw, cw, opt = {}) {
   }
   const d = decide(metrics, null, prediction, { unit: 'minutes of canary traffic' });
   if (d.why === 'no latency data to judge yet') d.why = `too little canary traffic to judge yet (needs ${opt.minWin || 5} windows and ${opt.minRequests || 200} requests inside the baseline's load range)`;
-  return { decision: d.decision, why: d.why, verdict: verdictOf(d.decision), source: 'prometheus', step, prediction, requests: { baseline: Math.round(sum(bw, 'n')), candidate: Math.round(sum(cw, 'n')) }, load: { baseline: load(bw), candidate: load(cw) }, metrics, gates: G };
+  return { decision: d.decision, why: d.why, verdict: verdictOf(d.decision), source: 'prometheus', step, ...(prediction ? { prediction } : {}), requests: { baseline: Math.round(sum(bw, 'n')), candidate: Math.round(sum(cw, 'n')) }, load: { baseline: load(bw), candidate: load(cw) }, metrics, gates: G };
 }
 // one word for rollout controllers
 export const verdictOf = d => (d === 'promote' ? 'promote' : d === 'roll back' ? 'rollback' : 'wait');

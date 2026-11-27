@@ -222,8 +222,11 @@
   // ---------- GPUs for a workload ----------
   // The sizer for compute (peak arrivals, mean and p99 prompts, cache hit from the workload), and the KV working set
   // against what's left of HBM after weights for memory. Agentic fleets are often bound by the second.
+  // KV offload defaults: host memory for KV per GPU, the cap InferenceX AgentX allows (3 TB per server, in proportion to
+  // the GPUs used: 375 GB for an 8-GPU server), and reload over PCIe 5.0 x16 (64 GB/s per direction) at 70% of it.
+  const OFFLOAD = { cpuGBPerGpu: 375, pcieGBs: 64, eff: 0.7 };
   function sizeFor(stats, s0, M, opt) {
-    const o = Object.assign({ kvBound: true }, opt || {});
+    const o = Object.assign({ kvBound: true, kvOffload: false }, opt || {});
     // the arrival rate goes in directly (the sizer's "DAU" path: requests/s at peak, output tokens/s), so prefill and
     // decode are sized from the workload's own peak-minute rate rather than from a concurrency guess
     const s = Object.assign({}, s0, { avgIn: Math.round(stats.isl.mean), peakIn: Math.round(stats.isl.p99), avgOut: Math.round(stats.osl.mean), peakOut: Math.round(stats.osl.p99),
@@ -235,8 +238,27 @@
     const freePerGpu = Math.max(1e9, (md.hbm - md.reserve) * (s.kvMaxUtil || 0.9) - (md.Wd + md.We) / g);
     const kvGpus = Math.ceil(stats.kvTokens.p95 * perTok / freePerGpu / g) * g;
     const compute = r.chosen ? r.chosen.provGPUs : null;
-    return { compute, kvGpus, gpus: compute == null ? null : Math.max(compute, o.kvBound ? kvGpus : 0), bound: compute == null ? 'none' : kvGpus > compute ? 'KV working set' : 'compute',
-      kvGB: stats.kvTokens.p95 * perTok / 1e9, mode: r.chosen && r.chosen.mode, inputs: { avgIn: s.avgIn, peakIn: s.peakIn, avgOut: s.avgOut, prefixHit: s.prefixHit, requestsPerS: stats.rps.p95 } };
+    // KV offload: contexts that don't fit in HBM wait in host memory and are reloaded over PCIe when their session comes
+    // back. The GPUs then only need to hold the hot part; a reload slower than the TTFT target means offload can't be used.
+    const off = Object.assign({}, OFFLOAD, o.offload || {}), W = stats.kvTokens.p95 * perTok;
+    const kvGpusOff = Math.ceil(W / (freePerGpu + off.cpuGBPerGpu * 1e9) / g) * g;
+    const gOff = compute == null ? null : Math.max(compute, kvGpusOff), hbmAtOff = gOff ? gOff * freePerGpu : 0;
+    const reloadMs = 1000 * stats.isl.mean * (stats.cacheHit || 0) * perTok / (off.pcieGBs * 1e9 * off.eff * g); // a returning session's cached prefix, the instance's GPUs reloading in parallel
+    const offShare = W > 0 ? Math.max(0, 1 - hbmAtOff / W) : 0;
+    // and all of them together: the reload traffic at the peak minute against the PCIe the GPUs have
+    const pcieUtil = gOff ? stats.rps.p95 * offShare * stats.isl.mean * (stats.cacheHit || 0) * perTok / (gOff * off.pcieGBs * 1e9 * off.eff) : null;
+    const offload = { cpuGBPerGpu: off.cpuGBPerGpu, kvGpus: kvGpusOff, gpus: gOff, offloadedShare: offShare, reloadMs, fitsTtft: reloadMs < s.ttft, pcieUtil, pcieGBs: off.pcieGBs };
+    offload.usable = offload.fitsTtft && pcieUtil != null && pcieUtil < 0.8; // headroom: reloads compete with weights and activations for the bus
+    const useOff = o.kvOffload && offload.usable && gOff != null;
+    const kvNeed = useOff ? kvGpusOff : kvGpus, gpus = compute == null ? null : Math.max(compute, o.kvBound ? kvNeed : 0);
+    // tokens per megawatt (AgentX's headline metric): peak-minute output tokens/s over the provisioned power, from the
+    // published per-node power (the whole server) when there is one, else the GPU's board power alone
+    const perGpuKW = s.nodeKW ? s.nodeKW / (s.domain || 8) : s.tdpW ? s.tdpW / 1000 : null;
+    const powerKW = gpus != null && perGpuKW ? gpus * perGpuKW : null;
+    return { compute, kvGpus, gpus, bound: compute == null ? 'none' : kvNeed > compute ? (useOff ? 'KV working set (with offload)' : 'KV working set') : 'compute',
+      kvGB: W / 1e9, mode: r.chosen && r.chosen.mode, offload, kvOffloadUsed: useOff,
+      power: powerKW == null ? null : { kw: powerKW, basis: s.nodeKW ? 'published node power' : 'GPU board power only', tokensPerSecPerMW: stats.decodeTps && stats.decodeTps.p95 != null ? stats.decodeTps.p95 / (powerKW / 1000) : null },
+      inputs: { avgIn: s.avgIn, peakIn: s.peakIn, avgOut: s.avgOut, prefixHit: s.prefixHit, requestsPerS: stats.rps.p95 } };
   }
   // The traditional sizing input: the same request rate and mean ISL/OSL, no prefix reuse, no idle sessions.
   function flatStats(stats) {

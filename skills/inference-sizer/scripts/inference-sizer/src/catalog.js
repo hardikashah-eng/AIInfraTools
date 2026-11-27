@@ -49,7 +49,7 @@
   // (or 72 for NVL72), "with sparsity" figures halved. Prices are placeholder on-demand rents, not quotes.
   const REG = (typeof module !== 'undefined' && module.exports) ? require('./accelerators.js') : root.AIInfraAccelerators;
   const ORDER = ['B200', 'B300', 'GB200-NVL72', 'GB300-NVL72', 'H200', 'H100', 'A100', 'L40S', 'MI300X', 'MI325X', 'MI355X', 'TPU7x', 'TPU-v6e', 'TPU-v5p'];
-  const KEEP = ['id', 'kind', 'vendorKey', 'gkeAccelerator'].concat(GPU_FIELDS.map(f => f.k));
+  const KEEP = ['id', 'kind', 'vendorKey', 'gkeAccelerator', 'tdpW'].concat(GPU_FIELDS.map(f => f.k)); // tdpW: board power, for tokens per MW
   const GPUS = REG.ACCELERATORS.slice().sort((a, b) => (ORDER.indexOf(a.id) + 1 || 99) - (ORDER.indexOf(b.id) + 1 || 99))
     .map(g => Object.fromEntries(KEEP.filter(k => g[k] !== undefined).map(k => [k, g[k]])));
 

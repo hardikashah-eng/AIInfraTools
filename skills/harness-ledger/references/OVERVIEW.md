@@ -105,6 +105,13 @@ harness-ledger economics traces/ --outcomes outcomes.csv --self-host-model deeps
     prices by hand.
   - `--calibration FILE` sizes with measured engine efficiencies, from `fleetops calibrate` or from a promoted shadow
     upgrade's `<store>/calibration/sizer.json`.
+  - `--kv-offload` holds the part of the KV working set that doesn't fit in HBM in host memory (LMCache-style; 375 GB per
+    GPU by default, the 3 TB per 8-GPU server InferenceX AgentX allows; `--cpu-kv-gb` changes it). A returning session's
+    cached prefix is reloaded over PCIe (`--pcie-gbs`, 64 by default, at 70% of it). Offload is only used when that
+    reload fits the TTFT target and the peak minute's reloads leave PCIe under 80% busy. The what-if is reported either
+    way, so you can see what offload would save before turning it on.
+  - Tokens per megawatt (AgentX's headline metric) is reported next to the GPU count: the peak minute's output tokens/s
+    over the provisioned power, from the published per-node power, or the GPU's board power when none is published.
   - Calls longer than the open model's context are counted and flagged.
 
 On TraceLab's workload, with SWE-bench success rates ([VALIDATION-ECONOMICS.md](VALIDATION-ECONOMICS.md)):
