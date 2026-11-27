@@ -134,3 +134,20 @@ test('CLI converts a log to canonical CSV with a window and sampling', () => {
   assert.equal(back.trace.length, 3);
   close(back.trace[0].ttft, 0.31, 1e-5);
 });
+
+test('the rarer inputs: Tempo batches, Jaeger without request spans, AgentX arrays and spacing, Mooncake, TraceLab rows without input events', () => {
+  const IN2 = createRequire(import.meta.url)('../src/ingest.js');
+  const span = (t, attrs) => ({ startTimeUnixNano: String(t * 1e9), endTimeUnixNano: String((t + 1) * 1e9), attributes: Object.entries(attrs).map(([key, v]) => ({ key, value: typeof v === 'number' ? { intValue: String(v) } : { stringValue: v } })) });
+  const tempo = IN2.parseTrace(JSON.stringify({ batches: [{ instrumentationLibrarySpans: [{ spans: [span(1800000000, { 'gen_ai.usage.prompt_tokens': 100, 'gen_ai.usage.completion_tokens': 10 }), span(1800000005, { 'gen_ai.usage.prompt_tokens': 200, 'gen_ai.usage.completion_tokens': 20 })] }] }] }));
+  assert.match(tempo.format, /OTLP/); assert.equal(tempo.trace.length, 2);
+  assert.throws(() => IN2.parseTrace(JSON.stringify({ resourceSpans: [{ scopeSpans: [{ spans: [span(1, { other: 1 })] }] }] })), /No vLLM request spans found/);
+  assert.throws(() => IN2.parseTrace(JSON.stringify({ data: [{ spans: [{ startTime: 1, duration: 1, tags: [{ key: 'x', value: 1 }] }] }] })), /Jaeger/);
+  const ax = IN2.parseAgentX([[{ t: 0, in: 128, out: 2, hash_ids: [1, 2] }], { requests: [{ t: 0, in: 64, out: 1 }, { type: 'subagent', requests: [{ t: 1, in: 64, out: 1 }] }, null] }], { sessionGapS: 100 });
+  assert.deepEqual(ax.trace.map(r => [r.t, r.session, r.agent || null]), [[0, 'session-0', null], [100, 'session-1', null], [101, 'session-1', 'subagent']]);
+  assert.equal(ax.stats.sessions, 2);
+  const mc = IN2.parseMooncake([{ timestamp: 2000, input_length: 512, output_length: 0 }, { input_length: 1024, hash_ids: [0, 1] }, { nope: 1 }]);
+  assert.deepEqual(mc.trace.map(r => r.osl), [1, 1]);
+  assert.equal(IN2.tracelabRow({ timing_events: [] }), null);
+  const tl = IN2.tracelabRow({ timing_events: [{ event_type: 'x', timestamp: '2026-11-20T10:00:00Z' }], input_tokens_total: 10, prefix_tokens: 3, provider: 'openai' });
+  assert.deepEqual([tl.cached, tl.osl, tl.api, tl.tools], [3, 1, 0, 0]);
+});

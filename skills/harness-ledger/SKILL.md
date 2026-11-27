@@ -64,6 +64,11 @@ Requires Node.js 22+. Paths are relative to this skill's folder. The CLI is
   - `--opencost FILE|URL` or `--opencost-prom URL` uses OpenCost's measured self-host cost. Say that it holds at the
     utilization it was measured at.
   - `--calibration FILE` uses measured efficiencies (fleetops); say which.
+  - When the result is bound by the KV working set, `selfHost.offload` says what host-memory KV offload would do (GPUs,
+    reload ms, PCIe load). Mention it; `--kv-offload` uses it only when the reload fits the TTFT target. Report
+    `selfHost.power.tokensPerSecPerMW` with its basis (published node power, or GPU board power only).
+  - For the whole loop on one page (sizer before and after calibration, last shadow verdict, economics), run
+    `aiinfra report --store DIR --model M --gpu G --harness PATH`.
 - Don't present the self-hosting side as a recommendation to buy hardware. It is a model: GPUs only, sized for the
   busiest day, kept on all month.
 

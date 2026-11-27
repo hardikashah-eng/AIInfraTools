@@ -5,7 +5,33 @@ change the `--json` output, and when it does the change is listed here (see [sch
 
 ## Unreleased
 
+### Plan → verify → account, and what agents can call
+
+- **`aiinfra report`:** one page from what the tools already keep in a fleetops store: the Inference Sizer's GPU count
+  before and after the store's calibration, the last shadow verdict with prediction against measurement, the last
+  promotion, each canary's share and any step waiting for a person's approval, and agent economics (cost per resolved
+  task, self-hosting sized with the calibration, tokens per MW). Text, Markdown or `--json`; `--demo` runs it on demo data.
+  It only reads. Shadow verdict records now keep the prediction rows so the report can show them.
+- **KV offload in the sizing:** FleetScope's agentic sizing reports what LMCache-style offload to host memory would do:
+  the GPU count with the cold part of the KV working set in host memory (375 GB per GPU by default, AgentX's 3 TB per
+  8-GPU server), the PCIe reload time for a returning session, and PCIe load at the peak minute. `--kv-offload` (on
+  `harness-ledger economics` and `agentic.mjs size`) uses it when a reload fits the TTFT target and PCIe stays under 80%.
+- **Tokens per megawatt** next to every agentic GPU count: peak output tokens/s over provisioned power, from published
+  node power, or the GPU's board power when none is published.
+- **New `--json` contracts:** `fleetops.shadow.compare`, `fleetops.shadow.prom`, `fleetops.shadow.canary`,
+  `harness-ledger.economics` and `aiinfra.report`. `harness-ledger.economics` gains `offload`, `kvOffloadUsed` and
+  `power` under `selfHost`; `sizer.list` GPUs gain `tdpW`. Both changes add fields only.
+- **MCP tools:** `shadow_verdict`, `canary_status`, `agent_economics` and `infra_report` (20 tools). None of them can
+  advance or approve a canary.
+
 ### Code quality
+
+- **fleetops CLI split:** `tools/fleetops.mjs` now only parses and dispatches. Each area's commands live in
+  `tools/cmd/<area>.mjs`, unchanged.
+- **Branch coverage floors** go from 70% to 80% in every package except fleetops, which goes to 77%. New tests cover
+  the least-covered branches, mostly the command lines and their errors.
+- **Fixed:** gpu-ledger read a time it couldn't parse as NaN instead of no time, so a CSV row with an unreadable start
+  was kept. Such a row is now dropped.
 
 - **Lint gate:** ESLint recommended rules on every pull request (`eslint.config.mjs`, `.github/workflows/lint.yml`),
   starting from zero findings.

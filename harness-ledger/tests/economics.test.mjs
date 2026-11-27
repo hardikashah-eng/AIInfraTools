@@ -141,3 +141,14 @@ test('CLI: economics --opencost FILE, and --calibration changes the sizing', () 
   assert.equal(base.calibrated, null); assert.match(cal.calibrated, /slower engine/);
   assert.ok(cal.gpus > base.gpus, `measured efficiencies are used: ${cal.gpus} vs ${base.gpus}`);
 });
+
+test('CLI: economics --kv-offload, and tokens per MW reported next to the GPU count', () => {
+  const run = a => spawnSync(process.execPath, [CLI, 'economics', '--demo', '--days', '30', '--self-host-model', 'deepseek-v3', '--gpu', 'H200', '--tasks-per-day', '20000', ...a], { encoding: 'utf8' });
+  const t = run([]); assert.equal(t.status, 0, t.stderr);
+  assert.match(t.stdout, /KV offload /); assert.match(t.stdout, /output tokens\/s per MW at the peak minute \(\d+ kW provisioned, published node power\)/);
+  const base = JSON.parse(run(['--json']).stdout).selfHost, off = JSON.parse(run(['--json', '--kv-offload', '--cpu-kv-gb', '1000']).stdout).selfHost;
+  assert.equal(base.kvOffloadUsed, false); assert.equal(off.offload.cpuGBPerGpu, 1000);
+  assert.ok(off.gpus <= base.gpus, `offload never adds GPUs: ${off.gpus} vs ${base.gpus}`);
+  assert.equal(off.kvOffloadUsed, off.offload.usable && off.offload.gpus != null);
+  assert.ok(base.power.tokensPerSecPerMW > 0);
+});

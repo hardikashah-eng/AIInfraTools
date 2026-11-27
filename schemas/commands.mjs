@@ -1,6 +1,9 @@
 // The --json commands that agents and scripts depend on, each with the demo data it runs on. scripts/schemas.mjs
 // runs them to write or check schemas/<id>.schema.json. A command's setup returns what its args need.
 import path from 'node:path';
+import { fileURLToPath } from 'node:url';
+
+const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 
 export const COMMANDS = [
   { id: 'sizer.list', usage: '--list', tool: 'sizer', args: () => ['--list', '--json'] },
@@ -26,5 +29,16 @@ export const COMMANDS = [
     args: (c, s) => ['power', 'report', '--budgets', s[0].demo.budgets, '--from', String(s[0].demo.from), '--to', String(s[0].demo.to), '--store', path.join(c.dir, 'p'), '--json'] },
   { id: 'fleetops.power.plan', usage: 'power plan --budgets F --from T --to T', tool: 'fleetops', setup: c => [['fleetops', 'power', 'demo', '--store', path.join(c.dir, 'p'), '--json']],
     args: (c, s) => ['power', 'plan', '--budgets', s[0].demo.budgets, '--from', String(s[0].demo.from), '--to', String(s[0].demo.to), '--store', path.join(c.dir, 'p'), '--out', path.join(c.dir, 'plan.json'), '--json'] },
+  { id: 'fleetops.shadow.compare', usage: 'shadow compare --baseline SEL --candidate SEL', tool: 'fleetops', setup: c => [['fleetops', 'shadow', 'demo', '--store', path.join(c.dir, 's'), '--json']],
+    args: c => ['shadow', 'compare', '--baseline', 'variant=baseline', '--candidate', 'variant=candidate', '--store', path.join(c.dir, 's'), '--json'] },
+  { id: 'fleetops.shadow.prom', usage: 'shadow prom --prom URL --baseline M --candidate M', tool: 'fleetops', args: c => ['shadow', 'prom', '--demo', '--store', path.join(c.dir, 's'), '--json'] },
+  // `true` stands in for kubectl: the canary is started for real (state written) without a cluster
+  { id: 'fleetops.shadow.canary', usage: 'shadow canary status --name N', tool: 'fleetops',
+    setup: c => [['fleetops', 'shadow', 'canary', 'start', '--name', 'chat', '--namespace', 'llm', '--group', 'chat', '--baseline', 'chat-v1', '--candidate', 'chat-v2', '--live', '--kubectl', 'true', '--store', path.join(c.dir, 's'), '--json']],
+    args: c => ['shadow', 'canary', 'status', '--name', 'chat', '--store', path.join(c.dir, 's'), '--json'] },
+  { id: 'aiinfra.report', usage: 'report --store DIR --model M --gpu G [--harness PATH]', tool: 'report', args: () => ['--demo', '--json'],
+    more: [['--store', path.join(ROOT, 'no-such-store'), '--json'], ['--store', path.join(ROOT, 'no-such-store'), '--model', 'llama33-70b', '--gpu', 'H100', '--harness', 'demo', '--json']] },
+  { id: 'harness-ledger.economics', usage: 'economics PATH… [--outcomes F] [--self-host-model M --gpu G]', tool: 'harness-ledger',
+    args: () => ['economics', '--demo', '--days', '30', '--self-host-model', 'qwen3-32b', '--gpu', 'H100', '--gpu-rate', '2', '--json'], more: [['economics', '--demo', '--days', '30', '--self-host-model', 'deepseek-v3', '--gpu', 'H200', '--gpu-rate', '3', '--json'], ['economics', '--demo', '--days', '30', '--self-host-model', 'deepseek-v3', '--gpu', 'B200', '--tasks-per-day', '20000', '--kv-offload', '--json'], ['economics', '--demo', '--json'], ['economics', path.join(ROOT, 'harness-ledger/tests/fixtures'), '--days', '30', '--self-host-model', 'qwen3-32b', '--gpu', 'H100', '--gpu-rate', '2', '--json'], ['economics', '--demo', '--days', '30', '--opencost', path.join(ROOT, 'harness-ledger/tests/fixtures/opencost-inference-total.json'), '--opencost-model', 'Qwen/Qwen3-32B', '--json']] },
   { id: 'fix-skew.demo', usage: '--demo', tool: 'fix-skew', args: () => ['--demo', '--json'] },
 ];

@@ -38,3 +38,38 @@ test('answers with before and after numbers, and says what it did not use', () =
   const no = A.answer('make it faster please', G('burst'));
   assert.equal(no.understood, false); assert.match(no.text, /could not match/);
 });
+
+test('the other phrasings: link commands, removals, scaling words, user surges, percentages, routing policies and limits', () => {
+  const cases = [
+    ['xpd', 'Cut the cross-site link to 400 Gbps', /link at 400 Gbps/i],
+    ['xpd', 'upgrade the link to 1 tbps', /1000 Gbps/],
+    ['burst', 'Put on-prem on B200', /On-prem H100 on B200/],
+    ['burst', 'Remove 2 instances from on-prem', /On-prem H100 with 2 instances/],
+    ['burst', 'Double on-prem', /On-prem H100 with 8 instances/],
+    ['burst', 'Halve on-prem', /On-prem H100 with 2 instances/],
+    ['burst', 'cold start of 2 min', /cold start 120 s/],
+    ['burst', 'Set the TPOT target to 40 ms', /TPOT target 40 ms/],
+    ['multi', 'Use round robin', /round robin/],
+    ['multi', 'least-wait routing', /least estimated wait/],
+    ['agent', 'cache-oblivious routing', /cache-oblivious/],
+    ['burst', 'turn on kv offload', /512 GB CPU KV offload/],
+    ['burst', 'enforce data residency', /enforce data residency/],
+    ['burst', 'Use DeepSeek V3 with reasoning of 4k tokens', /671B/],
+    ['burst', 'no reasoning', /reasoning|thinking/],
+  ];
+  for (const [id, q, re] of cases) { const r = read(id, q); assert.ok(r.edits.some(e => re.test(e)) || r.p.notes.some(e => re.test(e)), `${q}: ${JSON.stringify(r.edits)} ${JSON.stringify(r.p.notes)}`); }
+  for (const [q, name] of [['traffic increases by 50%', 'traffic ×1.5'], ['double the users', 'users ×2'], ['3x the traffic', 'traffic ×3'], ['traffic triples', 'traffic ×3'], ['triple the contexts', 'contexts ×3'], ['4x longer contexts', 'contexts ×4']]) assert.equal(read('burst', q).stress, name, q);
+  const o = read('burst', 'What if 25% of on-prem goes down and we lose the neocloud?').p.stress.outages.map(x => [x.target, x.fraction]);
+  assert.deepEqual(o.map(x => x[1]).sort(), [0.25, 1]);
+  assert.equal(read('burst', 'a quarter of on-prem goes down').p.stress.outages[0].fraction, 0.25);
+  assert.equal(read('burst', 'move the moon to H200').edits.length, 0, 'no node by that name: nothing changed');
+  assert.equal(read('burst', 'traffic grows').stress, null, 'a growth without a size is not read');
+});
+
+test('answers: already the case, a change that breaks the graph, outages cutting streams, no question understood', () => {
+  const same = A.answer('Set the TTFT target to ' + G('burst').nodes.find(n => n.type === 'slo').cfg.ttft + ' s and double the traffic', G('burst'));
+  assert.match(same.text, /Already the case, so unchanged: TTFT target/);
+  const lost = A.answer('What if all of on-prem goes down?', G('burst')); assert.ok(lost.understood); assert.match(lost.text, /SLO attainment/);
+  const none = A.answer('sing a song', G('burst')); assert.equal(none.understood, false); assert.match(none.text, /could not match/);
+  const merged = A.answer('Double the traffic', G('burst'), { stress: { name: 'base', outages: [] } }); assert.match(merged.text, /traffic ×2/);
+});

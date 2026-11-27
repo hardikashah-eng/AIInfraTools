@@ -1,0 +1,474 @@
+{
+ "$schema": "https://json-schema.org/draft/2020-12/schema",
+ "$id": "https://github.com/hardikashah-eng/AIInfraTools/schemas/aiinfra.report.schema.json",
+ "title": "aiinfra report report --store DIR --model M --gpu G [--harness PATH] --json",
+ "type": "object",
+ "properties": {
+  "account": {
+   "type": [
+    "null",
+    "object"
+   ],
+   "properties": {
+    "harness": {
+     "type": "string"
+    },
+    "monthly": {
+     "type": "number"
+    },
+    "perResolvedTask": {
+     "type": "number"
+    },
+    "selfHost": {
+     "type": "object",
+     "properties": {
+      "bound": {
+       "type": "string"
+      },
+      "breakEvenGpuRate": {
+       "type": "number"
+      },
+      "calibrated": {
+       "type": [
+        "null",
+        "string"
+       ]
+      },
+      "cheaper": {
+       "type": [
+        "null",
+        "string"
+       ]
+      },
+      "gpu": {
+       "type": "string"
+      },
+      "gpus": {
+       "type": "number"
+      },
+      "kvOffload": {
+       "type": "object",
+       "properties": {
+        "gpus": {
+         "type": "number"
+        },
+        "reloadMs": {
+         "type": "number"
+        },
+        "usable": {
+         "type": "boolean"
+        }
+       },
+       "required": [
+        "gpus",
+        "reloadMs",
+        "usable"
+       ]
+      },
+      "model": {
+       "type": "string"
+      },
+      "powerKW": {
+       "type": "number"
+      },
+      "tokensPerSecPerMW": {
+       "type": "number"
+      }
+     },
+     "required": [
+      "bound",
+      "breakEvenGpuRate",
+      "calibrated",
+      "cheaper",
+      "gpu",
+      "gpus",
+      "kvOffload",
+      "model",
+      "powerKW",
+      "tokensPerSecPerMW"
+     ]
+    },
+    "successRate": {
+     "type": "number"
+    }
+   },
+   "required": [
+    "harness",
+    "monthly",
+    "perResolvedTask",
+    "selfHost",
+    "successRate"
+   ]
+  },
+  "calibration": {
+   "type": "object",
+   "properties": {
+    "entries": {
+     "type": "array",
+     "items": {
+      "type": "object",
+      "properties": {
+       "effDecodeBW": {
+        "type": "number"
+       },
+       "effDecodeComp": {
+        "type": "number"
+       },
+       "effPrefill": {
+        "type": "number"
+       },
+       "fitOn": {
+        "type": "string"
+       },
+       "key": {
+        "type": "string"
+       },
+       "source": {
+        "type": "string"
+       },
+       "t": {
+        "type": "null"
+       }
+      },
+      "required": [
+       "effDecodeBW",
+       "effDecodeComp",
+       "effPrefill",
+       "fitOn",
+       "key",
+       "source",
+       "t"
+      ]
+     }
+    },
+    "file": {
+     "type": [
+      "null",
+      "string"
+     ]
+    }
+   },
+   "required": [
+    "entries",
+    "file"
+   ]
+  },
+  "gpu": {
+   "type": [
+    "null",
+    "string"
+   ]
+  },
+  "model": {
+   "type": [
+    "null",
+    "string"
+   ]
+  },
+  "next": {
+   "type": "array",
+   "items": {
+    "type": "string"
+   }
+  },
+  "plan": {
+   "type": [
+    "null",
+    "object"
+   ],
+   "properties": {
+    "calibrated": {
+     "type": [
+      "null",
+      "object"
+     ],
+     "properties": {
+      "costPerMOutputTokens": {
+       "type": "number"
+      },
+      "found": {
+       "type": "boolean"
+      },
+      "gpus": {
+       "type": "number"
+      },
+      "mode": {
+       "type": "string"
+      },
+      "nodes": {
+       "type": "number"
+      },
+      "provisionedGpus": {
+       "type": "number"
+      },
+      "targets": {
+       "type": "object",
+       "properties": {
+        "concurrency": {
+         "type": "number"
+        },
+        "contextTokens": {
+         "type": "number"
+        },
+        "tpotMs": {
+         "type": "number"
+        },
+        "ttftMs": {
+         "type": "number"
+        }
+       },
+       "required": [
+        "concurrency",
+        "contextTokens",
+        "tpotMs",
+        "ttftMs"
+       ]
+      }
+     },
+     "required": [
+      "costPerMOutputTokens",
+      "found",
+      "gpus",
+      "mode",
+      "nodes",
+      "provisionedGpus",
+      "targets"
+     ]
+    },
+    "sizer": {
+     "type": "object",
+     "properties": {
+      "costPerMOutputTokens": {
+       "type": "number"
+      },
+      "found": {
+       "type": "boolean"
+      },
+      "gpus": {
+       "type": "number"
+      },
+      "mode": {
+       "type": "string"
+      },
+      "nodes": {
+       "type": "number"
+      },
+      "provisionedGpus": {
+       "type": "number"
+      },
+      "targets": {
+       "type": "object",
+       "properties": {
+        "concurrency": {
+         "type": "number"
+        },
+        "contextTokens": {
+         "type": "number"
+        },
+        "tpotMs": {
+         "type": "number"
+        },
+        "ttftMs": {
+         "type": "number"
+        }
+       },
+       "required": [
+        "concurrency",
+        "contextTokens",
+        "tpotMs",
+        "ttftMs"
+       ]
+      }
+     },
+     "required": [
+      "costPerMOutputTokens",
+      "found",
+      "gpus",
+      "mode",
+      "nodes",
+      "provisionedGpus",
+      "targets"
+     ]
+    }
+   },
+   "required": [
+    "calibrated",
+    "sizer"
+   ]
+  },
+  "store": {
+   "type": "string"
+  },
+  "verify": {
+   "type": "object",
+   "properties": {
+    "canaries": {
+     "type": "array"
+    },
+    "last": {
+     "type": [
+      "null",
+      "object"
+     ],
+     "properties": {
+      "baseline": {
+       "type": "string"
+      },
+      "candidate": {
+       "type": "string"
+      },
+      "decision": {
+       "type": "string"
+      },
+      "metrics": {
+       "type": "object",
+       "properties": {
+        "e2e": {
+         "type": "object",
+         "properties": {
+          "effect": {
+           "type": "number"
+          },
+          "verdict": {
+           "type": "string"
+          }
+         },
+         "required": [
+          "effect",
+          "verdict"
+         ]
+        },
+        "errorRate": {
+         "type": "object",
+         "properties": {
+          "effect": {
+           "type": "null"
+          },
+          "verdict": {
+           "type": "string"
+          }
+         },
+         "required": [
+          "effect",
+          "verdict"
+         ]
+        },
+        "tpot": {
+         "type": "object",
+         "properties": {
+          "effect": {
+           "type": "number"
+          },
+          "verdict": {
+           "type": "string"
+          }
+         },
+         "required": [
+          "effect",
+          "verdict"
+         ]
+        },
+        "ttft": {
+         "type": "object",
+         "properties": {
+          "effect": {
+           "type": "number"
+          },
+          "verdict": {
+           "type": "string"
+          }
+         },
+         "required": [
+          "effect",
+          "verdict"
+         ]
+        }
+       },
+       "required": [
+        "e2e",
+        "errorRate",
+        "tpot",
+        "ttft"
+       ]
+      },
+      "prediction": {
+       "type": "object",
+       "properties": {
+        "holds": {
+         "type": "boolean"
+        },
+        "rows": {
+         "type": "array",
+         "items": {
+          "type": "object",
+          "properties": {
+           "measured": {
+            "type": "number"
+           },
+           "metric": {
+            "type": "string"
+           },
+           "off": {
+            "type": "number"
+           },
+           "predicted": {
+            "type": "number"
+           }
+          },
+          "required": [
+           "measured",
+           "metric",
+           "off",
+           "predicted"
+          ]
+         }
+        }
+       },
+       "required": [
+        "holds",
+        "rows"
+       ]
+      },
+      "source": {
+       "type": "string"
+      },
+      "t": {
+       "type": "number"
+      },
+      "why": {
+       "type": "string"
+      }
+     },
+     "required": [
+      "baseline",
+      "candidate",
+      "decision",
+      "metrics",
+      "prediction",
+      "source",
+      "t",
+      "why"
+     ]
+    },
+    "verdicts": {
+     "type": "number"
+    }
+   },
+   "required": [
+    "canaries",
+    "last",
+    "verdicts"
+   ]
+  }
+ },
+ "required": [
+  "account",
+  "calibration",
+  "gpu",
+  "model",
+  "next",
+  "plan",
+  "store",
+  "verify"
+ ]
+}

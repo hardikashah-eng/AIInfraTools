@@ -1,0 +1,96 @@
+{
+ "$schema": "https://json-schema.org/draft/2020-12/schema",
+ "$id": "https://github.com/hardikashah-eng/AIInfraTools/schemas/fleetops.shadow.canary.schema.json",
+ "title": "aiinfra fleetops shadow canary status --name N --json",
+ "type": "object",
+ "properties": {
+  "canary": {
+   "type": "object",
+   "properties": {
+    "bakeS": {
+     "type": "number"
+    },
+    "baseline": {
+     "type": "string"
+    },
+    "candidate": {
+     "type": "string"
+    },
+    "group": {
+     "type": "string"
+    },
+    "history": {
+     "type": "array",
+     "items": {
+      "type": "object",
+      "properties": {
+       "event": {
+        "type": "string"
+       },
+       "share": {
+        "type": "number"
+       },
+       "t": {
+        "type": "number"
+       }
+      },
+      "required": [
+       "event",
+       "share",
+       "t"
+      ]
+     }
+    },
+    "kind": {
+     "type": "string"
+    },
+    "name": {
+     "type": "string"
+    },
+    "namespace": {
+     "type": "string"
+    },
+    "pending": {
+     "type": "null"
+    },
+    "since": {
+     "type": "number"
+    },
+    "status": {
+     "type": "string"
+    },
+    "step": {
+     "type": "number"
+    },
+    "steps": {
+     "type": "array",
+     "items": {
+      "type": "number"
+     }
+    },
+    "version": {
+     "type": "number"
+    }
+   },
+   "required": [
+    "bakeS",
+    "baseline",
+    "candidate",
+    "group",
+    "history",
+    "kind",
+    "name",
+    "namespace",
+    "pending",
+    "since",
+    "status",
+    "step",
+    "steps",
+    "version"
+   ]
+  }
+ },
+ "required": [
+  "canary"
+ ]
+}

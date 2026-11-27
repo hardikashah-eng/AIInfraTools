@@ -12,6 +12,9 @@
      "domain": {
       "type": "number"
      },
+     "gkeAccelerator": {
+      "type": "string"
+     },
      "hbmGB": {
       "type": "number"
      },
@@ -41,6 +44,9 @@
      },
      "source": {
       "type": "string"
+     },
+     "tdpW": {
+      "type": "number"
      },
      "tfBf16": {
       "type": "number"

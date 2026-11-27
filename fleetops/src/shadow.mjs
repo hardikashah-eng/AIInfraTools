@@ -134,7 +134,8 @@ export function compare(base0, cand0, opt = {}) {
     prediction = { rows, holds: rows.every(r => Math.abs(r.off) <= G.prediction) };
   }
   const d = decide(metrics, answers, prediction);
-  return { decision: d.decision, why: d.why, paired, requests: { baseline: base.length, candidate: cand.length }, metrics, answers, prediction, infra: opt.infra || null, gates: G };
+  // answers, prediction and infra appear only when given: absent rather than null, so their shape is part of the --json contract
+  return Object.assign({ decision: d.decision, why: d.why, paired, requests: { baseline: base.length, candidate: cand.length }, metrics, gates: G }, answers ? { answers } : {}, prediction ? { prediction } : {}, opt.infra ? { infra: opt.infra } : {});
 }
 
 // errors: a difference in rate past the gate, by a one-sided two-proportion test. eb, ec: { n, k } (requests, errors)
