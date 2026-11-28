@@ -15,6 +15,9 @@ change the `--json` output, and when it does the change is listed here (see [sch
   index top-k import with them. A model without these fields sizes exactly as before.
 - **Hardware:** NVIDIA Vera Rubin NVL72, AMD Instinct MI455X (Helios) and NVIDIA RTX PRO 6000 Blackwell Server join the
   accelerator registry, so they reach the sizer, FleetScope, fleetops' power model and telemetry matching.
+- **AgentX validation reads InferenceX's own model prefixes** (`dsv4`, `kimik3.1`, `glm5.3`, `minimaxm3`, `musespark`,
+  `qwen3.5`, `gptoss`…), plus A100, Vera Rubin, MI455X and cloud-suffixed GPU names (`b200-nscale`). Models the sizer
+  can't size yet are counted as skipped, not read as a shorter prefix.
 - **Kept current weekly:** `inference-sizer/docs/CATALOG.md` says where figures come from and how to add a model or a
   chip, and lists what isn't in yet and why (Trainium3, TPU 8, DeepSeek V4.1 Flash). A weekly scheduled task follows it
   and opens a pull request.

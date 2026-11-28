@@ -61,8 +61,9 @@ The tests named below run in CI on every pull request. Sources and licenses for 
 - **The sizer on agentic traffic (AgentX):** `inference-sizer/tools/validate-agentx.mjs` scores and calibrates the sizer
   on AgentX results (long contexts, ~95% cache hits, measured on GB300, B200, MI355X…). The results and the AgentX
   traces are published on Hugging Face and the InferenceX dashboard, which this project's CI can't reach yet; run it
-  on downloaded results. Most AgentX models (DeepSeek V4, GLM 5.x, Kimi K3, MiniMax M3) also need a catalog entry,
-  which `--hf-config` adds from the model's config.json.
+  on downloaded results (`gh run download RUN_ID --repo SemiAnalysisAI/InferenceX -n results_bmk`). DeepSeek V4, GLM-5.2/5.3,
+  Kimi K3, MiniMax M3, Muse Spark and Qwen3.5 are in the catalog and mapped from InferenceX's model prefixes; DeepSeek
+  V4.1 Flash, GLM-5.3 Flash, Qwen3.8 Flash Next and Hy3 are counted as skipped until they are.
 - **The sizer's defaults point different ways on different data:** pessimistic on MLPerf's Llama 2 70B (twice the
   GPUs needed), optimistic on InferenceX's DeepSeek-R1 (1.44× the throughput). Calibrate to your model, GPU and engine
   before trusting a GPU count; On AMD the calibrated error is still 2–3× NVIDIA's.
