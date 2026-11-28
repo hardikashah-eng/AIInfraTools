@@ -28,7 +28,18 @@ test('AgentX results: normalized (in flight from rate × latency, cache hit from
 
 test('AgentX results the sizer can\'t score are counted, not guessed', () => {
   const r = results('b200')[0];
-  const R = run([{ ...r, infmax_model_prefix: 'kimi-k3', model: 'kimi-k3' }, { ...r, disagg: true }, { ...r, hw: 'tpu7x' }]);
+  const R = run([{ ...r, infmax_model_prefix: 'longcat-2.5', model: 'longcat-2.5' }, { ...r, disagg: true }, { ...r, hw: 'tpu7x' }]);
   assert.equal(R.scored, 0);
-  assert.deepEqual(Object.keys(R.skipped).sort(), ['GPU tpu7x', 'disaggregated', 'model kimi-k3'].sort());
+  assert.deepEqual(Object.keys(R.skipped).sort(), ['GPU tpu7x', 'disaggregated', 'model longcat-2.5'].sort());
+});
+
+test('AgentX prefixes as InferenceX names them map to catalog entries, the longest prefix first; models the sizer lacks are skipped', () => {
+  const base = results('gb300')[0];
+  const id = prefix => { const x = normalize(Object.assign({}, base, { infmax_model_prefix: prefix, model: prefix })); return x.model || x.skip; };
+  assert.deepEqual(['dsv4', 'kimik3', 'kimik3.1', 'glm5.2', 'glm5.3', 'minimaxm3', 'minimaxm31flash', 'musespark', 'qwen3.5', 'gptoss', 'dsr1'].map(id),
+    ['deepseek-v4-pro', 'kimi-k3', 'kimi-k3', 'glm-5.3', 'glm-5.3', 'minimax-m3', 'minimax-m3', 'muse-spark-open', 'qwen35-397b', 'gpt-oss-120b', 'deepseek-v3']);
+  for (const p of ['dsv41flash', 'glm5.3flash', 'qwen3.8next', 'h3']) assert.equal(id(p), `model ${p}`, `${p}: skipped, not read as a shorter prefix`);
+  assert.equal(normalize(Object.assign({}, base, { hw: 'vr200-nv72' })).gpu, 'VR200-NVL72');
+  assert.equal(normalize(Object.assign({}, base, { hw: 'b200-nscale' })).gpu, 'B200', 'a cloud suffix on the GPU name');
+  assert.equal(normalize(Object.assign({}, base, { hw: 'a100' })).gpu, 'A100');
 });

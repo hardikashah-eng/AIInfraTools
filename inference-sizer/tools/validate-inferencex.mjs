@@ -27,7 +27,7 @@ export const SOURCE = {
   repo: 'https://github.com/SemiAnalysisAI/InferenceX-app', commit: '187628924b6ec899b1f3f771617655dd4cd61d8c',
   path: 'packages/app/cypress/fixtures/api/benchmarks.json', sha256: 'f46823a76cb63248705329f327e1494df02b4dfa4df0898b7ee084c75c20bd52',
 };
-export const GPU = { b200: 'B200', b300: 'B300', h200: 'H200', h100: 'H100', mi300x: 'MI300X', mi325x: 'MI325X', mi355x: 'MI355X', gb200: 'GB200-NVL72', gb300: 'GB300-NVL72' };
+export const GPU = { a100: 'A100', b200: 'B200', b300: 'B300', h200: 'H200', h100: 'H100', mi300x: 'MI300X', mi325x: 'MI325X', mi355x: 'MI355X', gb200: 'GB200-NVL72', gb300: 'GB300-NVL72', vr200: 'VR200-NVL72', mi455x: 'MI455X-Helios' };
 const MODEL = { dsr1: 'deepseek-v3' }; // DeepSeek-R1 has DeepSeek-V3's architecture
 
 export function fetchData(cache = path.join(os.homedir(), '.cache', 'aiinfra-tools', 'inferencex', SOURCE.commit.slice(0, 12))) {
