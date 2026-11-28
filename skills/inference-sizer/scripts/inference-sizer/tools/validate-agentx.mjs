@@ -21,13 +21,19 @@ import { GPU, summary } from './validate-inferencex.mjs';
 const require = createRequire(import.meta.url);
 const C = require('../src/catalog.js'), M = require('../src/model.js');
 
-export const MODELS = { dsr1: 'deepseek-v3', dsv3: 'deepseek-v3', 'kimi-k2': 'kimi-k2', 'qwen3-235b': 'qwen3-235b', 'qwen3-coder': 'qwen3-coder-480b', 'gpt-oss-120b': 'gpt-oss-120b', llama4: 'llama4-maverick' };
+// InferenceX's model prefixes (infmax_model_prefix, as its recipes name them) → sizer catalog ids. The longest
+// matching prefix wins, so dsv41flash is not read as dsv4. null: a model the sizer can't size yet (counted as skipped).
+// A prefix not here: --models map.json.
+export const MODELS = { dsr1: 'deepseek-v3', dsv3: 'deepseek-v3', dsv4: 'deepseek-v4-pro', dsv41flash: null,
+  kimik3: 'kimi-k3', 'kimik3.1': 'kimi-k3', 'kimi-k2': 'kimi-k2', 'glm5.2': 'glm-5.3', 'glm5.3': 'glm-5.3', 'glm5.3flash': null,
+  minimaxm3: 'minimax-m3', minimaxm31flash: 'minimax-m3', musespark: 'muse-spark-open', 'qwen3.5': 'qwen35-397b', 'qwen3.8next': null, h3: null,
+  gptoss: 'gpt-oss-120b', 'gpt-oss-120b': 'gpt-oss-120b', 'qwen3-235b': 'qwen3-235b', 'qwen3-coder': 'qwen3-coder-480b', llama4: 'llama4-maverick' };
 const get = (o, p) => p.split('.').reduce((a, k) => (a == null ? undefined : a[k]), o);
 const firstNum = (o, ps) => { for (const p of ps) { const v = get(o, p); const n = typeof v === 'object' && v ? (v.mean ?? v.avg ?? v.median ?? v.p50) : v; if (Number.isFinite(+n) && n !== null && n !== '') return +n; } return null; };
 
 // One AgentX result → the fields the sizer needs (null when the result can't be scored)
 export function normalize(r, models = MODELS, catalog = C.MODELS) {
-  const hw = String(r.hw || r.hardware || '').toLowerCase().replace(/-(nv|sxm|oam).*$/, '');
+  const hw0 = String(r.hw || r.hardware || '').toLowerCase().replace(/-(nv|sxm|oam).*$/, ''), hw = GPU[hw0] ? hw0 : hw0.split('-')[0]; // b200-nscale: a B200 at a cloud
   const prefix = String(r.infmax_model_prefix || r.model || '').toLowerCase();
   const key = Object.keys(models).sort((a, b) => b.length - a.length).find(k => prefix.startsWith(k.toLowerCase()));
   const model = key && catalog.find(m => m.id === models[key]), gpu = C.GPUS.find(g => g.id === GPU[hw]);
